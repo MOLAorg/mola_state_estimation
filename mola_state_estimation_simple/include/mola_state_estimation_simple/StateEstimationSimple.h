@@ -18,7 +18,7 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFuse.h
+ * @file   StateEstimationSimple.h
  * @brief  Fuse of odometry, IMU, and SE(3) pose/twist estimations.
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
@@ -26,7 +26,7 @@
 #pragma once
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
-#include <mola_state_estimation_simple/NavStateFuseParams.h>
+#include <mola_state_estimation_simple/Parameters.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
 #include <mrpt/obs/CObservationIMU.h>
@@ -35,7 +35,7 @@
 
 #include <optional>
 
-namespace mola
+namespace mola::state_estimation_simple
 {
 /** Fuse of odometry, IMU, and SE(3) pose/twist estimations.
  *
@@ -53,25 +53,30 @@ namespace mola
  * \note This implementation of mola::NavStateFilter ignores the passed
  *       "frame_id"
  *
- * \sa IMUIntegrator
- * \ingroup mola_imu_preintegration_grp
+ * \sa mola::IMUIntegrator
+ *
+ * \ingroup mola_state_estimation_grp
  */
-class NavStateFuse : public mola::NavStateFilter
+class StateEstimationSimple : public mola::NavStateFilter
 {
+    DEFINE_MRPT_OBJECT(StateEstimationSimple, mola::state_estimation_simple)
+
    public:
-    NavStateFuse()  = default;
-    ~NavStateFuse() = default;
+    StateEstimationSimple()  = default;
+    ~StateEstimationSimple() = default;
 
     /** \name Main API
      *  @{ */
-
-    NavStateFuseParams params_;
+    
+    Parameters params;
 
     /**
      * @brief Initializes the object and reads all parameters from a YAML node.
      * @param cfg a YAML node with a dictionary of parameters to load from.
      */
     void initialize(const mrpt::containers::yaml& cfg) override;
+
+    void spinOnce() override;
 
     /** Resets the estimator state to an initial state.
      *  \sa currentIntegrationState
@@ -138,4 +143,4 @@ class NavStateFuse : public mola::NavStateFilter
     State state_;
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_simple

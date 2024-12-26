@@ -18,17 +18,18 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   IMUIntegrationParams.cpp
+ * @file   Parameters.cpp
  * @brief  Parameters for IMU preintegration.
  * @author Jose Luis Blanco Claraco
  * @date   Sep 19, 2021
  */
 
-#include <mola_state_estimation_simple/NavStateFuseParams.h>
+#include <mola_state_estimation_simple/Parameters.h>
 
-using namespace mola;
+namespace mola::state_estimation_simple
+{
 
-void NavStateFuseParams::loadFrom(const mrpt::containers::yaml& cfg)
+void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 {
     MCP_LOAD_REQ(cfg, max_time_to_use_velocity_model);
 
@@ -46,3 +47,5 @@ void NavStateFuseParams::loadFrom(const mrpt::containers::yaml& cfg)
         for (size_t i = 0; i < 6; i++) tw[i] = seq.at(i).as<double>();
     }
 }
+
+}  // namespace mola::state_estimation_simple

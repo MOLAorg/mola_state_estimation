@@ -18,33 +18,43 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFuse.cpp
+ * @file   StateEstimationSimple.cpp
  * @brief  Fuse of odometry, IMU, and SE(3) pose/twist estimations.
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
  */
 
 #include <mola_imu_preintegration/RotationIntegrator.h>
-#include <mola_state_estimation_simple/NavStateFuse.h>
+#include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mrpt/poses/Lie/SO.h>
 
-using namespace mola;
+// arguments: class_name, parent_class, class namespace
+IMPLEMENTS_MRPT_OBJECT(
+    StateEstimationSimple, mola::ExecutableBase, mola::state_estimation_simple)
 
-void NavStateFuse::initialize(const mrpt::containers::yaml& cfg)
+namespace mola::state_estimation_simple
+{
+
+void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
     reset();
 
     // Load params:
-    params_.loadFrom(cfg);
+    params.loadFrom(cfg);
 }
 
-void NavStateFuse::reset()
+void StateEstimationSimple::spinOnce()
+{
+    // do nothing for this module
+}
+
+void StateEstimationSimple::reset()
 {
     // reset:
     state_ = State();
 }
 
-void NavStateFuse::fuse_odometry(
+void StateEstimationSimple::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom,
     [[maybe_unused]] const std::string&    odomName)
 {
@@ -64,19 +74,19 @@ void NavStateFuse::fuse_odometry(
     state_.last_odom_obs = odom;
 }
 
-void NavStateFuse::fuse_imu(const mrpt::obs::CObservationIMU& imu)
+void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     // TODO(jlbc)
     (void)imu;
 }
 
-void NavStateFuse::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
+void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     // TODO(jlbc)
     (void)gps;
 }
 
-void NavStateFuse::fuse_pose(
+void StateEstimationSimple::fuse_pose(
     const mrpt::Clock::time_point&         timestamp,
     const mrpt::poses::CPose3DPDFGaussian& pose,
     [[maybe_unused]] const std::string&    frame_id)
@@ -91,8 +101,8 @@ void NavStateFuse::fuse_pose(
     double dt = 0;
     if (state_.last_pose_obs_tim)
         dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
-
-    if (dt < params_.max_time_to_use_velocity_model && state_.last_pose)
+    
+    if (dt < params.max_time_to_use_velocity_model && state_.last_pose)
     {
         ASSERT_GT_(dt, .0);
 
@@ -119,7 +129,7 @@ void NavStateFuse::fuse_pose(
     state_.pose_already_updated_with_odom = false;
 }
 
-void NavStateFuse::fuse_twist(
+void StateEstimationSimple::fuse_twist(
     [[maybe_unused]] const mrpt::Clock::time_point&     timestamp,
     const mrpt::math::TTwist3D&                         twist,
     [[maybe_unused]] const mrpt::math::CMatrixDouble66& twistCov)
@@ -127,7 +137,7 @@ void NavStateFuse::fuse_twist(
     state_.last_twist = twist;
 }
 
-std::optional<NavState> NavStateFuse::estimated_navstate(
+std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point&      timestamp,
     [[maybe_unused]] const std::string& frame_id)
 {
@@ -137,7 +147,7 @@ std::optional<NavState> NavStateFuse::estimated_navstate(
         mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
     if (!state_.last_twist || !state_.last_pose ||
-        std::abs(dt) > params_.max_time_to_use_velocity_model)
+        std::abs(dt) > params.max_time_to_use_velocity_model)
         return {};  // None
 
     NavState ret;
@@ -172,9 +182,9 @@ std::optional<NavState> NavStateFuse::estimated_navstate(
     auto cov = state_.last_pose->cov;
 
     double varXYZ =
-        mrpt::square(dt * params_.sigma_random_walk_acceleration_linear);
+        mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
     double varRot =
-        mrpt::square(dt * params_.sigma_random_walk_acceleration_angular);
+        mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
 
     for (int i = 0; i < 3; i++) cov(i, i) += varXYZ;
     for (int i = 3; i < 6; i++) cov(i, i) += varRot;
@@ -188,3 +198,5 @@ std::optional<NavState> NavStateFuse::estimated_navstate(
 
     return ret;
 }
+
+}  // namespace mola::state_estimation_simple

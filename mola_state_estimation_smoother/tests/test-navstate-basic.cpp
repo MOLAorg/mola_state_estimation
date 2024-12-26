@@ -20,12 +20,12 @@
 
 /**
  * @file   test-navstate-basic.cpp
- * @brief  Unit tests for NavStateFG
+ * @brief  Unit tests for StateEstimationSmoother
  * @author Jose Luis Blanco Claraco
  * @date   Jun 13, 2024
  */
 
-#include <mola_state_estimation_smoother/NavStateFG.h>
+#include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/poses/Lie/SE.h>
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/system/os.h>
@@ -40,7 +40,7 @@ using namespace std::string_literals;
 namespace
 {
 const char* navStateParams =
-    R"###(# Config for NavStateFGParams
+    R"###(# Config for Parameters
 sliding_window_length: 5.0 # [s]
 max_time_to_use_velocity_model: 2.0  # [s]
 time_between_frames_to_warning: 2.0  # [s]
@@ -107,7 +107,7 @@ class Data
 // --------------------------------------
 void test_init_state()
 {
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     ASSERT_(nav.known_frame_ids().empty());
@@ -121,7 +121,7 @@ void test_one_pose()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const auto t0 = mrpt::Clock::fromDouble(.0);
@@ -143,7 +143,7 @@ void test_one_pose_extrapolate()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const auto t0 = mrpt::Clock::fromDouble(.0);
@@ -162,7 +162,7 @@ void test_one_pose_extrapolate()
 
     ASSERT_GT_(
         std::sqrt(1.0 / ret->twist_inv_cov(0, 0)),
-        nav.params_.initial_twist_sigma_lin);
+        nav.params.initial_twist_sigma_lin);
 }
 
 // --------------------------------------
@@ -170,7 +170,7 @@ void test_2_poses()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const auto t0 = mrpt::Clock::fromDouble(0.0);
@@ -208,7 +208,7 @@ void test_2_poses_too_late()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const auto t0 = mrpt::Clock::fromDouble(0.0);
@@ -216,9 +216,9 @@ void test_2_poses_too_late()
 
     // too late/early to extrapolate!! must return nullopt:
     const auto t2 = mrpt::Clock::fromDouble(
-        nav.params_.max_time_to_use_velocity_model + 0.5 + 0.1);
+        nav.params.max_time_to_use_velocity_model + 0.5 + 0.1);
     const auto t3 = mrpt::Clock::fromDouble(
-        0.0 - 0.1 - nav.params_.max_time_to_use_velocity_model);
+        0.0 - 0.1 - nav.params.max_time_to_use_velocity_model);
 
     nav.fuse_pose(t0, _.pdf0, "odom");
     nav.fuse_pose(t1, _.pdf1, "odom");
@@ -235,7 +235,7 @@ void test_3_poses()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const auto t0 = mrpt::Clock::fromDouble(0.0);
@@ -270,7 +270,7 @@ void test_noisy_straight()
 {
     const auto& _ = Data::Instance();
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     auto& rng = mrpt::random::getRandomGenerator();

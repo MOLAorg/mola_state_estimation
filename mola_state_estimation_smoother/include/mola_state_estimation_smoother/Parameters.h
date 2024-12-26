@@ -18,8 +18,8 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFGParams.h
- * @brief  Parameters for NavStateFG
+ * @file   Parameters.h
+ * @brief  Parameters for StateEstimationSmoother
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
  */
@@ -30,17 +30,17 @@
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/math/TTwist3D.h>
 
-namespace mola
+namespace mola::state_estimation_smoother
 {
-/** Parameters needed by NavStateFG.
+/** Parameters needed by StateEstimationSmoother.
  *
  * \ingroup mola_navstate_fuse__grp
  */
-class NavStateFGParams
+class Parameters
 {
    public:
-    NavStateFGParams()  = default;
-    ~NavStateFGParams() = default;
+    Parameters()  = default;
+    ~Parameters() = default;
 
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);
@@ -71,4 +71,4 @@ class NavStateFGParams
     double               initial_twist_sigma_ang = 3.0;  // [rad/s]
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_smoother

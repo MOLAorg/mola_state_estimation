@@ -25,11 +25,12 @@
  * @date   Sep 18, 2021
  */
 
+#include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mrpt/core/initializer.h>
-
-// using namespace mola;
 
 MRPT_INITIALIZER(do_register_navstate_fuse)
 {
-    //  MOLA_REGISTER_MODULE(xx);
+    using namespace mola::state_estimation_simple;
+
+    MOLA_REGISTER_MODULE(StateEstimationSimple);
 }

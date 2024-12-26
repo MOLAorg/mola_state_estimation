@@ -32,7 +32,7 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/expressions.h>
 
-namespace mola
+namespace mola::state_estimation_smoother
 {
 /**
  * Factor for angular velocity integration model, equivalent to expressions:
@@ -133,4 +133,4 @@ class FactorAngularVelocityIntegration
     }
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_smoother

@@ -18,14 +18,14 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFG.cpp
+ * @file   StateEstimationSmoother.cpp
  * @brief  Fuse of odometry, IMU, and SE(3) pose/twist estimations.
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
  */
 
 // MOLA & MRPT:
-#include <mola_state_estimation_smoother/NavStateFG.h>
+#include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/gtsam_wrappers.h>
 #include <mrpt/poses/Lie/SO.h>
@@ -50,11 +50,17 @@
 #include "FactorConstAngularVelocity.h"
 #include "FactorTrapezoidalIntegrator.h"
 
+// arguments: class_name, parent_class, class namespace
+IMPLEMENTS_MRPT_OBJECT(
+    StateEstimationSmoother, mola::ExecutableBase,
+    mola::state_estimation_smoother)
+
+namespace mola::state_estimation_smoother
+{
+
 const bool NAVSTATE_PRINT_FG = mrpt::get_env<bool>("NAVSTATE_PRINT_FG", false);
 const bool NAVSTATE_PRINT_FG_ERRORS =
     mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERRORS", false);
-
-using namespace mola;
 
 using gtsam::symbol_shorthand::F;  // Frame of reference origin pose (Pose3)
 using gtsam::symbol_shorthand::P;  // Position                       (Point3)
@@ -64,7 +70,7 @@ using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
 
 // -------- GtsamImpl -------
 
-struct NavStateFG::GtsamImpl
+struct StateEstimationSmoother::GtsamImpl
 {
     GtsamImpl()  = default;
     ~GtsamImpl() = default;
@@ -73,11 +79,15 @@ struct NavStateFG::GtsamImpl
     gtsam::Values               values;
 };
 
-// -------- NavStateFG::State -------
-NavStateFG::State::State() : impl(mrpt::make_impl<NavStateFG::GtsamImpl>()) {}
-NavStateFG::State::~State() = default;
+// -------- StateEstimationSmoother::State -------
+StateEstimationSmoother::State::State()
+    : impl(mrpt::make_impl<StateEstimationSmoother::GtsamImpl>())
+{
+}
+StateEstimationSmoother::State::~State() = default;
 
-NavStateFG::frameid_t NavStateFG::State::frame_id(const std::string& frame_name)
+StateEstimationSmoother::frameid_t StateEstimationSmoother::State::frame_id(
+    const std::string& frame_name)
 {
     if (auto it = known_frames.find_key(frame_name);
         it != known_frames.getDirectMap().end())
@@ -92,8 +102,10 @@ NavStateFG::frameid_t NavStateFG::State::frame_id(const std::string& frame_name)
     }
 }
 
-std::optional<std::pair<mrpt::Clock::time_point, NavStateFG::PoseData>>
-    NavStateFG::State::last_pose_of_frame_id(const std::string& frameId)
+std::optional<
+    std::pair<mrpt::Clock::time_point, StateEstimationSmoother::PoseData>>
+    StateEstimationSmoother::State::last_pose_of_frame_id(
+        const std::string& frameId)
 {
     const auto frId = frame_id(frameId);
     for (auto it = data.rbegin(); it != data.rend(); ++it)
@@ -106,29 +118,34 @@ std::optional<std::pair<mrpt::Clock::time_point, NavStateFG::PoseData>>
     return {};
 }
 
-// -------- NavStateFG -------
-NavStateFG::NavStateFG()
+// -------- StateEstimationSmoother -------
+StateEstimationSmoother::StateEstimationSmoother()
 {
-    this->mrpt::system::COutputLogger::setLoggerName("NavStateFG");
+    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
 }
 
-NavStateFG::~NavStateFG() = default;
+StateEstimationSmoother::~StateEstimationSmoother() = default;
 
-void NavStateFG::initialize(const mrpt::containers::yaml& cfg)
+void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
     reset();
 
     // Load params:
-    params_.loadFrom(cfg);
+    params.loadFrom(cfg);
 }
 
-void NavStateFG::reset()
+void StateEstimationSmoother::spinOnce()
+{
+    // nothing to do in this module
+}
+
+void StateEstimationSmoother::reset()
 {
     // reset:
     state_ = State();
 }
 
-void NavStateFG::fuse_odometry(
+void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
     using namespace std::string_literals;
@@ -146,7 +163,7 @@ void NavStateFG::fuse_odometry(
     delete_too_old_entries();
 }
 
-void NavStateFG::fuse_imu(const mrpt::obs::CObservationIMU& imu)
+void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     THROW_EXCEPTION("TODO");
     (void)imu;
@@ -154,7 +171,7 @@ void NavStateFG::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     delete_too_old_entries();
 }
 
-void NavStateFG::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
+void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     THROW_EXCEPTION("TODO");
     (void)gps;
@@ -162,7 +179,7 @@ void NavStateFG::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     delete_too_old_entries();
 }
 
-void NavStateFG::fuse_pose(
+void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point&         timestamp,
     const mrpt::poses::CPose3DPDFGaussian& pose, const std::string& frame_id)
 {
@@ -186,7 +203,7 @@ void NavStateFG::fuse_pose(
 
     const double dt = mrpt::system::timeDifference(lastKF->first, timestamp);
 
-    if (dt > params_.max_time_to_use_velocity_model) return;
+    if (dt > params.max_time_to_use_velocity_model) return;
 
     ASSERT_GT_(dt, .0);
 
@@ -224,7 +241,7 @@ void NavStateFG::fuse_pose(
     this->fuse_twist(timestamp, tw, twCov);
 }
 
-void NavStateFG::fuse_twist(
+void StateEstimationSmoother::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
@@ -237,13 +254,13 @@ void NavStateFG::fuse_twist(
     delete_too_old_entries();
 }
 
-std::optional<NavState> NavStateFG::estimated_navstate(
+std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
     return build_and_optimize_fg(timestamp, frame_id);
 }
 
-std::set<std::string> NavStateFG::known_frame_ids()
+std::set<std::string> StateEstimationSmoother::known_frame_ids()
 {
     std::set<std::string> ret;
     for (const auto& [name, id] : state_.known_frames.getDirectMap())
@@ -252,7 +269,7 @@ std::set<std::string> NavStateFG::known_frame_ids()
     return ret;
 }
 
-std::optional<NavState> NavStateFG::build_and_optimize_fg(
+std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id)
 {
     using namespace std::string_literals;
@@ -267,15 +284,15 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
             queryTimestamp, state_.data.begin()->first);
         const double tlast_2_tq = mrpt::system::timeDifference(
             state_.data.rbegin()->first, queryTimestamp);
-        if (tq_2_tfirst > params_.max_time_to_use_velocity_model ||
-            tlast_2_tq > params_.max_time_to_use_velocity_model)
+        if (tq_2_tfirst > params.max_time_to_use_velocity_model ||
+            tlast_2_tq > params.max_time_to_use_velocity_model)
         {
             MRPT_LOG_DEBUG_STREAM(
                 "[build_and_optimize_fg] Skipping due to need to extrapolate "
                 "too much: tq_2_tfirst="
                 << tq_2_tfirst << " tlast_2_tq=" << tlast_2_tq
                 << " max_time_to_use_velocity_model="
-                << params_.max_time_to_use_velocity_model);
+                << params.max_time_to_use_velocity_model);
 
             return {};
         }
@@ -339,16 +356,14 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
     }
 
     // Unary prior for initial twist:
-    const auto& tw = params_.initial_twist;
+    const auto& tw = params.initial_twist;
     fg.addPrior(
         V(0), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
-        gtsam::noiseModel::Isotropic::Sigma(
-            3, params_.initial_twist_sigma_lin));
+        gtsam::noiseModel::Isotropic::Sigma(3, params.initial_twist_sigma_lin));
 
     fg.addPrior(
         W(0), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
-        gtsam::noiseModel::Isotropic::Sigma(
-            3, params_.initial_twist_sigma_ang));
+        gtsam::noiseModel::Isotropic::Sigma(3, params.initial_twist_sigma_ang));
 
     // Process pose observations:
     // ------------------------------------------
@@ -376,10 +391,10 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
                         pCov.block<3, 3>(3, 3));
 
                     gtsam::noiseModel::Base::shared_ptr robNoisePos;
-                    if (params_.robust_param > 0)
+                    if (params.robust_param > 0)
                         robNoisePos = gtsam::noiseModel::Robust::Create(
                             gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params_.robust_param),
+                                params.robust_param),
                             noisePos);
                     else
                         robNoisePos = noisePos;
@@ -392,10 +407,10 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
                         pCov.block<3, 3>(0, 0));
 
                     gtsam::noiseModel::Base::shared_ptr robNoiseRot;
-                    if (params_.robust_param > 0)
+                    if (params.robust_param > 0)
                         robNoiseRot = gtsam::noiseModel::Robust::Create(
                             gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params_.robust_param),
+                                params.robust_param),
                             noiseRot);
                     else
                         robNoiseRot = noiseRot;
@@ -425,10 +440,10 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
             {
                 auto noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
                 gtsam::noiseModel::Base::shared_ptr robNoiseV;
-                if (params_.robust_param > 0)
+                if (params.robust_param > 0)
                     robNoiseV = gtsam::noiseModel::Robust::Create(
                         gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                            params_.robust_param),
+                            params.robust_param),
                         noiseV);
                 else
                     robNoiseV = noiseV;
@@ -438,10 +453,10 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
             {
                 auto noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
                 gtsam::noiseModel::Base::shared_ptr robNoiseW;
-                if (params_.robust_param > 0)
+                if (params.robust_param > 0)
                     robNoiseW = gtsam::noiseModel::Robust::Create(
                         gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                            params_.robust_param),
+                            params.robust_param),
                         noiseW);
                 else
                     robNoiseW = noiseW;
@@ -496,7 +511,7 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
     }
 
     // final sanity check:
-    if (final_rmse > params_.max_rmse)
+    if (final_rmse > params.max_rmse)
     {
         MRPT_LOG_WARN_STREAM(
             "[build_and_optimize_fg] Discarding solution due to high "
@@ -569,7 +584,7 @@ std::optional<NavState> NavStateFG::build_and_optimize_fg(
 }
 
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-void NavStateFG::addFactor(const mola::FactorConstVelKinematics& f)
+void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
 {
 #if 0
     MRPT_LOG_DEBUG_STREAM(
@@ -586,10 +601,10 @@ void NavStateFG::addFactor(const mola::FactorConstVelKinematics& f)
     ASSERT_GT_(dt, 0.);
 
     // errors in constant vel:
-    const double std_linvel = params_.sigma_random_walk_acceleration_linear;
-    const double std_angvel = params_.sigma_random_walk_acceleration_angular;
+    const double std_linvel = params.sigma_random_walk_acceleration_linear;
+    const double std_angvel = params.sigma_random_walk_acceleration_angular;
 
-    if (dt > params_.time_between_frames_to_warning)
+    if (dt > params.time_between_frames_to_warning)
     {
         MRPT_LOG_WARN_FMT(
             "A constant-velocity kinematics factor has been added for a "
@@ -634,10 +649,10 @@ void NavStateFG::addFactor(const mola::FactorConstVelKinematics& f)
     // 2) Add kinematics / numerical integration factor
     // ---------------------------------------------------
     auto noise_kinematicsPosition = gtsam::noiseModel::Isotropic::Sigma(
-        3, params_.sigma_integrator_position);
+        3, params.sigma_integrator_position);
 
     auto noise_kinematicsOrientation = gtsam::noiseModel::Isotropic::Sigma(
-        3, params_.sigma_integrator_orientation);
+        3, params.sigma_integrator_orientation);
 
     // Impl. line 2 of eq (1) in the MOLA RSS2019 paper
     state_.impl->fg.emplace_shared<FactorTrapezoidalIntegrator>(
@@ -648,13 +663,13 @@ void NavStateFG::addFactor(const mola::FactorConstVelKinematics& f)
         kRi, kbWi, kRj, dt, noise_kinematicsOrientation);
 }
 
-void NavStateFG::delete_too_old_entries()
+void StateEstimationSmoother::delete_too_old_entries()
 {
     if (state_.data.empty()) return;
 
     const double newestTime =
         mrpt::Clock::toDouble(state_.data.rbegin()->first);
-    const double minTime = newestTime - params_.sliding_window_length;
+    const double minTime = newestTime - params.sliding_window_length;
 
     for (auto it = state_.data.begin(); it != state_.data.end();)
     {
@@ -668,7 +683,7 @@ void NavStateFG::delete_too_old_entries()
     }
 }
 
-std::string NavStateFG::PointData::asString() const
+std::string StateEstimationSmoother::PointData::asString() const
 {
     std::ostringstream ss;
 
@@ -679,3 +694,5 @@ std::string NavStateFG::PointData::asString() const
 
     return ss.str();
 }
+
+}  // namespace mola::state_estimation_smoother

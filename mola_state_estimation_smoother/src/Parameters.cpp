@@ -18,17 +18,18 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFGParams.cpp
+ * @file   Parameters.cpp
  * @brief  Parameters for NavStateFuse
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
  */
 
-#include <mola_state_estimation_smoother/NavStateFGParams.h>
+#include <mola_state_estimation_smoother/Parameters.h>
 
-using namespace mola;
+namespace mola::state_estimation_smoother
+{
 
-void NavStateFGParams::loadFrom(const mrpt::containers::yaml& cfg)
+void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 {
     MCP_LOAD_REQ(cfg, max_time_to_use_velocity_model);
 
@@ -56,3 +57,5 @@ void NavStateFGParams::loadFrom(const mrpt::containers::yaml& cfg)
         for (size_t i = 0; i < 6; i++) tw[i] = seq.at(i).as<double>();
     }
 }
+
+}  // namespace mola::state_estimation_smoother

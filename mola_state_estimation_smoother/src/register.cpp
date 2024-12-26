@@ -25,11 +25,11 @@
  * @date   Sep 18, 2021
  */
 
+#include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/initializer.h>
-
-// using namespace mola;
 
 MRPT_INITIALIZER(do_register_navstate_fuse)
 {
-    //  MOLA_REGISTER_MODULE(xx);
+    MOLA_REGISTER_MODULE(
+        mola::state_estimation_smoother::StateEstimationSmoother);
 }

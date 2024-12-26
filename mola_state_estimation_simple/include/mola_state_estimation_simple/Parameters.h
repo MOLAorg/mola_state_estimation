@@ -18,8 +18,8 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFuseParams.h
- * @brief  Parameters for NavStateFuse
+ * @file   Parameters.h
+ * @brief  Parameters for StateEstimationSimple
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
  */
@@ -30,17 +30,17 @@
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/math/TTwist3D.h>
 
-namespace mola
+namespace mola::state_estimation_simple
 {
-/** Parameters needed by NavStateFuse.
+/** Parameters needed by StateEstimationSimple.
  *
  * \ingroup mola_imu_preintegration_grp
  */
-class NavStateFuseParams
+class Parameters
 {
    public:
-    NavStateFuseParams()  = default;
-    ~NavStateFuseParams() = default;
+    Parameters()  = default;
+    ~Parameters() = default;
 
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);
@@ -55,4 +55,4 @@ class NavStateFuseParams
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_simple

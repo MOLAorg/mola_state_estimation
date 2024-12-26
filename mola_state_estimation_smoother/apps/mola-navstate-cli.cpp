@@ -4,7 +4,7 @@
  * See LICENSE for license information.
  * ------------------------------------------------------------------------- */
 
-#include <mola_state_estimation_smoother/NavStateFG.h>
+#include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/exceptions.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
@@ -21,7 +21,7 @@ void run_navstate(const std::string& paramsFile, const std::string& rawlogFile)
     using mrpt::obs::CObservationIMU;
     using mrpt::obs::CObservationRobotPose;
 
-    mola::NavStateFG nav;
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
 
     std::cout << "Initalizing from: " << paramsFile << std::endl;
 

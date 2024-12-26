@@ -18,7 +18,7 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   NavStateFG.h
+ * @file   StateEstimationSmoother.h
  * @brief  Fuse of odometry, IMU, and SE(3) pose/twist estimations.
  * @author Jose Luis Blanco Claraco
  * @date   Jan 22, 2024
@@ -27,7 +27,7 @@
 
 // this package:
 #include <mola_kernel/interfaces/NavStateFilter.h>
-#include <mola_state_estimation_smoother/NavStateFGParams.h>
+#include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:
 #include <mola_imu_preintegration/RotationIntegrator.h>
@@ -46,7 +46,7 @@
 #include <optional>
 #include <set>
 
-namespace mola
+namespace mola::state_estimation_smoother
 {
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
@@ -87,24 +87,28 @@ namespace mola
  * For more theoretical descriptions, see the papers cited in
  * https://docs.mola-slam.org/latest/
  *
- * \ingroup mola_navstate_fuse_grp
+ * \ingroup mola_state_estimation_grp
  */
-class NavStateFG : public mola::NavStateFilter
+class StateEstimationSmoother : public mola::NavStateFilter
 {
+    DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
+
    public:
-    NavStateFG();
-    ~NavStateFG();
+    StateEstimationSmoother();
+    ~StateEstimationSmoother();
 
     /** \name Main API
      *  @{ */
 
-    NavStateFGParams params_;
+    Parameters params;
 
     /**
      * @brief Initializes the object and reads all parameters from a YAML node.
      * @param cfg a YAML node with a dictionary of parameters to load from.
      */
     void initialize(const mrpt::containers::yaml& cfg) override;
+
+    void spinOnce() override;
 
     /** Resets the estimator state to an initial state */
     void reset() override;
@@ -240,4 +244,4 @@ class NavStateFG : public mola::NavStateFilter
     void delete_too_old_entries();
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_smoother

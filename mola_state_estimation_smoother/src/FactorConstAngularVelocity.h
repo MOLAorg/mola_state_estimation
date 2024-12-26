@@ -32,7 +32,7 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/expressions.h>
 
-namespace mola
+namespace mola::state_estimation_smoother
 {
 /**
  * Factor for constant angular velocity model, equivalent to expression:
@@ -126,4 +126,4 @@ class FactorConstAngularVelocity
     }
 };
 
-}  // namespace mola
+}  // namespace mola::state_estimation_smoother
