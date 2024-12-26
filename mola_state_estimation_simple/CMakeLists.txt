@@ -11,7 +11,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 # Tell CMake we'll use C++ for use in its tests/flags
-project(mola_navstate_fuse LANGUAGES CXX)
+project(mola_state_estimation_simple LANGUAGES CXX)
 
 # MOLA CMake scripts: "mola_xxx()"
 find_package(mola_common REQUIRED)

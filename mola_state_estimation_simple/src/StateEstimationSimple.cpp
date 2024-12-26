@@ -25,7 +25,7 @@
  */
 
 #include <mola_imu_preintegration/RotationIntegrator.h>
-#include <mola_navstate_fuse/NavStateFuse.h>
+#include <mola_state_estimation_simple/NavStateFuse.h>
 #include <mrpt/poses/Lie/SO.h>
 
 using namespace mola;

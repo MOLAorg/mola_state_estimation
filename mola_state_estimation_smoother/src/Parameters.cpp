@@ -24,7 +24,7 @@
  * @date   Jan 22, 2024
  */
 
-#include <mola_navstate_fg/NavStateFGParams.h>
+#include <mola_state_estimation_smoother/NavStateFGParams.h>
 
 using namespace mola;
 

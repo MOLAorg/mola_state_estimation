@@ -27,7 +27,7 @@
 
 // this package:
 #include <mola_kernel/interfaces/NavStateFilter.h>
-#include <mola_navstate_fg/NavStateFGParams.h>
+#include <mola_state_estimation_smoother/NavStateFGParams.h>
 
 // MOLA:
 #include <mola_imu_preintegration/RotationIntegrator.h>

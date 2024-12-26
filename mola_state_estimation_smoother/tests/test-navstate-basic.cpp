@@ -25,7 +25,7 @@
  * @date   Jun 13, 2024
  */
 
-#include <mola_navstate_fg/NavStateFG.h>
+#include <mola_state_estimation_smoother/NavStateFG.h>
 #include <mrpt/poses/Lie/SE.h>
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/system/os.h>

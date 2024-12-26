@@ -25,7 +25,7 @@
  */
 
 // MOLA & MRPT:
-#include <mola_navstate_fg/NavStateFG.h>
+#include <mola_state_estimation_smoother/NavStateFG.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/gtsam_wrappers.h>
 #include <mrpt/poses/Lie/SO.h>

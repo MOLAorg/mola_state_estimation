@@ -24,7 +24,7 @@
  * @date   Sep 19, 2021
  */
 
-#include <mola_navstate_fuse/NavStateFuseParams.h>
+#include <mola_state_estimation_simple/NavStateFuseParams.h>
 
 using namespace mola;
 

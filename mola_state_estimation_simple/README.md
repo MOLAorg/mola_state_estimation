@@ -1,4 +1,4 @@
-# mola_navstate_fuse
+# mola_state_estimation_simple
 Simple kinematic state vector extrapolation algorithm to fuse odometry sources.
 
 This repository provides:

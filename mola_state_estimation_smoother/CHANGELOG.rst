@@ -1,5 +1,5 @@
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Changelog for package mola_navstate_fuse
+Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 1.4.1 (2024-12-20)
@@ -7,8 +7,6 @@ Changelog for package mola_navstate_fuse
 
 1.4.0 (2024-12-18)
 ------------------
-* Allow zero variances for some pose components
-* Contributors: Jose Luis Blanco-Claraco
 
 1.3.0 (2024-12-11)
 ------------------
@@ -34,6 +32,7 @@ Changelog for package mola_navstate_fuse
 
 1.1.0 (2024-08-18)
 ------------------
+* Update test-navstate-basic.cpp: less noisy test data for more predictable results
 * Merge pull request `#62 <https://github.com/MOLAorg/mola/issues/62>`_ from MOLAorg/docs-fixes
   Docs fixes
 * Fix ament_xmllint warnings in package.xml
@@ -46,11 +45,12 @@ Changelog for package mola_navstate_fuse
 
 1.0.7 (2024-07-24)
 ------------------
+* Fix GNSS typo
+* Contributors: Jose Luis Blanco-Claraco
 
 1.0.6 (2024-06-21)
 ------------------
 * Create new NavStateFilter interface and separate the simple fuser and the factor-graph approach in two packages
-* Twist in local frame
 * Contributors: Jose Luis Blanco-Claraco
 
 1.0.5 (2024-05-28)
@@ -75,7 +75,7 @@ Changelog for package mola_navstate_fuse
 1.0.0 (2024-03-19)
 ------------------
 * use odometry
-* add new package mola_navstate_fuse
+* add new package mola_state_estimation_simple
 * Contributors: Jose Luis Blanco-Claraco
 
 0.2.2 (2023-09-08)

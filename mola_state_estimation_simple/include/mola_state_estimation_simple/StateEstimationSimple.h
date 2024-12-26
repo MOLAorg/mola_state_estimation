@@ -26,7 +26,7 @@
 #pragma once
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
-#include <mola_navstate_fuse/NavStateFuseParams.h>
+#include <mola_state_estimation_simple/NavStateFuseParams.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
 #include <mrpt/obs/CObservationIMU.h>

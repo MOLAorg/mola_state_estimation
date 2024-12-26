@@ -1,4 +1,4 @@
-# mola_navstate_fuse
+# mola_navstate_smoother
 Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3) pose/twist estimations.
 
 This repository provides:

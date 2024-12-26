@@ -4,7 +4,7 @@
  * See LICENSE for license information.
  * ------------------------------------------------------------------------- */
 
-#include <mola_navstate_fg/NavStateFG.h>
+#include <mola_state_estimation_smoother/NavStateFG.h>
 #include <mrpt/core/exceptions.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
