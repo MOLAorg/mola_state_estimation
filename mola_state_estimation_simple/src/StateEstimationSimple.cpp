@@ -35,6 +35,11 @@ IMPLEMENTS_MRPT_OBJECT(
 namespace mola::state_estimation_simple
 {
 
+StateEstimationSimple::StateEstimationSimple()
+{
+    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSimple");
+}
+
 void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
     reset();
@@ -101,7 +106,7 @@ void StateEstimationSimple::fuse_pose(
     double dt = 0;
     if (state_.last_pose_obs_tim)
         dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
-    
+
     if (dt < params.max_time_to_use_velocity_model && state_.last_pose)
     {
         ASSERT_GT_(dt, .0);

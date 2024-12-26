@@ -62,12 +62,12 @@ class StateEstimationSimple : public mola::NavStateFilter
     DEFINE_MRPT_OBJECT(StateEstimationSimple, mola::state_estimation_simple)
 
    public:
-    StateEstimationSimple()  = default;
+    StateEstimationSimple();
     ~StateEstimationSimple() = default;
 
     /** \name Main API
      *  @{ */
-    
+
     Parameters params;
 
     /**
