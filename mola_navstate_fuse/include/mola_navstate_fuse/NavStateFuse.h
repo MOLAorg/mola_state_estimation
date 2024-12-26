@@ -57,7 +57,6 @@ namespace mola
  * \ingroup mola_imu_preintegration_grp
  */
 class NavStateFuse : public mola::NavStateFilter
-
 {
    public:
     NavStateFuse()  = default;
