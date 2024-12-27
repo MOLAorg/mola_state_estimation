@@ -26,6 +26,7 @@
 
 #include <mola_imu_preintegration/RotationIntegrator.h>
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
+#include <mola_yaml/yaml_helpers.h>
 #include <mrpt/poses/Lie/SO.h>
 
 // arguments: class_name, parent_class, class namespace
@@ -42,10 +43,13 @@ StateEstimationSimple::StateEstimationSimple()
 
 void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
+    MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
+    ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
+
     reset();
 
     // Load params:
-    params.loadFrom(cfg);
+    params.loadFrom(cfg["params"]);
 }
 
 void StateEstimationSimple::spinOnce()

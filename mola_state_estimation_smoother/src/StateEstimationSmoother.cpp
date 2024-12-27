@@ -26,6 +26,7 @@
 
 // MOLA & MRPT:
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
+#include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/gtsam_wrappers.h>
 #include <mrpt/poses/Lie/SO.h>
@@ -128,10 +129,13 @@ StateEstimationSmoother::~StateEstimationSmoother() = default;
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
+    MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
+    ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
+
     reset();
 
     // Load params:
-    params.loadFrom(cfg);
+    params.loadFrom(cfg["params"]);
 }
 
 void StateEstimationSmoother::spinOnce()
