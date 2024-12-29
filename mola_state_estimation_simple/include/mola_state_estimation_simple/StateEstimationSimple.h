@@ -51,7 +51,8 @@ namespace mola::state_estimation_simple
  * Old observations are automatically removed.
  *
  * \note This implementation of mola::NavStateFilter ignores the passed
- *       "frame_id"
+ *       "frame_id".
+ * \note It also ignore GNSS sensor.
  *
  * \sa mola::IMUIntegrator
  *
@@ -86,9 +87,8 @@ class StateEstimationSimple : public mola::NavStateFilter
     /** Integrates new SE(3) pose estimation of the vehicle wrt frame_id
      */
     void fuse_pose(
-        const mrpt::Clock::time_point&         timestamp,
-        const mrpt::poses::CPose3DPDFGaussian& pose,
-        const std::string&                     frame_id) override;
+        const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
+        const std::string& frame_id) override;
 
     /** Integrates new wheels-based odometry observations into the estimator.
      *  This is a convenience method that internally ends up calling
@@ -97,7 +97,7 @@ class StateEstimationSimple : public mola::NavStateFilter
      */
     void fuse_odometry(
         const mrpt::obs::CObservationOdometry& odom,
-        const std::string& odomName = "odom_wheels") override;
+        const std::string&                     odomName = "odom_wheels") override;
 
     /** Integrates new IMU observations into the estimator */
     void fuse_imu(const mrpt::obs::CObservationIMU& imu) override;
@@ -107,8 +107,7 @@ class StateEstimationSimple : public mola::NavStateFilter
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
-        const mrpt::Clock::time_point&     timestamp,
-        const mrpt::math::TTwist3D&        twist,
+        const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
         const mrpt::math::CMatrixDouble66& twistCov) override;
 
     /** Computes the estimated vehicle state at a given timestep using the
@@ -117,13 +116,9 @@ class StateEstimationSimple : public mola::NavStateFilter
      * validity time window (e.g. too far in the future to be trustful).
      */
     std::optional<NavState> estimated_navstate(
-        const mrpt::Clock::time_point& timestamp,
-        const std::string&             frame_id) override;
+        const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
-    std::optional<mrpt::math::TTwist3D> get_last_twist() const
-    {
-        return state_.last_twist;
-    }
+    std::optional<mrpt::math::TTwist3D> get_last_twist() const { return state_.last_twist; }
 
     /** @} */
 
@@ -137,7 +132,7 @@ class StateEstimationSimple : public mola::NavStateFilter
         std::optional<mrpt::Clock::time_point>         last_pose_obs_tim;
         std::optional<mrpt::poses::CPose3DPDFGaussian> last_pose;
         std::optional<mrpt::math::TTwist3D>            last_twist;
-        bool pose_already_updated_with_odom = false;
+        bool                                           pose_already_updated_with_odom = false;
     };
 
     State state_;

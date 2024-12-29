@@ -30,8 +30,7 @@
 #include <mrpt/poses/Lie/SO.h>
 
 // arguments: class_name, parent_class, class namespace
-IMPLEMENTS_MRPT_OBJECT(
-    StateEstimationSimple, mola::ExecutableBase, mola::state_estimation_simple)
+IMPLEMENTS_MRPT_OBJECT(StateEstimationSimple, mola::ExecutableBase, mola::state_estimation_simple)
 
 namespace mola::state_estimation_simple
 {
@@ -64,16 +63,14 @@ void StateEstimationSimple::reset()
 }
 
 void StateEstimationSimple::fuse_odometry(
-    const mrpt::obs::CObservationOdometry& odom,
-    [[maybe_unused]] const std::string&    odomName)
+    const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
 {
     // this will work well only for simple datasets with one odometry:
     if (state_.last_odom_obs && state_.last_pose)
     {
         const auto poseIncr = odom.odometry - state_.last_odom_obs->odometry;
 
-        state_.last_pose->mean =
-            state_.last_pose->mean + mrpt::poses::CPose3D(poseIncr);
+        state_.last_pose->mean = state_.last_pose->mean + mrpt::poses::CPose3D(poseIncr);
 
         // We can skip velocity-based model, but retain the twist:
         // state_.last_twist: do not modify
@@ -85,20 +82,55 @@ void StateEstimationSimple::fuse_odometry(
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
-    // TODO(jlbc)
-    (void)imu;
+    // Simple approach to integrate IMU readings with angular velocities:
+    // 1) Move forward the prediction in time until this observation's time,
+    // 2) Assume angular velocity is exactly as measured by this new IMU reading.
+    if (!imu.has(mrpt::obs::TIMUDataIndex::IMU_WX) ||  //
+        !imu.has(mrpt::obs::TIMUDataIndex::IMU_WY) ||  //
+        !imu.has(mrpt::obs::TIMUDataIndex::IMU_WZ))
+    {
+        MRPT_LOG_THROTTLE_INFO(5.0, "Ignoring IMU reading since it has no angular velocity data");
+    }
+
+    const auto stateNow = this->estimated_navstate(imu.timestamp, "frame_ignored");
+    if (!stateNow)
+    {
+        MRPT_LOG_INFO_FMT(
+            "Ignoring IMU reading at t=%f due to missing former navstate estimation.",
+            mrpt::Clock::toDouble(imu.timestamp));
+        return;
+    }
+
+    mrpt::poses::CPose3DPDFGaussian curPosePDF;
+    curPosePDF.copyFrom(stateNow->pose);
+
+    // Set new pose as current pose:
+    this->fuse_pose(imu.timestamp, curPosePDF, "frame_ignored");
+
+    // and now overwrite twist (wx,wy,wz) part from IMU data:
+    mrpt::math::TTwist3D imuReading;
+    imuReading.wx = imu.get(mrpt::obs::TIMUDataIndex::IMU_WX);
+    imuReading.wy = imu.get(mrpt::obs::TIMUDataIndex::IMU_WY);
+    imuReading.wz = imu.get(mrpt::obs::TIMUDataIndex::IMU_WZ);
+
+    // Transform frames: IMU -> vehicle:
+    imuReading.rotate(imu.sensorPose.asTPose());
+
+    state_.last_twist->wx = imuReading.wx;
+    state_.last_twist->wy = imuReading.wy;
+    state_.last_twist->wz = imuReading.wz;
 }
 
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
-    // TODO(jlbc)
+    // This estimator will just ignore GPS.
+    // Refer to the smoother for a more versatile estimator.
     (void)gps;
 }
 
 void StateEstimationSimple::fuse_pose(
-    const mrpt::Clock::time_point&         timestamp,
-    const mrpt::poses::CPose3DPDFGaussian& pose,
-    [[maybe_unused]] const std::string&    frame_id)
+    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
+    [[maybe_unused]] const std::string& frame_id)
 {
     mrpt::poses::CPose3D incrPose;
 
@@ -123,8 +155,7 @@ void StateEstimationSimple::fuse_pose(
         tw.vy = incrPose.y() / dt;
         tw.vz = incrPose.z() / dt;
 
-        const auto logRot =
-            mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
+        const auto logRot = mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
 
         tw.wx = logRot[0] / dt;
         tw.wy = logRot[1] / dt;
@@ -139,21 +170,18 @@ void StateEstimationSimple::fuse_pose(
 }
 
 void StateEstimationSimple::fuse_twist(
-    [[maybe_unused]] const mrpt::Clock::time_point&     timestamp,
-    const mrpt::math::TTwist3D&                         twist,
+    [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     [[maybe_unused]] const mrpt::math::CMatrixDouble66& twistCov)
 {
     state_.last_twist = twist;
 }
 
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
-    const mrpt::Clock::time_point&      timestamp,
-    [[maybe_unused]] const std::string& frame_id)
+    const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
     if (!state_.last_pose_obs_tim) return {};  // None
 
-    const double dt =
-        mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
+    const double dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
     if (!state_.last_twist || !state_.last_pose ||
         std::abs(dt) > params.max_time_to_use_velocity_model)
@@ -177,8 +205,7 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
         // For the velocity model, we don't have any known "bias":
         const mola::RotationIntegrationParams rotParams = {};
 
-        const auto rot33 =
-            mola::incremental_rotation({tw.wx, tw.wy, tw.wz}, rotParams, dt);
+        const auto rot33 = mola::incremental_rotation({tw.wx, tw.wy, tw.wz}, rotParams, dt);
 
         poseExtrapolation = mrpt::poses::CPose3D::FromRotationAndTranslation(
             rot33, mrpt::math::TVector3D(tw.vx, tw.vy, tw.vz) * dt);
@@ -190,10 +217,8 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     // pose cov:
     auto cov = state_.last_pose->cov;
 
-    double varXYZ =
-        mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
-    double varRot =
-        mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
+    double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
+    double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
 
     for (int i = 0; i < 3; i++) cov(i, i) += varXYZ;
     for (int i = 3; i < 6; i++) cov(i, i) += varRot;
