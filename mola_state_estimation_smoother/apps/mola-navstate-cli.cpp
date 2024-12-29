@@ -8,6 +8,7 @@
 #include <mrpt/core/exceptions.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
+#include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/obs/CRawlog.h>
 
@@ -56,6 +57,16 @@ void run_navstate(const std::string& paramsFile, const std::string& rawlogFile)
                  oImu)
         {
             nav.fuse_imu(*oImu);
+        }
+        else if (auto oOdo =
+                     std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(
+                         o);
+                 oOdo)
+        {
+            const std::string odoName =
+                oOdo->sensorLabel.empty() ? "odom_wheels" : oOdo->sensorLabel;
+
+            nav.fuse_odometry(*oOdo, odoName);
         }
         else
         {
