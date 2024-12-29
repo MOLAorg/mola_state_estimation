@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mola_state_estimation</name>
+  <version>1.5.0</version>
+  <description>Metapackage with all state estimation packages MOLA packages.</description>
+
+  <maintainer email="jlblanco@ual.es">Jose-Luis Blanco-Claraco</maintainer>
+  <license file="LICENSE">BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>mola_imu_preintegration</depend>
+  <depend>mola_state_estimation_simple</depend>
+  <depend>mola_state_estimation_smoother</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_xmllint</test_depend>
+  <test_depend>ament_lint_cmake</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
