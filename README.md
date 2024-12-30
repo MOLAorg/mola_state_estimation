@@ -13,9 +13,13 @@
 Implementations of the MOLA virtual state estimation API for robots / vehicles.
 
 Two packages are provided here:
+- `mola_state_estimation_simple`: An incremental updater of a vehicle kinematic state from incoming
+  sensor observations based on a constant velocity model. Good enough for most automotive datasets.
 
+- `mola_state_estimation_smoother`: An advanced method based on factor-graph smoothing, capable of
+  fusing wheels odometry, IMUs, GNSS, etc.
 
-Refer to the [official documentation](https://docs.mola-slam.org/latest/) for build instructions, demos, API reference, etc.
+Refer to the [repository documentation](https://docs.mola-slam.org/latest/mola_state_estimators.html) for more details, demos, etc.
 
 ## Individual package build status
 
@@ -29,5 +33,6 @@ Note: Rows within each cell are for ``amd64`` and ``arm64`` architectures.
 | mola_state_estimation_smoother | [![Build Status](https://build.ros2.org/job/Hbin_uJ64__mola_state_estimation_smoother__ubuntu_jammy_amd64__binary/badge/icon)](https://build.ros2.org/job/Hbin_uJ64__mola_state_estimation_smoother__ubuntu_jammy_amd64__binary/) <br> [![Build Status](https://build.ros2.org/job/Hbin_ujv8_uJv8__mola_state_estimation_smoother__ubuntu_jammy_arm64__binary/badge/icon)](https://build.ros2.org/job/Hbin_ujv8_uJv8__mola_state_estimation_smoother__ubuntu_jammy_arm64__binary/)  | [![Build Status](https://build.ros2.org/job/Jbin_uN64__mola_state_estimation_smoother__ubuntu_noble_amd64__binary/badge/icon)](https://build.ros2.org/job/Jbin_uN64__mola_state_estimation_smoother__ubuntu_noble_amd64__binary/) <br> [![Build Status](https://build.ros2.org/job/Jbin_unv8_uNv8__mola_state_estimation_smoother__ubuntu_noble_arm64__binary/badge/icon)](https://build.ros2.org/job/Jbin_unv8_uNv8__mola_state_estimation_smoother__ubuntu_noble_arm64__binary/)  | [![Build Status](https://build.ros2.org/job/Rbin_uN64__mola_state_estimation_smoother__ubuntu_noble_amd64__binary/badge/icon)](https://build.ros2.org/job/Rbin_uN64__mola_state_estimation_smoother__ubuntu_noble_amd64__binary/)<br> [![Build Status](https://build.ros2.org/job/Rbin_unv8_uNv8__mola_state_estimation_smoother__ubuntu_noble_arm64__binary/badge/icon)](https://build.ros2.org/job/Rbin_unv8_uNv8__mola_state_estimation_smoother__ubuntu_noble_arm64__binary/) | 
 
 ## License
-MOLA is released under the GNU GPL v3 license, except noted otherwise in each individual module. Other options available upon request.
-Some modules are released under BSD-3. See the [official documentation](https://docs.mola-slam.org/latest/).
+`mola_state_estimation` is released under the GNU GPL v3 license, except noted otherwise in each individual module.
+Other options available upon request.
+See the [official project documentation](https://docs.mola-slam.org/latest/).
