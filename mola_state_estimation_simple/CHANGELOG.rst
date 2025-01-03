@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.6.0 (2025-01-03)
+------------------
 * Simple estimator: Integrate IMU angular velocity readings
 * Contributors: Jose Luis Blanco-Claraco
 

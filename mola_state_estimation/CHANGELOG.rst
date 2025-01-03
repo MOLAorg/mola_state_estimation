@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.6.0 (2025-01-03)
+------------------
 * docs: link to main sphinx page
 * add metapackage for easy installation of all packages
 * Contributors: Jose Luis Blanco-Claraco
