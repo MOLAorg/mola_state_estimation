@@ -143,10 +143,14 @@ void StateEstimationSimple::fuse_pose(
     if (state_.last_pose_obs_tim)
         dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
+    if (dt < 0)
+    {
+        MRPT_LOG_WARN_STREAM("Ignoring fuse_pose() call with dt=" << dt);
+        return;
+    }
+
     if (dt < params.max_time_to_use_velocity_model && state_.last_pose)
     {
-        ASSERT_GT_(dt, .0);
-
         auto& tw = state_.last_twist.emplace();
 
         incrPose = pose.mean - (state_.last_pose)->mean;
