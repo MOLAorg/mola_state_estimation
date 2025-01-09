@@ -88,28 +88,25 @@ changed as follows:
 
 |
 
-3. Supported inputs
+3. API and supported inputs
 ---------------------------------
 Write me!
 
-|
+.. image:: imgs/mola_state_estimation_api_overview.webp
 
-4. C++ generic API
----------------------------------
-Write me!
 
 |
 
-5. Implementations
+4. Implementations
 ---------------------------------
 
-5.1. Simple estimator
+4.1. Simple estimator
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Write me!
 
 |
 
-5.2. Factor graph smoother
+4.2. Factor graph smoother
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Write me!
 
