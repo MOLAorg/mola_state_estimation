@@ -2,6 +2,15 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#1 <https://github.com/MOLAorg/mola_state_estimation/issues/1>`_ from MOLAorg/9-need-help-on-integrating-imu-for-lidar-odometry
+  More stable integration of IMU twist information
+* Shorter logger name
+* Fix package.xml URLs
+* tolerate unsorted sensor inputs without throwing
+* Contributors: Jose Luis Blanco-Claraco
+
 1.6.0 (2025-01-03)
 ------------------
 * Simple estimator: Integrate IMU angular velocity readings
