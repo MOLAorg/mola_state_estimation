@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.6.1 (2025-01-10)
+------------------
 * Fix package.xml URLs
 * Contributors: Jose Luis Blanco-Claraco
 

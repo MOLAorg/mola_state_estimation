@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.6.1 (2025-01-10)
+------------------
 * Merge pull request `#1 <https://github.com/MOLAorg/mola_state_estimation/issues/1>`_ from MOLAorg/9-need-help-on-integrating-imu-for-lidar-odometry
   More stable integration of IMU twist information
 * Shorter logger name

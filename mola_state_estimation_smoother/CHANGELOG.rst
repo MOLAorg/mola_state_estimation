@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.6.1 (2025-01-10)
+------------------
 * Shorter logger name
 * Contributors: Jose Luis Blanco-Claraco
 
