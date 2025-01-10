@@ -1,7 +1,7 @@
 /* -------------------------------------------------------------------------
  *   A Modular Optimization framework for Localization and mApping  (MOLA)
  *
- * Copyright (C) 2018-2024 Jose Luis Blanco, University of Almeria
+ * Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
  * Licensed under the GNU GPL v3 for non-commercial applications.
  *
  * This file is part of MOLA.
@@ -38,9 +38,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     if (cfg.has("initial_twist"))
     {
-        ASSERT_(
-            cfg["initial_twist"].isSequence() &&
-            cfg["initial_twist"].asSequence().size() == 6);
+        ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);
 
         auto&      tw  = initial_twist;
         const auto seq = cfg["initial_twist"].asSequenceRange();
