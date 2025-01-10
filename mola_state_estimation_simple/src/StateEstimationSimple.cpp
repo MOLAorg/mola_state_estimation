@@ -59,6 +59,8 @@ void StateEstimationSimple::reset()
 {
     // reset:
     state_ = State();
+
+    MRPT_LOG_INFO_STREAM("reset() called");
 }
 
 void StateEstimationSimple::fuse_odometry(
@@ -77,6 +79,8 @@ void StateEstimationSimple::fuse_odometry(
     }
     // copy:
     state_.last_odom_obs = odom;
+
+    MRPT_LOG_DEBUG_STREAM("fuse_odometry: odom=" << odom.asString());
 }
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -89,22 +93,11 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
         !imu.has(mrpt::obs::TIMUDataIndex::IMU_WZ))
     {
         MRPT_LOG_THROTTLE_INFO(5.0, "Ignoring IMU reading since it has no angular velocity data");
-    }
-
-    const auto stateNow = this->estimated_navstate(imu.timestamp, "frame_ignored");
-    if (!stateNow)
-    {
-        MRPT_LOG_INFO_FMT(
-            "Ignoring IMU reading at t=%f due to missing former navstate estimation.",
-            mrpt::Clock::toDouble(imu.timestamp));
         return;
     }
 
-    mrpt::poses::CPose3DPDFGaussian curPosePDF;
-    curPosePDF.copyFrom(stateNow->pose);
-
-    // Set new pose as current pose:
-    this->fuse_pose(imu.timestamp, curPosePDF, "frame_ignored");
+    // Do not predict a new pose for this timestamp, so we can use the last *real*
+    // call to fuse_pose() from an outter source.
 
     // and now overwrite twist (wx,wy,wz) part from IMU data:
     mrpt::math::TTwist3D imuReading;
@@ -118,6 +111,8 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     state_.last_twist->wx = imuReading.wx;
     state_.last_twist->wy = imuReading.wy;
     state_.last_twist->wz = imuReading.wz;
+
+    MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
 
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
@@ -125,6 +120,8 @@ void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     // This estimator will just ignore GPS.
     // Refer to the smoother for a more versatile estimator.
     (void)gps;
+
+    MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored in this class");
 }
 
 void StateEstimationSimple::fuse_pose(
@@ -148,6 +145,12 @@ void StateEstimationSimple::fuse_pose(
         return;
     }
 
+    MRPT_LOG_DEBUG_STREAM("fuse_pose(): dt=" << dt << " pose=" << pose.mean);
+    if (state_.last_twist)
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_pose(): twist before=" << state_.last_twist->asString());
+    }
+
     if (dt < params.max_time_to_use_velocity_model && state_.last_pose)
     {
         auto& tw = state_.last_twist.emplace();
@@ -165,6 +168,11 @@ void StateEstimationSimple::fuse_pose(
         tw.wz = logRot[2] / dt;
     }
     else { state_.last_twist.reset(); }
+
+    if (state_.last_twist)
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_pose(): twist after= " << state_.last_twist->asString());
+    }
 
     // save for next iter:
     state_.last_pose                      = pose;
