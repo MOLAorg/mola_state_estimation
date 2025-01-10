@@ -120,15 +120,14 @@ std::optional<
 }
 
 // -------- StateEstimationSmoother -------
-StateEstimationSmoother::StateEstimationSmoother()
-{
-    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
-}
+StateEstimationSmoother::StateEstimationSmoother() = default;
 
 StateEstimationSmoother::~StateEstimationSmoother() = default;
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
+    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
+
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 

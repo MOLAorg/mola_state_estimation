@@ -35,13 +35,12 @@ IMPLEMENTS_MRPT_OBJECT(StateEstimationSimple, mola::ExecutableBase, mola::state_
 namespace mola::state_estimation_simple
 {
 
-StateEstimationSimple::StateEstimationSimple()
-{
-    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSimple");
-}
+StateEstimationSimple::StateEstimationSimple() = default;
 
 void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
+    this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSimple");
+
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 
