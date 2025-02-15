@@ -180,6 +180,16 @@ void StateEstimationSimple::fuse_pose(
     state_.pose_already_updated_with_odom = false;
 }
 
+namespace
+{
+void enforce_planar_pose(mrpt::poses::CPose3D& p)
+{
+    p.z(0);
+    p.setYawPitchRoll(p.yaw(), .0, .0);
+}
+
+}  // namespace
+
 void StateEstimationSimple::fuse_twist(
     [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     [[maybe_unused]] const mrpt::math::CMatrixDouble66& twistCov)
@@ -220,6 +230,13 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
         poseExtrapolation = mrpt::poses::CPose3D::FromRotationAndTranslation(
             rot33, mrpt::math::TVector3D(tw.vx, tw.vy, tw.vz) * dt);
+    }
+
+    // Enforce planar motion?
+    if (params.enforce_planar_motion)
+    {
+        enforce_planar_pose(state_.last_pose->mean);
+        enforce_planar_pose(poseExtrapolation);
     }
 
     // pose mean:

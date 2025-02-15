@@ -69,6 +69,8 @@ class Parameters
     mrpt::math::TTwist3D initial_twist;
     double               initial_twist_sigma_lin = 20.0;  // [m/s]
     double               initial_twist_sigma_ang = 3.0;  // [rad/s]
+
+    bool enforce_planar_motion = false;
 };
 
 }  // namespace mola::state_estimation_smoother

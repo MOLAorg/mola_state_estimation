@@ -53,6 +53,8 @@ class Parameters
 
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
+
+    bool enforce_planar_motion = false;
 };
 
 }  // namespace mola::state_estimation_simple

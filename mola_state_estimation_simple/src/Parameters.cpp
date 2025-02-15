@@ -35,6 +35,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_linear);
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
+    MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
     if (cfg.has("initial_twist"))
     {
