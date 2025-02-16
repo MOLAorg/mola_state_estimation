@@ -26,6 +26,7 @@
 #pragma once
 
 // this package:
+#include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
@@ -59,6 +60,8 @@ namespace mola::state_estimation_smoother
  * - Internally, the first frame of reference will be used as "global"
  *   coordinates, despite it may be actually either a `map` or `odom` frame, in
  *   the [ROS REP 105](https://www.ros.org/reps/rep-0105.html) sense.
+ * - When publishing the vehicle pose in a timely manner, the reference frame
+ *   is that defined in "params.reference_frame_name".
  * - IMU readings are, by definition, given in the robot body frame, although
  *   they can have a relative transformation between the vehicle and sensor.
  *
@@ -89,7 +92,8 @@ namespace mola::state_estimation_smoother
  *
  * \ingroup mola_state_estimation_grp
  */
-class StateEstimationSmoother : public mola::NavStateFilter
+class StateEstimationSmoother : public mola::NavStateFilter,
+                                public mola::LocalizationSourceBase
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
 

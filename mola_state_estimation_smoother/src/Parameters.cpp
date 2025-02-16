@@ -48,6 +48,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
+    MCP_LOAD_OPT(cfg, vehicle_frame_name);
+    MCP_LOAD_OPT(cfg, reference_frame_name);
+
     if (cfg.has("initial_twist"))
     {
         ASSERT_(

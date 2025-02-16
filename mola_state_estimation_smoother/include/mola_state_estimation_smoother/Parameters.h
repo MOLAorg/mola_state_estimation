@@ -45,6 +45,13 @@ class Parameters
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);
 
+    /// Used to publish timely pose updates
+    std::string vehicle_frame_name = "base_link";
+
+    /// Used to publish timely pose updates. Typically, 'map' or 'odom', etc.
+    /// See the docs online.
+    std::string reference_frame_name = "map";
+
     /** Valid estimations will be extrapolated only up to this time since the
      * last incorporated observation. If a request is done farther away, an
      * empty estimation will be returned.

@@ -139,7 +139,36 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
 void StateEstimationSmoother::spinOnce()
 {
-    // nothing to do in this module
+    // At the predefined module rate, publish the current estimation,
+    // if we have any subscriber:
+    if (!anyUpdateLocalizationSubscriber()) return;
+
+    // TODO(jlbc): Support simul time?
+    const auto tNow = mrpt::Clock::now();
+
+    const auto nv = estimated_navstate(tNow, params.reference_frame_name);
+    if (!nv)
+    {
+        MRPT_LOG_THROTTLE_WARN(
+            5.0, "Cannot publish vehicle pose (no input data yet?)");
+        return;
+    }
+
+    LocalizationUpdate lu;
+    lu.child_frame     = params.vehicle_frame_name;
+    lu.reference_frame = params.reference_frame_name;
+
+    lu.method    = "state_estimation_smoother";
+    lu.quality   = 1;
+    lu.timestamp = tNow;
+    lu.pose      = nv->pose.getPoseMean().asTPose();
+    lu.cov       = nv->pose.cov_inv.inverse();
+
+    MRPT_LOG_DEBUG_FMT(
+        "Publishing timely pose estimate: t=%f pose=%s",
+        mrpt::Clock::toDouble(tNow), lu.pose.asString().c_str());
+
+    advertiseUpdatedLocalization(lu);
 }
 
 void StateEstimationSmoother::reset()
