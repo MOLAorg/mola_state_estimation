@@ -340,6 +340,22 @@ std::set<std::string> StateEstimationSmoother::known_frame_ids()
     return ret;
 }
 
+namespace
+{
+void enforce_planar_pose(mrpt::poses::CPose3D& p)
+{
+    p.z(0);
+    p.setYawPitchRoll(p.yaw(), .0, .0);
+}
+void enforce_planar_twist(mrpt::math::TTwist3D& tw)
+{
+    tw.vz = 0;
+    tw.wx = 0;
+    tw.wy = 0;
+}
+
+}  // namespace
+
 std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id)
 {
@@ -432,8 +448,24 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         // "0" (see paper diagrams!)
         if (frameId == 0) continue;
 
+        // TODO: Save and reuse last optimized value!
         state_.impl->values.insert<gtsam::Pose3>(
             F(frameId), gtsam::Pose3::Identity());
+    }
+
+    // Add planar constraints:
+    if (params.enforce_planar_motion)
+    {
+        const double XY_SIGMA       = 1e10;
+        const double Z_SIGMA        = 1e-4;
+        const auto   planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+
+        for (size_t i = 0; i < entries.size(); i++)
+        {
+            state_.impl->fg.addPrior(
+                P(i), gtsam::Vector3(0, 0, 0), planar_z_noise);
+        }
     }
 
     // Unary prior for initial twist:
@@ -667,6 +699,12 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         ks.twist.wx     = angV.x();
         ks.twist.wy     = angV.y();
         ks.twist.wz     = angV.z();
+
+        if (params.enforce_planar_motion)
+        {
+            enforce_planar_pose(ks.pose);
+            enforce_planar_twist(ks.twist);
+        }
     }
 
     // Honor requested frame_id:
