@@ -37,6 +37,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_linear);
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
+    MCP_LOAD_OPT(cfg, sigma_integrator_position);
+    MCP_LOAD_OPT(cfg, sigma_integrator_orientation);
+    MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_linear);
+    MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_angular);
 
     MCP_LOAD_OPT(cfg, time_between_frames_to_warning);
 

@@ -38,10 +38,12 @@
 #include <mrpt/containers/bimap.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/pimpl.h>
+#include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/system/COutputLogger.h>
+#include <mrpt/system/CTimeLogger.h>
 
 // std:
 #include <optional>
@@ -197,19 +199,41 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         QueryPointData() = default;
     };
 
+    struct KinematicState
+    {
+        mrpt::poses::CPose3D pose;
+        mrpt::math::TTwist3D twist;
+    };
+
     struct PointData
     {
         PointData() = default;
 
-        PointData(const PoseData& p) : pose(p) {}
-        PointData(const OdomData& p) : odom(p) {}
-        PointData(const TwistData& p) : twist(p) {}
-        PointData(const QueryPointData& p) : query(p) {}
+        PointData(const PoseData& p, const KinematicState& ks = {})
+            : pose(p), last_known_state(ks)
+        {
+        }
+        PointData(const OdomData& p, const KinematicState& ks = {})
+            : odom(p), last_known_state(ks)
+        {
+        }
+        PointData(const TwistData& p, const KinematicState& ks = {})
+            : twist(p), last_known_state(ks)
+        {
+        }
+        PointData(const QueryPointData& p, const KinematicState& ks = {})
+            : query(p), last_known_state(ks)
+        {
+        }
 
         std::optional<PoseData>       pose;
         std::optional<OdomData>       odom;
         std::optional<TwistData>      twist;
         std::optional<QueryPointData> query;
+
+        // Estimation from last iteration, or initial guess,
+        // to make estimation faster starting closer to the real values:
+        KinematicState last_known_state;
 
         std::string asString() const;
 
@@ -233,7 +257,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::map<mrpt::Clock::time_point, PointData> data;
 
         auto last_pose_of_frame_id(const std::string& frame_id)
-            -> std::optional<std::pair<mrpt::Clock::time_point, PoseData>>;
+            -> std::optional<std::pair<mrpt::Clock::time_point, PointData>>;
     };
 
     State state_;
@@ -246,6 +270,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void addFactor(const mola::FactorConstVelKinematics& f);
 
     void delete_too_old_entries();
+
+    mrpt::system::CTimeLogger profiler_{true, "StateEstimationSmoother"};
 };
 
 }  // namespace mola::state_estimation_smoother
