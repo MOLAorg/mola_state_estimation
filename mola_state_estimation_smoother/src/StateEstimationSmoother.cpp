@@ -28,6 +28,7 @@
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/get_env.h>
+#include <mrpt/core/lock_helper.h>
 #include <mrpt/math/gtsam_wrappers.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -109,6 +110,7 @@ std::optional<
         const std::string& frameId)
 {
     const auto frId = frame_id(frameId);
+
     for (auto it = data.rbegin(); it != data.rend(); ++it)
     {
         if (!it->second.pose) continue;
@@ -143,14 +145,21 @@ void StateEstimationSmoother::spinOnce()
     // if we have any subscriber:
     if (!anyUpdateLocalizationSubscriber()) return;
 
-    // TODO(jlbc): Support simul time?
-    const auto tNow = mrpt::Clock::now();
+    auto lck = mrpt::lockHelper(stateMutex_);
 
-    const auto nv = estimated_navstate(tNow, params.reference_frame_name);
-    if (!nv)
+    const auto tNowOpt = state_.get_current_extrapolated_stamp();
+    if (!tNowOpt)
     {
         MRPT_LOG_THROTTLE_WARN(
             5.0, "Cannot publish vehicle pose (no input data yet?)");
+        return;
+    }
+
+    const auto nv = estimated_navstate(*tNowOpt, params.reference_frame_name);
+    if (!nv)
+    {
+        MRPT_LOG_THROTTLE_WARN(
+            5.0, "Cannot publish vehicle pose (stalled input data?)");
         return;
     }
 
@@ -160,19 +169,21 @@ void StateEstimationSmoother::spinOnce()
 
     lu.method    = "state_estimation_smoother";
     lu.quality   = 1;
-    lu.timestamp = tNow;
+    lu.timestamp = *tNowOpt;
     lu.pose      = nv->pose.getPoseMean().asTPose();
     lu.cov       = nv->pose.cov_inv.inverse();
 
     MRPT_LOG_DEBUG_FMT(
         "Publishing timely pose estimate: t=%f pose=%s",
-        mrpt::Clock::toDouble(tNow), lu.pose.asString().c_str());
+        mrpt::Clock::toDouble(*tNowOpt), lu.pose.asString().c_str());
 
     advertiseUpdatedLocalization(lu);
 }
 
 void StateEstimationSmoother::reset()
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
     // reset:
     state_ = State();
 }
@@ -181,6 +192,10 @@ void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
     using namespace std::string_literals;
+
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    state_.update_last_input_stamp(odom.timestamp);
 
     THROW_EXCEPTION("finish implementation!");
 
@@ -202,6 +217,10 @@ void StateEstimationSmoother::fuse_odometry(
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    state_.update_last_input_stamp(imu.timestamp);
+
     THROW_EXCEPTION("TODO");
     (void)imu;
 
@@ -212,6 +231,10 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    state_.update_last_input_stamp(gps.timestamp);
+
     THROW_EXCEPTION("TODO");
     (void)gps;
 
@@ -224,6 +247,10 @@ void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point&         timestamp,
     const mrpt::poses::CPose3DPDFGaussian& pose, const std::string& frame_id)
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    state_.update_last_input_stamp(timestamp);
+
     // find last KF of this frame_id before adding the new one:
     const auto lastKF = state_.last_pose_of_frame_id(frame_id);
 
@@ -307,6 +334,10 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    state_.update_last_input_stamp(timestamp);
+
     TwistData d;
     d.twist    = twist;
     d.twistCov = twistCov;
@@ -333,6 +364,8 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
 
 std::set<std::string> StateEstimationSmoother::known_frame_ids()
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
     std::set<std::string> ret;
     for (const auto& [name, id] : state_.known_frames.getDirectMap())
         ret.insert(name);
@@ -362,6 +395,8 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     using namespace std::string_literals;
 
     mrpt::system::CTimeLoggerEntry tle(profiler_, "build_and_optimize_fg");
+
+    auto lck = mrpt::lockHelper(stateMutex_);
 
     delete_too_old_entries();
 
@@ -815,6 +850,8 @@ void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
 
 void StateEstimationSmoother::delete_too_old_entries()
 {
+    auto lck = mrpt::lockHelper(stateMutex_);
+
     if (state_.data.empty()) return;
 
     const double newestTime =

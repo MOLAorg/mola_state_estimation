@@ -47,6 +47,7 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <mutex>
 #include <optional>
 #include <set>
 
@@ -259,9 +260,30 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         auto last_pose_of_frame_id(const std::string& frame_id)
             -> std::optional<std::pair<mrpt::Clock::time_point, PointData>>;
+
+        void update_last_input_stamp(const mrpt::Clock::time_point& t)
+        {
+            last_observation_stamp_           = t;
+            last_observation_wallclock_stamp_ = mrpt::Clock::now();
+        }
+
+        std::optional<mrpt::Clock::time_point> get_current_extrapolated_stamp()
+            const
+        {
+            if (!last_observation_stamp_) return {};
+            return mrpt::Clock::fromDouble(
+                (mrpt::Clock::nowDouble() -
+                 mrpt::Clock::toDouble(last_observation_wallclock_stamp_)) +
+                mrpt::Clock::toDouble(*last_observation_stamp_));
+        }
+
+       private:
+        std::optional<mrpt::Clock::time_point> last_observation_stamp_;
+        mrpt::Clock::time_point last_observation_wallclock_stamp_;
     };
 
-    State state_;
+    State                state_;
+    std::recursive_mutex stateMutex_;
 
     std::optional<NavState> build_and_optimize_fg(
         const mrpt::Clock::time_point queryTimestamp,
