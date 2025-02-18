@@ -24,8 +24,6 @@ Write me!
 
 What? Why? How?
 
-Frames of reference.
-
 |
 
 2. Selecting the S.E. method in launch files
@@ -97,18 +95,69 @@ Write me!
 
 |
 
-4. Implementations
----------------------------------
-
-4.1. Simple estimator
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4. Implementation: Simple estimator
+---------------------------------------
 Write me!
 
 |
 
-4.2. Factor graph smoother
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Write me!
+5. Implementation: Factor graph smoother
+------------------------------------------
+The package ``mola_state_estimation_smoother`` implements a sliding window optimization over the
+last few keyframes and sensor observations (odometry sources, IMU, GNNS) in order to being able to solve
+for the optimal kinematic state (pose + velocity) at any desired time point, interpolating or extrapolating
+into the past or future.
+
+When run as a MOLA module (e.g. within a ROS 2 node), it also publishes the estimated fused pose information
+in a timely manner, for use as the high-quality, robust localization source.
+
+This package follows this frame convention (see :ref:`other /tf configurations <mola_ros2_tf_frames>` when using
+MOLA LiDAR-odometry without state estimation):
+
+.. figure:: https://mrpt.github.io/imgs/mola_mrpt_ros_frames_fusion.png
+    :width: 500
+    :align: center
+
+This is who is responsible of publishing each transformation:
+
+- ``odom_{i} → base_link``: One or more odometry sources.
+- ``map → base_link``: Published by **this state estimation package**.
+- ``enu → {map, utm}``: Published by ``mrpt_map_server`` (`github <https://github.com/mrpt-ros-pkg/mrpt_navigation/tree/ros2/mrpt_map_server/>`_)
+  or ``mola_lidar_odometry`` :ref:`map loading service <map_loading_saving>` if fed with a geo-referenced metric map (``.mm``) file.
+
+
+Add me: Pictures of factor graph model.
+
+Write me: concept of adding temporary keyframes for querying the pose at a given time.
+
+
+5.1. Kinematic factors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Between two consecutive keyframes close enough in time, a "kinematic factor" is added.
+Two options are implemented:
+
+A. Free motion kinematic factor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+This is actually implemented as the combination of distinct GTSAM factors:
+
+- ``mola::state_estimation_smoother::FactorConstLocalVelocity``: between linear and the angular velocity components of both keyframes to
+  favor smooth velocities. See line 3 of eq (4) in the MOLA RSS2019 paper.
+- ``mola::state_estimation_smoother::FactorTrapezoidalIntegrator``: enforces fulfillment of numerical integration on the translational
+  part of SE(3). See line 2 of eq (1) in the MOLA RSS2019 paper.
+- ``mola::state_estimation_smoother::FactorAngularVelocityIntegration``: enforces the fulfillment of numerical integration on the rotational
+  part of SE(3). See line 1 of eq (4) in the MOLA RSS2019 paper.
+
+
+B. Tricycle model kinematic factor
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+This is actually implemented as the combination of distinct GTSAM factors:
+
+- ``mola::state_estimation_smoother::FactorConstLocalVelocity``: between linear and the angular velocity components of both keyframes to
+  favor smooth velocities. See line 3 of eq (4) in the MOLA RSS2019 paper.
+- ``mola::state_estimation_smoother::FactorTricycleModelIntegrator``: enforces fulfillment of numerical integration assuming the robot moves
+  following the part of SE(3). TODO: Write equations!
+- ``gtsam::PriorFactor``: to (gently) favor null components of the local velocity components ``vy``, ``vz``, ``wx``, ``wy``. Parameters can be
+  used to tune how much these soft constraints are allowed to be broken, i.e. depending on how much wheel slippage exists.
 
 
 |

@@ -36,9 +36,10 @@ namespace mola::state_estimation_smoother
 /**
  * Factor for constant angular velocity model, equivalent to expression:
  *
- *   Pi + 0.5 * dt * (gtsam::rotate(Ri, bVi) + gtsam::rotate(Rj, bVj)) - Pj =
- * errZero
+ * Pi +0.5*dt*(gtsam::rotate(Ri, bVi) + gtsam::rotate(Rj, bVj)) - Pj = errZero
  *
+ * Note that angular and linear velocities are stored in Values in the body "b"
+ * frame, hence the "b" prefix, and the need for the orientations "R".
  */
 class FactorTrapezoidalIntegrator
     : public gtsam::ExpressionFactorN<

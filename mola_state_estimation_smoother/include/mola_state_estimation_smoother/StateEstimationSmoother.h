@@ -28,6 +28,7 @@
 // this package:
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
+#include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:
@@ -268,6 +269,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
     void addFactor(const mola::FactorConstVelKinematics& f);
+    void addFactor(const mola::FactorTricycleKinematics& f);
 
     void delete_too_old_entries();
 

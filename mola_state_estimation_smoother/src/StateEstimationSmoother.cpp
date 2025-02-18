@@ -48,7 +48,7 @@
 
 // Custom factors:
 #include "FactorAngularVelocityIntegration.h"
-#include "FactorConstAngularVelocity.h"
+#include "FactorConstLocalVelocity.h"
 #include "FactorTrapezoidalIntegrator.h"
 
 // arguments: class_name, parent_class, class namespace
@@ -401,8 +401,8 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 
     using map_it_t = std::map<mrpt::Clock::time_point, PointData>::value_type;
 
-    std::vector<map_it_t*>       entries;
-    std::optional<size_t>        query_KF_id;
+    std::vector<map_it_t*> entries;
+    std::optional<size_t>  query_KF_id;
     for (auto& it : state_.data)
     {
         if (it.first == queryTimestamp) query_KF_id = entries.size();
@@ -459,7 +459,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         const double XY_SIGMA       = 1e10;
         const double Z_SIGMA        = 1e-4;
         const auto   planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+              gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
 
         for (size_t i = 0; i < entries.size(); i++)
         {
@@ -778,15 +778,15 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     const auto kbWj = W(f.to_kf_);
 
     // See line 3 of eq (4) in the MOLA RSS2019 paper
-    // Modify to use velocity in local frame: reuse FactorConstAngularVelocity
+    // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
     // here too:
-    state_.impl->fg.emplace_shared<FactorConstAngularVelocity>(
+    state_.impl->fg.emplace_shared<FactorConstLocalVelocity>(
         kRi, kbVi, kRj, kbVj,
         gtsam::noiseModel::Isotropic::Sigma(3, std_linvel * dt));
 
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
-    state_.impl->fg.emplace_shared<FactorConstAngularVelocity>(
+    state_.impl->fg.emplace_shared<FactorConstLocalVelocity>(
         kRi, kbWi, kRj, kbWj,
         gtsam::noiseModel::Isotropic::Sigma(3, std_angvel * dt));
 
@@ -805,6 +805,12 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     // Impl. line 1 of eq (4) in the MOLA RSS2019 paper.
     state_.impl->fg.emplace_shared<FactorAngularVelocityIntegration>(
         kRi, kbWi, kRj, dt, noise_kinematicsOrientation);
+}
+
+void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
+{
+    THROW_EXCEPTION("Write me!");
+    (void)f;
 }
 
 void StateEstimationSmoother::delete_too_old_entries()

@@ -18,7 +18,7 @@
  * MOLA. If not, see <https://www.gnu.org/licenses/>.
  * ------------------------------------------------------------------------- */
 /**
- * @file   FactorAngularVelocityIntegration.h
+ * @file   FactorConstLocalVelocity.h
  * @brief  GTSAM factor
  * @author Jose Luis Blanco Claraco
  * @date   Jun 13, 2024
@@ -35,27 +35,31 @@
 namespace mola::state_estimation_smoother
 {
 /**
- * Factor for constant angular velocity model, equivalent to expression:
+ * Factor for constant velocity model in local coordinates, equivalent to
+ * expression:
  *
  *   gtsam::rotate(Ri, bWi) - gtsam::rotate(Rj, bWj) = errZero
  *
+ * This works for both, linear and angular velocities.
+ *
+ * Note that angular and linear velocities are stored in Values in the body "b"
+ * frame, hence the "b" prefix, and the need for the orientations "R".
  */
-class FactorConstAngularVelocity
-    : public gtsam::ExpressionFactorN<
-          gtsam::Point3 /*return type*/, gtsam::Rot3, gtsam::Point3,
-          gtsam::Rot3, gtsam::Point3>
+class FactorConstLocalVelocity : public gtsam::ExpressionFactorN<
+                                     gtsam::Point3 /*return type*/, gtsam::Rot3,
+                                     gtsam::Point3, gtsam::Rot3, gtsam::Point3>
 {
    private:
-    using This = FactorConstAngularVelocity;
+    using This = FactorConstLocalVelocity;
     using Base = gtsam::ExpressionFactorN<
         gtsam::Point3, gtsam::Rot3, gtsam::Point3, gtsam::Rot3, gtsam::Point3>;
 
    public:
     /// default constructor
-    FactorConstAngularVelocity()           = default;
-    ~FactorConstAngularVelocity() override = default;
+    FactorConstLocalVelocity()           = default;
+    ~FactorConstLocalVelocity() override = default;
 
-    FactorConstAngularVelocity(
+    FactorConstLocalVelocity(
         gtsam::Key kRi, gtsam::Key kWi, gtsam::Key kRj, gtsam::Key kWj,
         const gtsam::SharedNoiseModel& model)
         : Base({kRi, kWi, kRj, kWj}, model, {0, 0, 0})
@@ -88,7 +92,7 @@ class FactorConstAngularVelocity
         const std::string& s, const gtsam::KeyFormatter& keyFormatter =
                                   gtsam::DefaultKeyFormatter) const override
     {
-        std::cout << s << "FactorConstAngularVelocity("
+        std::cout << s << "FactorConstLocalVelocity("
                   << keyFormatter(Factor::keys_[0]) << ","
                   << keyFormatter(Factor::keys_[1]) << ","
                   << keyFormatter(Factor::keys_[2]) << ","
@@ -121,7 +125,7 @@ class FactorConstAngularVelocity
         // at that point.
         ar& BOOST_SERIALIZATION_NVP(measured_);
         ar& boost::serialization::make_nvp(
-            "FactorConstAngularVelocity",
+            "FactorConstLocalVelocity",
             boost::serialization::base_object<Base>(*this));
     }
 };
