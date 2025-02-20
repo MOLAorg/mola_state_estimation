@@ -167,7 +167,7 @@ void StateEstimationSmoother::spinOnce()
     lu.child_frame     = params.vehicle_frame_name;
     lu.reference_frame = params.reference_frame_name;
 
-    lu.method    = "state_estimation_smoother";
+    lu.method    = "state_estimator";
     lu.quality   = 1;
     lu.timestamp = *tNowOpt;
     lu.pose      = nv->pose.getPoseMean().asTPose();
