@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Add parameter enforce_planar_motion
+* Contributors: Jose Luis Blanco-Claraco
+
 1.6.1 (2025-01-10)
 ------------------
 * Merge pull request `#1 <https://github.com/MOLAorg/mola_state_estimation/issues/1>`_ from MOLAorg/9-need-help-on-integrating-imu-for-lidar-odometry

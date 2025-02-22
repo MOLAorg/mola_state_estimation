@@ -2,6 +2,18 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Use more generic localization source name
+* make it thread safe; fix replaying extrapolated poses using past timestamps
+* Documentation: explain the different types of factors and kinematic models
+* Smoother: observe the enforce_planar_motion parameter
+* FIX: use last guess as initial values to improve optimization stability; expose more parameters
+* StateEstimationSmoother: Publish pose updates in a timely manner
+* Add parameter enforce_planar_motion
+* Fix gtsam must be a runtime depend too
+* Contributors: Jose Luis Blanco Claraco, Jose Luis Blanco-Claraco
+
 1.6.1 (2025-01-10)
 ------------------
 * Shorter logger name
