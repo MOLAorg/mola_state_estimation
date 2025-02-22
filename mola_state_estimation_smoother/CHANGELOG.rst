@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.7.0 (2025-02-22)
+------------------
 * Use more generic localization source name
 * make it thread safe; fix replaying extrapolated poses using past timestamps
 * Documentation: explain the different types of factors and kinematic models
