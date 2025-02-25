@@ -30,6 +30,8 @@
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/math/TTwist3D.h>
 
+#include <regex>
+
 namespace mola::state_estimation_smoother
 {
 /** Parameters needed by StateEstimationSmoother.
@@ -81,6 +83,15 @@ class Parameters
     double               initial_twist_sigma_ang = 3.0;  // [rad/s]
 
     bool enforce_planar_motion = false;
+
+    //!< regex for IMU sensor labels (ROS topics) to accept as IMU readings.
+    std::regex do_process_imu_labels{".*"};
+
+    //!< regex for odometry inputs labels (ROS topics) to be accepted as inputs
+    std::regex do_process_odometry_labels{".*"};
+
+    //!< regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
+    std::regex do_process_gnss_labels{".*"};
 };
 
 }  // namespace mola::state_estimation_smoother

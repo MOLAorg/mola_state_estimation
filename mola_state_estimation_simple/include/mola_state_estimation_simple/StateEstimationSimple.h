@@ -26,9 +26,11 @@
 #pragma once
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
+#include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_state_estimation_simple/Parameters.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
+#include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
@@ -58,7 +60,8 @@ namespace mola::state_estimation_simple
  *
  * \ingroup mola_state_estimation_grp
  */
-class StateEstimationSimple : public mola::NavStateFilter
+class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataConsumer
+
 {
     DEFINE_MRPT_OBJECT(StateEstimationSimple, mola::state_estimation_simple)
 
@@ -121,6 +124,10 @@ class StateEstimationSimple : public mola::NavStateFilter
     std::optional<mrpt::math::TTwist3D> get_last_twist() const { return state_.last_twist; }
 
     /** @} */
+
+   protected:
+    // Implementation of RawDataConsumer
+    void onNewObservation(const CObservation::Ptr& o) override;
 
    private:
     struct State

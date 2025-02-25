@@ -261,4 +261,38 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     return ret;
 }
 
+void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
+{
+    ProfilerEntry tleg(profiler_, "onNewObservation");
+
+    ASSERT_(o);
+
+    // IMU:
+    if (auto obsIMU = std::dynamic_pointer_cast<mrpt::obs::CObservationIMU>(o);
+        obsIMU && std::regex_match(o->sensorLabel, params.do_process_imu_labels))
+    {
+        this->fuse_imu(*obsIMU);
+    }
+    // Odometry source:
+    else if (auto obsOdom = std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(o);
+             obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels))
+    {
+        this->fuse_odometry(*obsOdom, o->sensorLabel);
+    }
+    // GNSS source:
+    else if (auto obsGPS = std::dynamic_pointer_cast<mrpt::obs::CObservationGPS>(o);
+             obsGPS && std::regex_match(o->sensorLabel, params.do_process_odometry_labels))
+    {
+        this->fuse_gnss(*obsGPS);
+    }
+    else
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            10.0,
+            "Do not know how to handle incoming observation label='%s' "
+            "class='%s'",
+            o->sensorLabel.c_str(), o->GetRuntimeClass()->className);
+    }
+}
+
 }  // namespace mola::state_estimation_simple

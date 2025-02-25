@@ -28,6 +28,7 @@
 // this package:
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
+#include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
@@ -97,7 +98,8 @@ namespace mola::state_estimation_smoother
  * \ingroup mola_state_estimation_grp
  */
 class StateEstimationSmoother : public mola::NavStateFilter,
-                                public mola::LocalizationSourceBase
+                                public mola::LocalizationSourceBase,
+                                public mola::RawDataConsumer
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
 
@@ -162,6 +164,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     auto known_frame_ids() -> std::set<std::string>;
 
     /** @} */
+
+   protected:
+    // Implementation of RawDataConsumer
+    void onNewObservation(const CObservation::Ptr& o) override;
 
    private:
     // everything related to gtsam is hidden in the public API via pimpl

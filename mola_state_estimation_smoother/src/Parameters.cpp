@@ -55,6 +55,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, vehicle_frame_name);
     MCP_LOAD_OPT(cfg, reference_frame_name);
 
+    MCP_LOAD_OPT(cfg, do_process_imu_labels);
+    MCP_LOAD_OPT(cfg, do_process_odometry_labels);
+    MCP_LOAD_OPT(cfg, do_process_gnss_labels);
+
     if (cfg.has("initial_twist"))
     {
         ASSERT_(
