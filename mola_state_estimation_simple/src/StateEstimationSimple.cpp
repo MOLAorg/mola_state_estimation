@@ -263,7 +263,7 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
 void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
 {
-    ProfilerEntry tleg(profiler_, "onNewObservation");
+    const ProfilerEntry tleg(profiler_, "onNewObservation");
 
     ASSERT_(o);
 

@@ -375,7 +375,7 @@ std::set<std::string> StateEstimationSmoother::known_frame_ids()
 
 void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
 {
-    ProfilerEntry tleg(profiler_, "onNewObservation");
+    const ProfilerEntry tleg(profiler_, "onNewObservation");
 
     ASSERT_(o);
 
