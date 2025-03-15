@@ -2,6 +2,12 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* const correctness
+* State estimation modules now are proper MOLA raw inputs, so they automatically subscribe and consume input sensors (IMU, GPS, wheels odometry)
+* Contributors: Jose Luis Blanco-Claraco
+
 1.7.0 (2025-02-22)
 ------------------
 * Add parameter enforce_planar_motion
