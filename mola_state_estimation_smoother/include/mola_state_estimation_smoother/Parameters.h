@@ -41,8 +41,7 @@ namespace mola::state_estimation_smoother
 class Parameters
 {
    public:
-    Parameters()  = default;
-    ~Parameters() = default;
+    Parameters() = default;
 
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);

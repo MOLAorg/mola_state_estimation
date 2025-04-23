@@ -56,8 +56,7 @@ class FactorConstLocalVelocity : public gtsam::ExpressionFactorN<
 
    public:
     /// default constructor
-    FactorConstLocalVelocity()           = default;
-    ~FactorConstLocalVelocity() override = default;
+    FactorConstLocalVelocity() = default;
 
     FactorConstLocalVelocity(
         gtsam::Key kRi, gtsam::Key kWi, gtsam::Key kRj, gtsam::Key kWj,

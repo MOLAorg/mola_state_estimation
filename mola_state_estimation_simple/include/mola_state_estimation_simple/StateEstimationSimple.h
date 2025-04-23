@@ -67,7 +67,6 @@ class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataC
 
    public:
     StateEstimationSimple();
-    ~StateEstimationSimple() = default;
 
     /** \name Main API
      *  @{ */

@@ -124,8 +124,6 @@ std::optional<
 // -------- StateEstimationSmoother -------
 StateEstimationSmoother::StateEstimationSmoother() = default;
 
-StateEstimationSmoother::~StateEstimationSmoother() = default;
-
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
     this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
@@ -533,7 +531,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         const double XY_SIGMA       = 1e10;
         const double Z_SIGMA        = 1e-4;
         const auto   planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
-              gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+            gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
 
         for (size_t i = 0; i < entries.size(); i++)
         {

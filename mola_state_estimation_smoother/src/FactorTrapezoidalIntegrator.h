@@ -57,8 +57,7 @@ class FactorTrapezoidalIntegrator
 
    public:
     /// default constructor
-    FactorTrapezoidalIntegrator()           = default;
-    ~FactorTrapezoidalIntegrator() override = default;
+    FactorTrapezoidalIntegrator() = default;
 
     FactorTrapezoidalIntegrator(
         gtsam::Key kPi, gtsam::Key kVi, gtsam::Key kRi,  //

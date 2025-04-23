@@ -105,7 +105,6 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
    public:
     StateEstimationSmoother();
-    ~StateEstimationSmoother();
 
     /** \name Main API
      *  @{ */
