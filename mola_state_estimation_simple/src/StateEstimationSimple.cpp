@@ -112,6 +112,13 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     state_.last_twist->wy = imuReading.wy;
     state_.last_twist->wz = imuReading.wz;
 
+    {
+        auto&        twistCov = state_.last_twist_cov.emplace();
+        const double varXYZ   = mrpt::square(5.0);  // No info on XYZ
+        const double varRot   = mrpt::square(params.sigma_imu_angular_velocity);
+        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+    }
+
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
 
@@ -131,13 +138,15 @@ void StateEstimationSimple::fuse_pose(
     mrpt::poses::CPose3D incrPose;
 
     // numerical sanity: variances>=0 (==0 allowed for some components only)
-    for (int i = 0; i < 6; i++) ASSERT_GE_(pose.cov(i, i), .0);
+    for (int i = 0; i < 6; i++) { ASSERT_GE_(pose.cov(i, i), .0); }
     // and the sum of all strictly >0
     ASSERT_GT_(pose.cov.trace(), .0);
 
     double dt = 0;
     if (state_.last_pose_obs_tim)
+    {
         dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
+    }
 
     if (dt < 0)
     {
@@ -166,12 +175,28 @@ void StateEstimationSimple::fuse_pose(
         tw.wx = logRot[0] / dt;
         tw.wy = logRot[1] / dt;
         tw.wz = logRot[2] / dt;
+
+        // Rough guess of the covariance of the twist:
+        auto&        twistCov = state_.last_twist_cov.emplace();
+        const double dt2      = dt * dt;
+        const double varXYZ   = mrpt::square(params.sigma_relative_pose_linear) / dt2;  // [m²/s²]
+        const double varRot = mrpt::square(params.sigma_relative_pose_angular) / dt2;  // [rad²/s²]
+        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
     }
-    else { state_.last_twist.reset(); }
+    else
+    {
+        state_.last_twist.reset();
+        state_.last_twist_cov.reset();
+    }
 
     if (state_.last_twist)
     {
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): twist after= " << state_.last_twist->asString());
+    }
+    if (state_.last_twist_cov)
+    {
+        MRPT_LOG_DEBUG_STREAM(
+            "fuse_pose(): twist_cov after= " << state_.last_twist_cov->asString());
     }
 
     // save for next iter:
@@ -192,21 +217,30 @@ void enforce_planar_pose(mrpt::poses::CPose3D& p)
 
 void StateEstimationSimple::fuse_twist(
     [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
-    [[maybe_unused]] const mrpt::math::CMatrixDouble66& twistCov)
+    const mrpt::math::CMatrixDouble66& twistCov)
 {
-    state_.last_twist = twist;
+    state_.last_twist     = twist;
+    state_.last_twist_cov = twistCov;
+
+    MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist    = " << state_.last_twist->asString());
+    MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
 }
 
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
-    if (!state_.last_pose_obs_tim) return {};  // None
+    if (!state_.last_pose_obs_tim)
+    {
+        return {};  // None
+    }
 
     const double dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
     if (!state_.last_twist || !state_.last_pose ||
         std::abs(dt) > params.max_time_to_use_velocity_model)
+    {
         return {};  // None
+    }
 
     NavState ret;
 
@@ -245,18 +279,31 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     // pose cov:
     auto cov = state_.last_pose->cov;
 
-    double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
-    double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
+    const double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
+    const double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
 
-    for (int i = 0; i < 3; i++) cov(i, i) += varXYZ;
-    for (int i = 3; i < 6; i++) cov(i, i) += varRot;
+    for (int i = 0; i < 3; i++) { cov(i, i) += varXYZ; }
+    for (int i = 3; i < 6; i++) { cov(i, i) += varRot; }
+
+    if (state_.last_twist_cov.has_value())
+    {
+        auto twistCov = state_.last_twist_cov.value();
+        twistCov *= dt * dt;
+        cov += twistCov;
+
+        for (int i = 0; i < 3; i++) { (*state_.last_twist_cov)(i, i) += varXYZ; }
+        for (int i = 3; i < 6; i++) { (*state_.last_twist_cov)(i, i) += varRot; }
+    }
 
     ret.pose.cov_inv = cov.inverse_LLt();
 
     // twist:
     ret.twist = state_.last_twist.value();
 
-    // TODO(jlbc): twist covariance
+    if (state_.last_twist_cov.has_value())
+    {
+        ret.twist_inv_cov = state_.last_twist_cov->inverse_LLt();
+    }
 
     return ret;
 }
