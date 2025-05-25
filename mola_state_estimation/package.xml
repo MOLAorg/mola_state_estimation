@@ -6,7 +6,7 @@
   <description>Metapackage with all MOLA state estimation packages.</description>
 
   <maintainer email="jlblanco@ual.es">Jose-Luis Blanco-Claraco</maintainer>
-  <license file="LICENSE">BSD</license>
+  <license file="LICENSE">BSD-3-Clause</license>
 
   <url type="website">https://github.com/MOLAorg/mola_state_estimation</url>
 
