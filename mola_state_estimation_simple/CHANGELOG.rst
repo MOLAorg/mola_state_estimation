@@ -2,6 +2,12 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Feature: Implement basic twist covariance handling in the SimpleEstimator
+* fixes for clang-tidy
+* Contributors: Jose Luis Blanco-Claraco
+
 1.8.0 (2025-03-15)
 ------------------
 * const correctness

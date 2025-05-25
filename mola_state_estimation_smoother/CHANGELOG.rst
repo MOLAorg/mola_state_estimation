@@ -2,6 +2,12 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Update copyright year
+* fixes for clang-tidy
+* Contributors: Jose Luis Blanco-Claraco
+
 1.8.0 (2025-03-15)
 ------------------
 * const correctness

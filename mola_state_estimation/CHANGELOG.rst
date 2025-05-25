@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* package.xml: update license tag to BSD-3-Clause
+* Contributors: Jose Luis Blanco-Claraco
+
 1.8.0 (2025-03-15)
 ------------------
 
