@@ -4,9 +4,9 @@
 
 | Distro | Build dev | Release |
 | --- | --- | --- |
-| ROS 2 Humble (u22.04) | [![Build Status](https://build.ros2.org/job/Hdev__mola_state_estimation__ubuntu_jammy_amd64/badge/icon)](https://build.ros2.org/job/Hdev__mola_state_estimation__ubuntu_jammy_amd64/) | [![Version](https://img.shields.io/ros/v/humble/mola_state_estimation)](https://index.ros.org/search/?term=mola_state_estimation) |
-| ROS 2 Jazzy (u24.04) | [![Build Status](https://build.ros2.org/job/Jdev__mola_state_estimation__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Jdev__mola_state_estimation__ubuntu_noble_amd64/) | [![Version](https://img.shields.io/ros/v/jazzy/mola_state_estimation)](https://index.ros.org/search/?term=mola_state_estimation) |
-| ROS 2 Rolling (u24.04) | [![Build Status](https://build.ros2.org/job/Rdev__mola_state_estimation__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Rdev__mola_state_estimation__ubuntu_noble_amd64/) | [![Version](https://img.shields.io/ros/v/rolling/mola_state_estimation)](https://index.ros.org/search/?term=mola_state_estimation) |
+| ROS 2 Humble (u22.04) | [![Build Status](https://build.ros2.org/job/Hdev__mola_state_estimation__ubuntu_jammy_amd64/badge/icon)](https://build.ros2.org/job/Hdev__mola_state_estimation__ubuntu_jammy_amd64/) | [![Version](https://img.shields.io/ros/v/humble/mola_state_estimation)](https://index.ros.org/?search_packages=true&pkgs=mola_state_estimation) |
+| ROS 2 Jazzy (u24.04) | [![Build Status](https://build.ros2.org/job/Jdev__mola_state_estimation__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Jdev__mola_state_estimation__ubuntu_noble_amd64/) | [![Version](https://img.shields.io/ros/v/jazzy/mola_state_estimation)](https://index.ros.org/?search_packages=true&pkgs=mola_state_estimation) |
+| ROS 2 Rolling (u24.04) | [![Build Status](https://build.ros2.org/job/Rdev__mola_state_estimation__ubuntu_noble_amd64/badge/icon)](https://build.ros2.org/job/Rdev__mola_state_estimation__ubuntu_noble_amd64/) | [![Version](https://img.shields.io/ros/v/rolling/mola_state_estimation)](https://index.ros.org/?search_packages=true&pkgs=mola_state_estimation) |
 
 
 # mola_state_estimation
