@@ -135,13 +135,16 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params.loadFrom(cfg["params"]);
+
+    // Initialize parent:
+    mola::NavStateFilter::initialize(cfg);
 }
 
 void StateEstimationSmoother::spinOnce()
 {
     // At the predefined module rate, publish the current estimation,
     // if we have any subscriber:
-    if (!anyUpdateLocalizationSubscriber()) return;
+    if (!anyUpdateLocalizationSubscriber()) { return; }
 
     auto lck = mrpt::lockHelper(stateMutex_);
 

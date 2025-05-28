@@ -39,15 +39,21 @@ StateEstimationSimple::StateEstimationSimple() = default;
 
 void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSimple");
 
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 
-    reset();
+    // reset:
+    state_ = State();
 
     // Load params:
     params.loadFrom(cfg["params"]);
+
+    // Initialize parent:
+    mola::NavStateFilter::initialize(cfg);
 }
 
 void StateEstimationSimple::spinOnce()
@@ -57,6 +63,8 @@ void StateEstimationSimple::spinOnce()
 
 void StateEstimationSimple::reset()
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // reset:
     state_ = State();
 
@@ -66,6 +74,8 @@ void StateEstimationSimple::reset()
 void StateEstimationSimple::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // this will work well only for simple datasets with one odometry:
     if (state_.last_odom_obs && state_.last_pose)
     {
@@ -85,6 +95,8 @@ void StateEstimationSimple::fuse_odometry(
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // Simple approach to integrate IMU readings with angular velocities:
     // 1) Move forward the prediction in time until this observation's time,
     // 2) Assume angular velocity is exactly as measured by this new IMU reading.
@@ -124,6 +136,8 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // This estimator will just ignore GPS.
     // Refer to the smoother for a more versatile estimator.
     (void)gps;
@@ -135,6 +149,8 @@ void StateEstimationSimple::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     [[maybe_unused]] const std::string& frame_id)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     mrpt::poses::CPose3D incrPose;
 
     // numerical sanity: variances>=0 (==0 allowed for some components only)
@@ -196,7 +212,8 @@ void StateEstimationSimple::fuse_pose(
     if (state_.last_twist_cov)
     {
         MRPT_LOG_DEBUG_STREAM(
-            "fuse_pose(): twist_cov after= " << state_.last_twist_cov->asString());
+            "fuse_pose(): twist_cov after=\n"
+            << state_.last_twist_cov->asString());
     }
 
     // save for next iter:
@@ -219,6 +236,8 @@ void StateEstimationSimple::fuse_twist(
     [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     state_.last_twist     = twist;
     state_.last_twist_cov = twistCov;
 
@@ -229,6 +248,8 @@ void StateEstimationSimple::fuse_twist(
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     if (!state_.last_pose_obs_tim)
     {
         return {};  // None
@@ -310,6 +331,8 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
 void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     const ProfilerEntry tleg(profiler_, "onNewObservation");
 
     ASSERT_(o);
@@ -344,6 +367,13 @@ void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
             "class='%s'",
             o->sensorLabel.c_str(), o->GetRuntimeClass()->className);
     }
+}
+
+std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist() const
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    return state_.last_twist;
 }
 
 }  // namespace mola::state_estimation_simple

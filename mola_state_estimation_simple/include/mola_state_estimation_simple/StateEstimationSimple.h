@@ -26,7 +26,6 @@
 #pragma once
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
-#include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_state_estimation_simple/Parameters.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
@@ -35,6 +34,7 @@
 #include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
+#include <mutex>
 #include <optional>
 
 namespace mola::state_estimation_simple
@@ -60,7 +60,7 @@ namespace mola::state_estimation_simple
  *
  * \ingroup mola_state_estimation_grp
  */
-class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataConsumer
+class StateEstimationSimple : public mola::NavStateFilter
 
 {
     DEFINE_MRPT_OBJECT(StateEstimationSimple, mola::state_estimation_simple)
@@ -120,7 +120,7 @@ class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataC
     std::optional<NavState> estimated_navstate(
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
-    std::optional<mrpt::math::TTwist3D> get_last_twist() const { return state_.last_twist; }
+    std::optional<mrpt::math::TTwist3D> get_last_twist() const;
 
     /** @} */
 
@@ -131,8 +131,7 @@ class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataC
    private:
     struct State
     {
-        State()  = default;
-        ~State() = default;
+        State() = default;
 
         std::optional<mrpt::obs::CObservationOdometry> last_odom_obs;
         std::optional<mrpt::Clock::time_point>         last_pose_obs_tim;
@@ -142,7 +141,8 @@ class StateEstimationSimple : public mola::NavStateFilter, public mola::RawDataC
         bool                                           pose_already_updated_with_odom = false;
     };
 
-    State state_;
+    State                        state_;
+    mutable std::recursive_mutex state_mtx_;
 };
 
 }  // namespace mola::state_estimation_simple

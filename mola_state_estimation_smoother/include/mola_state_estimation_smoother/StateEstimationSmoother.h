@@ -98,8 +98,7 @@ namespace mola::state_estimation_smoother
  * \ingroup mola_state_estimation_grp
  */
 class StateEstimationSmoother : public mola::NavStateFilter,
-                                public mola::LocalizationSourceBase,
-                                public mola::RawDataConsumer
+                                public mola::LocalizationSourceBase
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
 
@@ -180,7 +179,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         PoseData() = default;
 
         mrpt::poses::CPose3DPDFGaussian pose;
-        frameid_t                       frameId;
+        frameid_t                       frameId = 0;
     };
 
     // an observation from fuse_odometry()
@@ -189,7 +188,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         OdomData() = default;
 
         mrpt::poses::CPose3D pose;
-        frameid_t            frameId;
+        frameid_t            frameId = 0;
     };
 
     // an observation from fuse_twist()
