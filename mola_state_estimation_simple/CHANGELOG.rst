@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.9.0 (2025-06-06)
+------------------
 * State estimation interface is now raw data consumer too
 * FIX: Error if sensor labels were provided in config yaml file
 * Contributors: Jose Luis Blanco-Claraco
