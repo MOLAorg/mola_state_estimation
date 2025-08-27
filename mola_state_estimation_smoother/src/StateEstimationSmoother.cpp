@@ -408,9 +408,9 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
     // LiDAR: ignored by state estimators (would be processed by LiDAR-odometry)
     // Note: we use this instead of dynamic_cast to avoid depending on
     // mrpt-maps.
-    else if (
-        std::string(o->GetRuntimeClassIdStatic().className) ==
-        "mrpt::obs::CObservationPointCloud")
+    else if (!strcmp(
+                 o->GetRuntimeClassIdStatic().className,
+                 "mrpt::obs::CObservationPointCloud"))
     {
         // Ignored.
     }
