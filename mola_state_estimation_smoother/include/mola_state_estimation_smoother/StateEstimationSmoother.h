@@ -29,12 +29,12 @@
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
+#include <mola_state_estimation_smoother/FactorConstVelKinematics.h>
 #include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:
 #include <mola_imu_preintegration/RotationIntegrator.h>
-#include <mola_kernel/factors/FactorConstVelKinematics.h>
 
 // MRPT:
 #include <mrpt/containers/bimap.h>

@@ -503,9 +503,9 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     for (size_t i = 1; i < entries.size(); i++)
     {
         mola::FactorConstVelKinematics f;
-        f.from_kf_   = i - 1;
-        f.to_kf_     = i;
-        f.deltaTime_ = mrpt::system::timeDifference(
+        f.from_kf   = i - 1;
+        f.to_kf     = i;
+        f.deltaTime = mrpt::system::timeDifference(
             entries[i - 1]->first, entries[i]->first);
 
         addFactor(f);
@@ -545,7 +545,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         const double XY_SIGMA       = 1e10;
         const double Z_SIGMA        = 1e-4;
         const auto   planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+              gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
 
         for (size_t i = 0; i < entries.size(); i++)
         {
@@ -819,14 +819,14 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
 #if 0
     MRPT_LOG_DEBUG_STREAM(
         "[addFactor] FactorConstVelKinematics: "
-        << f.from_kf_ << " ==> " << f.to_kf_ << " dt=" << f.deltaTime_);
+        << f.from_kf << " ==> " << f.to_kf << " dt=" << f.deltaTime);
 #endif
 
     // Add const-vel factor to gtsam itself:
-    double dt = f.deltaTime_;
+    double dt = f.deltaTime;
 
     // trick to easily handle queries on exactly an existing keyframe:
-    if (dt == 0) dt = 1e-5;
+    if (dt == 0) { dt = 1e-5; }
 
     ASSERT_GT_(dt, 0.);
 
@@ -845,23 +845,23 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     // 1) Add GTSAM factors for constant velocity model
     // -------------------------------------------------
 
-    auto Pi  = gtsam::Point3_(P(f.from_kf_));
-    auto Pj  = gtsam::Point3_(P(f.to_kf_));
-    auto Ri  = gtsam::Rot3_(R(f.from_kf_));
-    auto Rj  = gtsam::Rot3_(R(f.to_kf_));
-    auto bVi = gtsam::Point3_(V(f.from_kf_));
-    auto bVj = gtsam::Point3_(V(f.to_kf_));
-    auto bWi = gtsam::Point3_(W(f.from_kf_));
-    auto bWj = gtsam::Point3_(W(f.to_kf_));
+    auto Pi  = gtsam::Point3_(P(f.from_kf));
+    auto Pj  = gtsam::Point3_(P(f.to_kf));
+    auto Ri  = gtsam::Rot3_(R(f.from_kf));
+    auto Rj  = gtsam::Rot3_(R(f.to_kf));
+    auto bVi = gtsam::Point3_(V(f.from_kf));
+    auto bVj = gtsam::Point3_(V(f.to_kf));
+    auto bWi = gtsam::Point3_(W(f.from_kf));
+    auto bWj = gtsam::Point3_(W(f.to_kf));
 
-    const auto kPi  = P(f.from_kf_);
-    const auto kPj  = P(f.to_kf_);
-    const auto kbVi = V(f.from_kf_);
-    const auto kbVj = V(f.to_kf_);
-    const auto kRi  = R(f.from_kf_);
-    const auto kRj  = R(f.to_kf_);
-    const auto kbWi = W(f.from_kf_);
-    const auto kbWj = W(f.to_kf_);
+    const auto kPi  = P(f.from_kf);
+    const auto kPj  = P(f.to_kf);
+    const auto kbVi = V(f.from_kf);
+    const auto kbVj = V(f.to_kf);
+    const auto kRi  = R(f.from_kf);
+    const auto kRj  = R(f.to_kf);
+    const auto kbWi = W(f.from_kf);
+    const auto kbWj = W(f.to_kf);
 
     // See line 3 of eq (4) in the MOLA RSS2019 paper
     // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
