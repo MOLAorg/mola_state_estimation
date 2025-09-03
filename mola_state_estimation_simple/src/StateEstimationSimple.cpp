@@ -359,15 +359,9 @@ void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
     {
         this->fuse_gnss(*obsGPS);
     }
-    // LiDAR: ignored by state estimators (would be processed by LiDAR-odometry)
-    // Note: we use this instead of dynamic_cast to avoid depending on mrpt-maps.
-    else if (!strcmp(o->GetRuntimeClassIdStatic().className, "mrpt::obs::CObservationPointCloud"))
-    {
-        // Ignored.
-    }
     else
     {
-        MRPT_LOG_THROTTLE_WARN_FMT(
+        MRPT_LOG_THROTTLE_DEBUG_FMT(
             10.0,
             "Do not know how to handle incoming observation label='%s' "
             "class='%s'",
