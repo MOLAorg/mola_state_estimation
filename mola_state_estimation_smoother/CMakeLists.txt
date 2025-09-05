@@ -26,8 +26,19 @@ find_package(mola_imu_preintegration REQUIRED)
 
 # -----------------------
 # define lib:
-file(GLOB_RECURSE LIB_SRCS src/*.cpp src/*.h)
-file(GLOB_RECURSE LIB_PUBLIC_HDRS include/*.h)
+set(LIB_SRCS
+  src/Parameters.cpp
+  src/StateEstimationSmoother.cpp
+  src/register.cpp
+)
+set(LIB_PUBLIC_HDRS
+  include/mola_state_estimation_smoother/gtsam_detect_version.h
+  include/mola_state_estimation_smoother/StateEstimationSmoother.h
+  include/mola_state_estimation_smoother/FactorConstVelKinematics.h
+  include/mola_state_estimation_smoother/Parameters.h
+  include/mola_state_estimation_smoother/FactorTricycleKinematics.h
+  include/mola_state_estimation_smoother/id.h
+)
 
 mola_add_library(
   TARGET ${PROJECT_NAME}

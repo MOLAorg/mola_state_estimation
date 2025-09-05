@@ -26,6 +26,7 @@
 #include <gtsam/nonlinear/ExpressionFactor.h>
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/expressions.h>
+#include <mola_state_estimation_smoother/gtsam_detect_version.h>
 
 namespace mola::state_estimation_smoother
 {
@@ -53,9 +54,13 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
     double dt_ = .0;
 
    public:
-    /// default constructor
     FactorAngularVelocityIntegration()           = default;
     ~FactorAngularVelocityIntegration() override = default;
+
+    FactorAngularVelocityIntegration(const FactorAngularVelocityIntegration&)            = default;
+    FactorAngularVelocityIntegration& operator=(const FactorAngularVelocityIntegration&) = default;
+    FactorAngularVelocityIntegration(FactorAngularVelocityIntegration&&)                 = default;
+    FactorAngularVelocityIntegration& operator=(FactorAngularVelocityIntegration&&)      = default;
 
     FactorAngularVelocityIntegration(
         gtsam::Key kRi, gtsam::Key kbWi, gtsam::Key kRj, const double dt,
@@ -68,8 +73,12 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
     /// @return a deep copy of this factor
     gtsam::NonlinearFactor::shared_ptr clone() const override
     {
-        return boost::static_pointer_cast<gtsam::NonlinearFactor>(
+#if GTSAM_USES_BOOST
+        return boost::static_pointer_cast<This>(
             gtsam::NonlinearFactor::shared_ptr(new This(*this)));
+#else
+        return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+#endif
     }
 
     // Return measurement expression
@@ -109,6 +118,7 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
     }
 
    private:
+#if GTSAM_USES_BOOST
     /** Serialization function */
     friend class boost::serialization::access;
     template <class ARCHIVE>
@@ -122,6 +132,7 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
         ar& boost::serialization::make_nvp(
             "FactorAngularVelocityIntegration", boost::serialization::base_object<Base>(*this));
     }
+#endif
 };
 
 }  // namespace mola::state_estimation_smoother
