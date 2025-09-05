@@ -1,22 +1,17 @@
-/* -------------------------------------------------------------------------
- *   A Modular Optimization framework for Localization and mApping  (MOLA)
- *
- * Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
- * Licensed under the GNU GPL v3 for non-commercial applications.
- *
- * This file is part of MOLA.
- * MOLA is free software: you can redistribute it and/or modify it under the
- * terms of the GNU General Public License as published by the Free Software
- * Foundation, either version 3 of the License, or (at your option) any later
- * version.
- *
- * MOLA is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
- * A PARTICULAR PURPOSE. See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * MOLA. If not, see <https://www.gnu.org/licenses/>.
- * ------------------------------------------------------------------------- */
+/*               _
+ _ __ ___   ___ | | __ _
+| '_ ` _ \ / _ \| |/ _` | Modular Optimization framework for
+| | | | | | (_) | | (_| | Localization and mApping (MOLA)
+|_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
+
+ Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+                         and individual contributors.
+ SPDX-License-Identifier: GPL-3.0
+ See LICENSE for full license information.
+ Closed-source licenses available upon request, for this odometry package
+ alone or in combination with the complete SLAM system.
+*/
+
 /**
  * @file   StateEstimationSmoother.h
  * @brief  Fuse of odometry, IMU, and SE(3) pose/twist estimations.
@@ -97,8 +92,7 @@ namespace mola::state_estimation_smoother
  *
  * \ingroup mola_state_estimation_grp
  */
-class StateEstimationSmoother : public mola::NavStateFilter,
-                                public mola::LocalizationSourceBase
+class StateEstimationSmoother : public mola::NavStateFilter, public mola::LocalizationSourceBase
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
 
@@ -124,9 +118,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /** Integrates new SE(3) pose estimation of the vehicle wrt frame_id
      */
     void fuse_pose(
-        const mrpt::Clock::time_point&         timestamp,
-        const mrpt::poses::CPose3DPDFGaussian& pose,
-        const std::string&                     frame_id) override;
+        const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
+        const std::string& frame_id) override;
 
     /** Integrates new wheels-based odometry observations into the estimator.
      *  This is a convenience method that internally ends up calling
@@ -135,7 +128,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
     void fuse_odometry(
         const mrpt::obs::CObservationOdometry& odom,
-        const std::string& odomName = "odom_wheels") override;
+        const std::string&                     odomName = "odom_wheels") override;
 
     /** Integrates new IMU observations into the estimator */
     void fuse_imu(const mrpt::obs::CObservationIMU& imu) override;
@@ -145,8 +138,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
-        const mrpt::Clock::time_point&     timestamp,
-        const mrpt::math::TTwist3D&        twist,
+        const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
         const mrpt::math::CMatrixDouble66& twistCov) override;
 
     /** Computes the estimated vehicle state at a given timestep using the
@@ -155,8 +147,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      * validity time window (e.g. too far in the future to be trustful).
      */
     std::optional<NavState> estimated_navstate(
-        const mrpt::Clock::time_point& timestamp,
-        const std::string&             frame_id) override;
+        const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
     /// Returns a list of known frame_ids:
     auto known_frame_ids() -> std::set<std::string>;
@@ -215,12 +206,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     {
         PointData() = default;
 
-        PointData(const PoseData& p, const KinematicState& ks = {})
-            : pose(p), last_known_state(ks)
+        PointData(const PoseData& p, const KinematicState& ks = {}) : pose(p), last_known_state(ks)
         {
         }
-        PointData(const OdomData& p, const KinematicState& ks = {})
-            : odom(p), last_known_state(ks)
+        PointData(const OdomData& p, const KinematicState& ks = {}) : odom(p), last_known_state(ks)
         {
         }
         PointData(const TwistData& p, const KinematicState& ks = {})
@@ -271,8 +260,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             last_observation_wallclock_stamp_ = mrpt::Clock::now();
         }
 
-        std::optional<mrpt::Clock::time_point> get_current_extrapolated_stamp()
-            const
+        std::optional<mrpt::Clock::time_point> get_current_extrapolated_stamp() const
         {
             if (!last_observation_stamp_) return {};
             return mrpt::Clock::fromDouble(
@@ -283,15 +271,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
        private:
         std::optional<mrpt::Clock::time_point> last_observation_stamp_;
-        mrpt::Clock::time_point last_observation_wallclock_stamp_;
+        mrpt::Clock::time_point                last_observation_wallclock_stamp_;
     };
 
     State                state_;
     std::recursive_mutex stateMutex_;
 
     std::optional<NavState> build_and_optimize_fg(
-        const mrpt::Clock::time_point queryTimestamp,
-        const std::string&            frame_id);
+        const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id);
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
     void addFactor(const mola::FactorConstVelKinematics& f);

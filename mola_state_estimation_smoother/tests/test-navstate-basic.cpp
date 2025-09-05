@@ -1,22 +1,16 @@
-/* -------------------------------------------------------------------------
- *   A Modular Optimization framework for Localization and mApping  (MOLA)
- *
- * Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria
- * Licensed under the GNU GPL v3 for non-commercial applications.
- *
- * This file is part of MOLA.
- * MOLA is free software: you can redistribute it and/or modify it under the
- * terms of the GNU General Public License as published by the Free Software
- * Foundation, either version 3 of the License, or (at your option) any later
- * version.
- *
- * MOLA is distributed in the hope that it will be useful, but WITHOUT ANY
- * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
- * A PARTICULAR PURPOSE. See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * MOLA. If not, see <https://www.gnu.org/licenses/>.
- * ------------------------------------------------------------------------- */
+/*               _
+ _ __ ___   ___ | | __ _
+| '_ ` _ \ / _ \| |/ _` | Modular Optimization framework for
+| | | | | | (_) | | (_| | Localization and mApping (MOLA)
+|_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
+
+ Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+                         and individual contributors.
+ SPDX-License-Identifier: GPL-3.0
+ See LICENSE for full license information.
+ Closed-source licenses available upon request, for this odometry package
+ alone or in combination with the complete SLAM system.
+*/
 
 /**
  * @file   test-navstate-basic.cpp
@@ -68,41 +62,37 @@ class Data
         return o;
     }
 
-    const CMatrixDouble66 I6_2cm =
-        CMatrixDouble66(CMatrixDouble66::Identity() * 0.02);
+    const CMatrixDouble66 I6_2cm = CMatrixDouble66(CMatrixDouble66::Identity() * 0.02);
 
-    const mrpt::poses::CPose3D p0 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+    const mrpt::poses::CPose3D p0 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf0{p0, I6_2cm};
 
-    const mrpt::poses::CPose3D p1 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0.5, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+    const mrpt::poses::CPose3D p1 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0.5, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf1{p1, I6_2cm};
 
-    const mrpt::poses::CPose3D p2 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        1.0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+    const mrpt::poses::CPose3D p2 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(1.0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf2{p2, I6_2cm};
 
     // circle:
-    const mrpt::poses::CPose3D pc0 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+    const mrpt::poses::CPose3D pc0 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c0{pc0, I6_2cm};
 
     const double wc = 0.2, vc = 10.0, Rc = vc / wc;
 
     const mrpt::poses::CPose3D pc1 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.1), Rc*(1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg,
-        0.0_deg);
+        Rc * sin(wc * 0.1), Rc*(1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c1{pc1, I6_2cm};
 
     const mrpt::poses::CPose3D pc2 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.2), Rc*(1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg,
-        0.0_deg);
+        Rc * sin(wc * 0.2), Rc*(1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c2{pc2, I6_2cm};
 
     const mrpt::poses::CPose3D pc3 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.3), Rc*(1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg,
-        0.0_deg);
+        Rc * sin(wc * 0.3), Rc*(1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg, 0.0_deg);
 };
 
 // --------------------------------------
@@ -134,9 +124,7 @@ void test_one_pose()
 
     // std::cout << "Result:\n" << ret->asString() << std::endl;
 
-    ASSERT_NEAR_(
-        mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0,
-        1e-4);
+    ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 }
 
 // --------------------------------------
@@ -157,13 +145,9 @@ void test_one_pose_extrapolate()
 
     // std::cout << "Result:\n" << ret->asString() << std::endl;
 
-    ASSERT_NEAR_(
-        mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0,
-        1e-4);
+    ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 
-    ASSERT_GT_(
-        std::sqrt(1.0 / ret->twist_inv_cov(0, 0)),
-        nav.params.initial_twist_sigma_lin);
+    ASSERT_GT_(std::sqrt(1.0 / ret->twist_inv_cov(0, 0)), nav.params.initial_twist_sigma_lin);
 }
 
 // --------------------------------------
@@ -191,17 +175,13 @@ void test_2_poses()
 
     // std::cout << "Result:\n" << ret2->asString() << std::endl;
 
-    const auto expected2 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0.6, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
-    ASSERT_NEAR_(
-        mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - expected2).norm(), 0.0,
-        1e-2);
+    const auto expected2 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0.6, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
+    ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - expected2).norm(), 0.0, 1e-2);
 
-    const auto expected3 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0.25, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
-    ASSERT_NEAR_(
-        mrpt::poses::Lie::SE<3>::log(ret3->pose.mean - expected3).norm(), 0.0,
-        1e-2);
+    const auto expected3 =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0.25, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
+    ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret3->pose.mean - expected3).norm(), 0.0, 1e-2);
 }
 
 // --------------------------------------
@@ -216,10 +196,8 @@ void test_2_poses_too_late()
     const auto t1 = mrpt::Clock::fromDouble(0.5);
 
     // too late/early to extrapolate!! must return nullopt:
-    const auto t2 = mrpt::Clock::fromDouble(
-        nav.params.max_time_to_use_velocity_model + 0.5 + 0.1);
-    const auto t3 = mrpt::Clock::fromDouble(
-        0.0 - 0.1 - nav.params.max_time_to_use_velocity_model);
+    const auto t2 = mrpt::Clock::fromDouble(nav.params.max_time_to_use_velocity_model + 0.5 + 0.1);
+    const auto t3 = mrpt::Clock::fromDouble(0.0 - 0.1 - nav.params.max_time_to_use_velocity_model);
 
     nav.fuse_pose(t0, _.pdf0, "odom");
     nav.fuse_pose(t1, _.pdf1, "odom");
@@ -253,9 +231,7 @@ void test_3_poses()
 
     // std::cout << "Result:\n" << ret2->asString() << std::endl;
 
-    ASSERT_NEAR_(
-        mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - _.pc3).norm(), 0.0,
-        1e-1);
+    ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - _.pc3).norm(), 0.0, 1e-1);
 
     ASSERT_NEAR_(ret2->twist.vx, _.vc, 0.1);
     // ASSERT_NEAR_(ret2->twist.vy, .0, 0.2);
@@ -288,12 +264,10 @@ void test_noisy_straight()
         const double tt = T * i;
         const auto   t  = mrpt::Clock::fromDouble(tt);
 
-        const mrpt::poses::CPose3D p =
-            mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-                vx * tt + rng.drawGaussian1D(0, stdXYZ),
-                rng.drawGaussian1D(0, stdXYZ), +rng.drawGaussian1D(0, stdXYZ),
-                rng.drawGaussian1D(0, stdYPR), rng.drawGaussian1D(0, stdYPR),
-                rng.drawGaussian1D(0, stdYPR));
+        const mrpt::poses::CPose3D p = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+            vx * tt + rng.drawGaussian1D(0, stdXYZ), rng.drawGaussian1D(0, stdXYZ),
+            +rng.drawGaussian1D(0, stdXYZ), rng.drawGaussian1D(0, stdYPR),
+            rng.drawGaussian1D(0, stdYPR), rng.drawGaussian1D(0, stdYPR));
         const mrpt::poses::CPose3DPDFGaussian pdf{p, _.I6_2cm};
 
         nav.fuse_pose(t, pdf, "odom");
@@ -343,28 +317,24 @@ int main(int argc, char** argv)
 
         if (runOnlyIdx >= 0 && index != runOnlyIdx) continue;
 
-        const auto sPrefix = mrpt::format(
-            "[ (%3i / %3zu) %20s ]", index, tests.size(), name.c_str());
+        const auto sPrefix =
+            mrpt::format("[ (%3i / %3zu) %20s ]", index, tests.size(), name.c_str());
         try
         {
             std::cout << sPrefix << " Running..." << std::endl;
             f();
 
-            mrpt::system::consoleColorAndStyle(
-                mrpt::system::ConsoleForegroundColor::GREEN);
+            mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::GREEN);
             std::cout << sPrefix << " OK." << std::endl;
         }
         catch (std::exception& e)
         {
-            mrpt::system::consoleColorAndStyle(
-                mrpt::system::ConsoleForegroundColor::RED);
-            std::cout << sPrefix << " ERROR: " << std::endl
-                      << e.what() << std::endl;
+            mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
+            std::cout << sPrefix << " ERROR: " << std::endl << e.what() << std::endl;
             anyFail = true;
         }
 
-        mrpt::system::consoleColorAndStyle(
-            mrpt::system::ConsoleForegroundColor::DEFAULT);
+        mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::DEFAULT);
     }
 
     return anyFail;
