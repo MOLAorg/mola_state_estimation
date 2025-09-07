@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.10.0 (2025-09-07)
+-------------------
 * Fix build against gtsam>=4.3
 * Update copyright notice
 * Make unhandled sensor input topic message less verbose
