@@ -19,7 +19,7 @@
  * @date   Jan 22, 2024
  */
 
-#include <mola_imu_preintegration/RotationIntegrator.h>
+#include <mola_imu_preintegration/ImuIntegrator.h>
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/poses/Lie/SO.h>
