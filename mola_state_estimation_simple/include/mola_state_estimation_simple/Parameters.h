@@ -31,7 +31,7 @@ namespace mola::state_estimation_simple
 {
 /** Parameters needed by StateEstimationSimple.
  *
- * \ingroup mola_imu_preintegration_grp
+ * \ingroup mola_state_estimation_grp
  */
 class Parameters
 {
