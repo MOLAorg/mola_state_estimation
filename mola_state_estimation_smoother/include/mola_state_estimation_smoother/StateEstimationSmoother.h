@@ -29,7 +29,7 @@
 #include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:
-#include <mola_imu_preintegration/RotationIntegrator.h>
+#include <mola_imu_preintegration/ImuIntegrator.h>
 
 // MRPT:
 #include <mrpt/containers/bimap.h>

@@ -19,7 +19,7 @@
  * @date   Jan 22, 2024
  */
 
-#include <mola_imu_preintegration/RotationIntegrator.h>
+#include <mola_imu_preintegration/ImuIntegrator.h>
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/poses/Lie/SO.h>
@@ -274,9 +274,9 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
         const auto& tw = state_.last_twist.value();
 
         // For the velocity model, we don't have any known "bias":
-        const mola::RotationIntegrationParams rotParams = {};
+        const mola::imu::ImuIntegrationParams rotParams = {};
 
-        const auto rot33 = mola::incremental_rotation({tw.wx, tw.wy, tw.wz}, rotParams, dt);
+        const auto rot33 = mola::imu::incremental_rotation({tw.wx, tw.wy, tw.wz}, rotParams, dt);
 
         poseExtrapolation = mrpt::poses::CPose3D::FromRotationAndTranslation(
             rot33, mrpt::math::TVector3D(tw.vx, tw.vy, tw.vz) * dt);
