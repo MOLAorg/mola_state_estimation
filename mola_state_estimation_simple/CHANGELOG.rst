@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.11.0 (2025-10-05)
+-------------------
 * Move mola_imu_preintegration out of this repo
   The new repository is: https://github.com/MOLAorg/mola_imu_preintegration
 * Merge pull request `#4 <https://github.com/MOLAorg/mola_state_estimation/issues/4>`_ from MOLAorg/feature/imu
