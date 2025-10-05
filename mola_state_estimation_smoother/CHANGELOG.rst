@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Move LocalVelocityBuffer class here from mp2p_icp repository
+* Contributors: Jose Luis Blanco-Claraco
+
 1.10.0 (2025-09-07)
 -------------------
 * Fix build against gtsam>=4.3

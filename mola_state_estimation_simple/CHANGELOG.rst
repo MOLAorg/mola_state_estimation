@@ -2,6 +2,16 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Move mola_imu_preintegration out of this repo
+  The new repository is: https://github.com/MOLAorg/mola_imu_preintegration
+* Merge pull request `#4 <https://github.com/MOLAorg/mola_state_estimation/issues/4>`_ from MOLAorg/feature/imu
+  Refactor IMU library
+* Fix using new IMU integration API
+* Move LocalVelocityBuffer class here from mp2p_icp repository
+* Contributors: Jose Luis Blanco-Claraco
+
 1.10.0 (2025-09-07)
 -------------------
 * Update copyright notice

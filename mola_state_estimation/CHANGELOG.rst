@@ -2,6 +2,10 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+ * Remove mola_imu_preintegration to its own repository.
+
 1.10.0 (2025-09-07)
 -------------------
 
