@@ -21,6 +21,7 @@
 #pragma once
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
+#include <mola_kernel/version.h>
 #include <mola_state_estimation_simple/Parameters.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
@@ -121,7 +122,11 @@ class StateEstimationSimple : public mola::NavStateFilter
 
    protected:
     // Implementation of RawDataConsumer
+#if MOLA_VERSION_CHECK(2, 1, 0)
+    void onNewObservation(const CObservation::ConstPtr& o) override;
+#else
     void onNewObservation(const CObservation::Ptr& o) override;
+#endif
 
    private:
     struct State

@@ -24,6 +24,7 @@
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
+#include <mola_kernel/version.h>
 #include <mola_state_estimation_smoother/FactorConstVelKinematics.h>
 #include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
@@ -156,7 +157,11 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
    protected:
     // Implementation of RawDataConsumer
+#if MOLA_VERSION_CHECK(2, 1, 0)
+    void onNewObservation(const CObservation::ConstPtr& o) override;
+#else
     void onNewObservation(const CObservation::Ptr& o) override;
+#endif
 
    private:
     // everything related to gtsam is hidden in the public API via pimpl

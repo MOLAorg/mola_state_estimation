@@ -354,26 +354,30 @@ std::set<std::string> StateEstimationSmoother::known_frame_ids()
     return ret;
 }
 
+#if MOLA_VERSION_CHECK(2, 1, 0)
+void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
+#else
 void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
+#endif
 {
     const ProfilerEntry tleg(profiler_, "onNewObservation");
 
     ASSERT_(o);
 
     // IMU:
-    if (auto obsIMU = std::dynamic_pointer_cast<mrpt::obs::CObservationIMU>(o);
+    if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o);
         obsIMU && std::regex_match(o->sensorLabel, params.do_process_imu_labels_re))
     {
         this->fuse_imu(*obsIMU);
     }
     // Odometry source:
-    else if (auto obsOdom = std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(o);
+    else if (auto obsOdom = std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(o);
              obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
     {
         this->fuse_odometry(*obsOdom, o->sensorLabel);
     }
     // GNSS source:
-    else if (auto obsGPS = std::dynamic_pointer_cast<mrpt::obs::CObservationGPS>(o);
+    else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);
              obsGPS && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
     {
         this->fuse_gnss(*obsGPS);
@@ -858,7 +862,10 @@ void StateEstimationSmoother::delete_too_old_entries()
             // remove it:
             it = state_.data.erase(it);
         }
-        else { ++it; }
+        else
+        {
+            ++it;
+        }
     }
 }
 
