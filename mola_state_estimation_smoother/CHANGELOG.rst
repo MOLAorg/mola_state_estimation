@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+1.11.1 (2025-10-20)
+-------------------
 * Update to build against MOLA>=2.1.0 with ConstPtr API
 * Contributors: Jose Luis Blanco-Claraco
 
