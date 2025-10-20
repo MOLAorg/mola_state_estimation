@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Update to build against MOLA>=2.1.0 with ConstPtr API
+* Contributors: Jose Luis Blanco-Claraco
+
 1.11.0 (2025-10-05)
 -------------------
 * Move LocalVelocityBuffer class here from mp2p_icp repository

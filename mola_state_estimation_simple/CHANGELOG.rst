@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Update to build against MOLA>=2.1.0 with ConstPtr API
+* Contributors: Jose Luis Blanco-Claraco
+
 1.11.0 (2025-10-05)
 -------------------
 * Move mola_imu_preintegration out of this repo
