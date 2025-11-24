@@ -25,6 +25,7 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 
 namespace mola
 {
@@ -52,8 +53,12 @@ class FactorGNSS2ENU
     /// @return a deep copy of this factor
     gtsam::NonlinearFactor::shared_ptr clone() const override
     {
-        return boost::static_pointer_cast<gtsam::NonlinearFactor>(
+#if GTSAM_USES_BOOST
+        return boost::static_pointer_cast<This>(
             gtsam::NonlinearFactor::shared_ptr(new This(*this)));
+#else
+        return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+#endif
     }
 
     // Return measurement expression
@@ -87,6 +92,7 @@ class FactorGNSS2ENU
     }
 
    private:
+#if GTSAM_USES_BOOST
     friend class boost::serialization::access;
     template <class ARCHIVE>
     void serialize(ARCHIVE& ar, const unsigned int /*version*/)
@@ -96,5 +102,6 @@ class FactorGNSS2ENU
         ar& boost::serialization::make_nvp(
             "FactorGNSS2ENU", boost::serialization::base_object<Base>(*this));
     }
+#endif
 };
 }  // namespace mola
