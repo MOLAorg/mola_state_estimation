@@ -39,12 +39,11 @@ class FactorGNSS2ENU
 
    public:
     /// default constructor
-    FactorGNSS2ENU()           = default;
-    ~FactorGNSS2ENU() override = default;
+    FactorGNSS2ENU() = default;
 
     FactorGNSS2ENU(
-        gtsam::Key kPi, const gtsam::Point3& sensorOnVehicle, const gtsam::Point3& observedENU,
-        const gtsam::SharedNoiseModel& model)
+        gtsam::Key kPi, const gtsam::Point3& sensorOnVehicle,  // NOLINT
+        const gtsam::Point3& observedENU, const gtsam::SharedNoiseModel& model)
         : Base({kPi}, model, observedENU), sensorOnVehicle_(sensorOnVehicle)
     {
         this->initialize(expression({kPi}));

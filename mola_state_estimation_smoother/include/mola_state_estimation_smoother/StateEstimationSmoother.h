@@ -21,12 +21,12 @@
 #pragma once
 
 // this package:
+#include <mola_gtsam_factors/FactorConstVelKinematics.h>
+#include <mola_gtsam_factors/FactorTricycleKinematics.h>
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_kernel/version.h>
-#include <mola_state_estimation_smoother/FactorConstVelKinematics.h>
-#include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:

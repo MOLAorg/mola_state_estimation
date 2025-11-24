@@ -18,7 +18,7 @@
 #include <mrpt/topography/conversions.h>
 
 // gtsam factors:
-#include <mola_georeferencing/FactorGNSS2ENU.h>
+#include <mola_gtsam_factors/FactorGNSS2ENU.h>
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -116,7 +116,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
         mrpt::obs::CObservationGPS::Ptr obs;
         for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationGPS>(i)); i++)
         {
-            if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA)) { continue; }
+            if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA))
+            {
+                continue;
+            }
 
             auto& f = ret.frames.emplace_back();
 
@@ -148,7 +151,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
             f.coords.height = f.gga.fields.altitude_meters;
 
             // keep first one:
-            if (!ret.refCoord.has_value()) { ret.refCoord = f.coords; }
+            if (!ret.refCoord.has_value())
+            {
+                ret.refCoord = f.coords;
+            }
 
             // Convert GNSS obs to ENU:
             mrpt::topography::geodeticToENU_WGS84(f.coords, f.enu, *ret.refCoord);

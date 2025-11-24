@@ -23,35 +23,28 @@ find_package(GTSAM REQUIRED)
 # Find MOLA packages:
 find_package(mola_kernel REQUIRED)
 find_package(mola_imu_preintegration REQUIRED)
+find_package(mola_gtsam_factors REQUIRED)
 
 # -----------------------
 # define lib:
-set(LIB_SRCS
-  src/Parameters.cpp
-  src/StateEstimationSmoother.cpp
-  src/register.cpp
-)
-set(LIB_PUBLIC_HDRS
-  include/mola_state_estimation_smoother/gtsam_detect_version.h
-  include/mola_state_estimation_smoother/StateEstimationSmoother.h
-  include/mola_state_estimation_smoother/FactorConstVelKinematics.h
-  include/mola_state_estimation_smoother/Parameters.h
-  include/mola_state_estimation_smoother/FactorTricycleKinematics.h
-  include/mola_state_estimation_smoother/id.h
-)
-
 mola_add_library(
   TARGET ${PROJECT_NAME}
-  SOURCES ${LIB_SRCS} ${LIB_PUBLIC_HDRS}
+  SOURCES
+    src/Parameters.cpp
+    src/StateEstimationSmoother.cpp
+    src/register.cpp
+    include/mola_state_estimation_smoother/Parameters.h
   PUBLIC_LINK_LIBRARIES
     mrpt::obs
     mola::mola_kernel
     mola::mola_imu_preintegration
+    mola::mola_gtsam_factors
   PRIVATE_LINK_LIBRARIES
     gtsam
   CMAKE_DEPENDENCIES
     mola_common
     mola_imu_preintegration
+    mola_gtsam_factors
     mola_kernel
 )
 target_include_directories(${PROJECT_NAME} PRIVATE ".")

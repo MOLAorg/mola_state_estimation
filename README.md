@@ -22,6 +22,8 @@ These packages are provided here:
 
 - `mola_georeferencing`: C++ library for georeferencing key-frame maps (simplemaps) and related CLI tools.
 
+- `mola_gtsam_factors`: C++ library with reusable GTSAM Factors useful in georeferencing and state-estimation MOLA modules
+
 Refer to the [repository documentation](https://docs.mola-slam.org/latest/mola_state_estimators.html) for more details, demos, etc.
 
 ## Individual package build status

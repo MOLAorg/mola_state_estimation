@@ -84,15 +84,15 @@ class Data
     const double wc = 0.2, vc = 10.0, Rc = vc / wc;
 
     const mrpt::poses::CPose3D pc1 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.1), Rc*(1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.1), Rc * (1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c1{pc1, I6_2cm};
 
     const mrpt::poses::CPose3D pc2 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.2), Rc*(1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.2), Rc * (1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c2{pc2, I6_2cm};
 
     const mrpt::poses::CPose3D pc3 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.3), Rc*(1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.3), Rc * (1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg, 0.0_deg);
 };
 
 // --------------------------------------
@@ -306,7 +306,7 @@ int main(int argc, char** argv)
     };
 
     int runOnlyIdx = -1;
-    if (argc == 2) runOnlyIdx = std::stoi(argv[1]);
+    if (argc == 2) { runOnlyIdx = std::stoi(argv[1]); }
 
     bool anyFail = false;
 
@@ -315,7 +315,7 @@ int main(int argc, char** argv)
     {
         index++;
 
-        if (runOnlyIdx >= 0 && index != runOnlyIdx) continue;
+        if (runOnlyIdx >= 0 && index != runOnlyIdx) { continue; }
 
         const auto sPrefix =
             mrpt::format("[ (%3i / %3zu) %20s ]", index, tests.size(), name.c_str());

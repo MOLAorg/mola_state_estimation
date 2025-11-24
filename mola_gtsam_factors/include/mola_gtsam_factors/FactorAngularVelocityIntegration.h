@@ -22,45 +22,46 @@
 #pragma once
 
 #include <gtsam/geometry/Point3.h>
+#include <gtsam/geometry/Rot3.h>
 #include <gtsam/nonlinear/ExpressionFactor.h>
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/expressions.h>
-#include <mola_state_estimation_smoother/gtsam_detect_version.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 
-namespace mola::state_estimation_smoother
+namespace mola::factors
 {
 /**
- * Factor for constant angular velocity model, equivalent to expression:
+ * Factor for angular velocity integration model, equivalent to expressions:
  *
- * Pi +0.5*dt*(gtsam::rotate(Ri, bVi) + gtsam::rotate(Rj, bVj)) - Pj = errZero
+ *   gtsam::Expression<gtsam::Point3> deltaWi = dt * bWi;
+ *   gtsam::Expression<gtsam::Rot3> expmap_(&gtsam::Rot3::Expmap, deltaWi);
  *
- * Note that angular and linear velocities are stored in Values in the body "b"
- * frame, hence the "b" prefix, and the need for the orientations "R".
+ *   gtsam::between( gtsam::compose(Ri, expmap_), Rj ) = Rot_Identity
+ *
  */
-class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
-                                        gtsam::Point3 /*return type*/,  //
-                                        gtsam::Point3, gtsam::Point3, gtsam::Rot3,  // Pi, bVi, Ri
-                                        gtsam::Point3, gtsam::Point3, gtsam::Rot3>
+class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
+                                             gtsam::Rot3 /*return type*/, gtsam::Rot3 /* Ri */,
+                                             gtsam::Point3 /* bWi */, gtsam::Rot3 /* Rj */
+                                             >
 {
    private:
-    using This = FactorTrapezoidalIntegrator;
+    using This = FactorAngularVelocityIntegration;
     using Base = gtsam::ExpressionFactorN<
-        gtsam::Point3 /*return type*/, gtsam::Point3, gtsam::Point3, gtsam::Rot3, gtsam::Point3,
-        gtsam::Point3, gtsam::Rot3>;
+        gtsam::Rot3 /*return type*/, gtsam::Rot3 /* Ri */, gtsam::Point3 /* bWi */,
+        gtsam::Rot3 /* Rj */
+        >;
 
     double dt_ = .0;
 
    public:
-    /// default constructor
-    FactorTrapezoidalIntegrator() = default;
+    FactorAngularVelocityIntegration() = default;
 
-    FactorTrapezoidalIntegrator(
-        gtsam::Key kPi, gtsam::Key kVi, gtsam::Key kRi,  //
-        gtsam::Key kPj, gtsam::Key kVj, gtsam::Key kRj,  //
-        const double dt, const gtsam::SharedNoiseModel& model)
-        : Base({kPi, kVi, kRi, kPj, kVj, kRj}, model, /* error=0 */ {0, 0, 0}), dt_(dt)
+    FactorAngularVelocityIntegration(
+        gtsam::Key kRi, gtsam::Key kbWi, gtsam::Key kRj, const double dt,
+        const gtsam::SharedNoiseModel& model)
+        : Base({kRi, kbWi, kRj}, model, gtsam::Rot3()), dt_(dt)
     {
-        this->initialize(This::expression({kPi, kVi, kRi, kPj, kVj, kRj}));
+        this->initialize(This::expression({kRi, kbWi, kRj}));
     }
 
     /// @return a deep copy of this factor
@@ -75,18 +76,16 @@ class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
     }
 
     // Return measurement expression
-    gtsam::Expression<gtsam::Point3> expression(
+    gtsam::Expression<gtsam::Rot3> expression(
         const std::array<gtsam::Key, NARY_EXPRESSION_SIZE>& keys) const override
     {
-        gtsam::Expression<gtsam::Point3> Pi_(keys[0]);
-        gtsam::Expression<gtsam::Point3> bVi_(keys[1]);
-        gtsam::Expression<gtsam::Rot3>   Ri_(keys[2]);
+        gtsam::Rot3_                     Ri(keys[0]);
+        gtsam::Point3_                   bWi(keys[1]);
+        gtsam::Rot3_                     Rj(keys[2]);
+        gtsam::Expression<gtsam::Point3> deltaWi = dt_ * bWi;
+        gtsam::Expression<gtsam::Rot3>   expmap_(&gtsam::Rot3::Expmap, deltaWi);
 
-        gtsam::Expression<gtsam::Point3> Pj_(keys[3]);
-        gtsam::Expression<gtsam::Point3> bVj_(keys[4]);
-        gtsam::Expression<gtsam::Rot3>   Rj_(keys[5]);
-
-        return {Pi_ + 0.5 * dt_ * (gtsam::rotate(Ri_, bVi_) + gtsam::rotate(Rj_, bVj_)) - Pj_};
+        return gtsam::between(gtsam::compose(Ri, expmap_), Rj);
     }
 
     /** implement functions needed for Testable */
@@ -96,12 +95,11 @@ class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
         const std::string&         s,
         const gtsam::KeyFormatter& keyFormatter = gtsam::DefaultKeyFormatter) const override
     {
-        std::cout << s << "FactorTrapezoidalIntegrator(" << keyFormatter(Factor::keys_[0]) << ","
-                  << keyFormatter(Factor::keys_[1]) << "," << keyFormatter(Factor::keys_[2]) << ","
-                  << keyFormatter(Factor::keys_[3]) << "," << keyFormatter(Factor::keys_[4]) << ","
-                  << keyFormatter(Factor::keys_[5]) << ")\n";
+        std::cout << s << "FactorAngularVelocityIntegration(" << keyFormatter(Factor::keys_[0])
+                  << "," << keyFormatter(Factor::keys_[1]) << "," << keyFormatter(Factor::keys_[2])
+                  << ")\n";
+        gtsam::traits<gtsam::Rot3>::Print(measured_, "  measured: ");
         gtsam::traits<double>::Print(dt_, "  dt: ");
-        gtsam::traits<gtsam::Point3>::Print(measured_, "  measured: ");
         this->noiseModel_->print("  noise model: ");
     }
 
@@ -110,7 +108,7 @@ class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
     {
         const This* e = dynamic_cast<const This*>(&expected);
         return e != nullptr && Base::equals(*e, tol) &&
-               gtsam::traits<double>::Equals(e->dt_, dt_, tol);
+               gtsam::traits<double>::Equals(dt_, e->dt_, tol);
     }
 
    private:
@@ -126,9 +124,9 @@ class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
         ar& BOOST_SERIALIZATION_NVP(measured_);
         ar& BOOST_SERIALIZATION_NVP(dt_);
         ar& boost::serialization::make_nvp(
-            "FactorTrapezoidalIntegrator", boost::serialization::base_object<Base>(*this));
+            "FactorAngularVelocityIntegration", boost::serialization::base_object<Base>(*this));
     }
 #endif
 };
 
-}  // namespace mola::state_estimation_smoother
+}  // namespace mola::factors

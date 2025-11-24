@@ -15,17 +15,12 @@ if("$ENV{ROS_VERSION}" STREQUAL "2")
 endif()
 
 # Tell CMake we'll use C++ for use in its tests/flags
-project(mola_georeferencing LANGUAGES CXX)
+project(mola_gtsam_factors LANGUAGES CXX)
 
 # MOLA CMake scripts: "mola_xxx()"
-#find_package(CLI11 REQUIRED)
-find_package(GTSAM REQUIRED)
 find_package(mola_common REQUIRED)
-find_package(mola_gtsam_factors REQUIRED)
-find_package(mola_yaml REQUIRED)
-find_package(mp2p_icp REQUIRED)
-find_package(mrpt-maps REQUIRED)
-find_package(mrpt-tclap REQUIRED)
+find_package(GTSAM REQUIRED)
+find_package(mrpt-poses REQUIRED)
 
 # -----------------------
 # define lib:
@@ -33,42 +28,21 @@ find_package(mrpt-tclap REQUIRED)
 mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
-    src/simplemap_georeference.cpp
-    include/mola_georeferencing/simplemap_georeference.h
+    src/register.cpp
+    include/mola_gtsam_factors/gtsam_detect_version.h
+    include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
+    include/mola_gtsam_factors/FactorConstLocalVelocity.h
+    include/mola_gtsam_factors/FactorConstVelKinematics.h
+    include/mola_gtsam_factors/FactorAngularVelocityIntegration.h
+    include/mola_gtsam_factors/FactorTricycleKinematics.h
+    include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/FactorGNSS2ENU.h
   PUBLIC_LINK_LIBRARIES
     gtsam
-    mola::mola_gtsam_factors
-    mola::mola_yaml
-    mola::mp2p_icp
-    mrpt::maps
-#	PRIVATE_LINK_LIBRARIES
+    mrpt::poses
+  #PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
-    mp2p_icp
-    mrpt-maps
-
-)
-
-# ---------------------------------
-# CLI apps:
-# ---------------------------------
-mola_add_executable(
-  TARGET  mola-sm-georeferencing
-  SOURCES apps/mola-sm-georeferencing-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-    #CLI11::CLI11
-)
-
-mola_add_executable(
-  TARGET  mola-trajectory-georef
-  SOURCES apps/mola-trajectory-georef-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-    #CLI11::CLI11
+    mrpt-poses
 )
 
 # -----------------------

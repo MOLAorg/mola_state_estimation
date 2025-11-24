@@ -11,7 +11,7 @@
  */
 #pragma once
 
-#include <mola_state_estimation_smoother/id.h>
+#include <mola_gtsam_factors/id.h>
 #include <mrpt/core/exceptions.h>
 
 namespace mola
@@ -25,8 +25,7 @@ class FactorTricycleKinematics
     FactorTricycleKinematics() = default;
 
     /** Creates relative pose constraint of KF `to` as seem from `from`. */
-    FactorTricycleKinematics(
-        id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
+    FactorTricycleKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
         : from_kf(kf_from), to_kf(kf_to), deltaTime(delta_time)
     {
     }

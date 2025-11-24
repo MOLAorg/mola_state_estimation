@@ -4,9 +4,9 @@
      side-by-side to ROS packages in a catkin/ament environment.
 -->
 <package format="3">
-  <name>mola_georeferencing</name>
+  <name>mola_gtsam_factors</name>
   <version>1.11.1</version>
-  <description>C++ library for georeferencing key-frame maps (simplemaps) and related CLI tools</description>
+  <description>C++ library with reusable GTSAM Factors useful in georeferencing and state-estimation MOLA modules</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
   <license>GPLv3</license>
@@ -17,13 +17,9 @@
   <author email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
 
   <!-- <depend>cli11</depend> -->
-  <depend>gtsam</depend>
   <depend>mola_common</depend>
-  <depend>mola_gtsam_factors</depend>
-  <depend>mola_yaml</depend>
-  <depend>mp2p_icp</depend>
-  <depend>mrpt_libmaps</depend>
-  <depend>mrpt_libtclap</depend>
+  <depend>gtsam</depend>
+  <depend>mrpt_poses</depend>
 
   <doc_depend>doxygen</doc_depend>
 

@@ -18,3 +18,7 @@ endif()
 
 # The following is needed for ROS 2's ament to generate the setup hooks
 ament_package()
+
+# quiet CMake warnings about unused variables
+set(_x "${CMAKE_EXPORT_COMPILE_COMMANDS}")
+unset(_x)
