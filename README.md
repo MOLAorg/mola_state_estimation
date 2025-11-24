@@ -13,12 +13,14 @@
 # mola_state_estimation
 Implementations of the MOLA virtual state estimation API for robots / vehicles.
 
-Two packages are provided here:
+These packages are provided here:
 - `mola_state_estimation_simple`: An incremental updater of a vehicle kinematic state from incoming
   sensor observations based on a constant velocity model. Good enough for most automotive datasets.
 
 - `mola_state_estimation_smoother`: An advanced method based on factor-graph smoothing, capable of
   fusing wheels odometry, IMUs, GNSS, etc.
+
+- `mola_georeferencing`: C++ library for georeferencing key-frame maps (simplemaps) and related CLI tools.
 
 Refer to the [repository documentation](https://docs.mola-slam.org/latest/mola_state_estimators.html) for more details, demos, etc.
 
