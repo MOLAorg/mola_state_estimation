@@ -121,9 +121,13 @@ MOLA LiDAR-odometry without state estimation):
 This is who is responsible of publishing each transformation:
 
 - ``odom_{i} → base_link``: One or more odometry sources.
-- ``map → base_link``: Published by **this state estimation package**.
-- ``enu → {map, utm}``: Published by ``mrpt_map_server`` (`github <https://github.com/mrpt-ros-pkg/mrpt_navigation/tree/ros2/mrpt_map_server/>`_)
-  or ``mola_lidar_odometry`` :ref:`map loading service <map_loading_saving>` if fed with a geo-referenced metric map (``.mm``) file.
+- ``map → base_link``: Published by **this state estimation package** (``mola_state_estimation_smoother``).
+- ``enu → {map, utm}``: Published by either:
+
+  - ``mola_lidar_odometry`` :ref:`map loading service <map_loading_saving>` if fed with a geo-referenced metric map (``.mm``) file; or
+  - ``mola_state_estimation_smoother`` (this package) if geo-referencing is to be estimated at run-time; or
+  - ``mrpt_map_server`` (`github <https://github.com/mrpt-ros-pkg/mrpt_navigation/tree/ros2/mrpt_map_server/>`_) if set to publish a geo-referenced
+    map.
 
 
 Add me: Pictures of factor graph model.
