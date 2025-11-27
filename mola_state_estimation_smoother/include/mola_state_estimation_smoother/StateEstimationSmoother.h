@@ -58,12 +58,21 @@ namespace mola::state_estimation_smoother
  *   there may be one for LiDAR-odometry, another for visual-odometry, or
  *   wheels-based odometry, etc. Each such frame is referenced with a "frame
  *   name" (an arbitrary string).
- * - Internally, the first frame of reference will be used as "global"
- *   coordinates, despite it may be actually either a `map` or `odom` frame, in
- *   the [ROS REP 105](https://www.ros.org/reps/rep-0105.html) sense.
- * - When publishing the vehicle pose in a timely manner, the reference frame
- *   is the one defined in "params.reference_frame_name".
- * - IMU readings are, by definition, given in the robot body frame, although
+ *
+ * - Internally, this class uses the {utm}, {enu}, and {map} frames. Refer to
+ *   the frame diagrams [here](https://docs.mola-slam.org/latest/mola_state_estimators.html).
+ *
+ * - The name for the reference frame (Default: `"map"`) and the robot/vehicle (`"base_link"`)
+ *   can be changed from the parameters (e.g. the config yaml file).
+ *
+ * - This package DOES NOT follow the [ROS REP 105](https://www.ros.org/reps/rep-0105.html)
+ *   specifications in the sense that `/tf` from `{map} → {odom}` are not published.
+ *   Instead, it directly emits `{map} → {base_link}` from the fusion of all available data.
+ *
+ * - Publishing the vehicle pose in a timely manner uses "params.reference_frame_name" as
+ *   reference frame.
+ *
+ * - IMU readings are, by definition, given in the local robot body frame, although
  *   they can have a relative transformation between the vehicle and sensor.
  *
  * Main API methods and frame conventions:
@@ -88,8 +97,8 @@ namespace mola::state_estimation_smoother
  * A constant SE(3) velocity model is internally used, without any
  * particular assumptions on the vehicle kinematics.
  *
- * For more theoretical descriptions, see the papers cited in
- * https://docs.mola-slam.org/latest/
+ * For more theoretical descriptions, see:
+ * https://docs.mola-slam.org/latest/mola_state_estimators.html
  *
  * \ingroup mola_state_estimation_grp
  */
@@ -116,7 +125,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /** Resets the estimator state to an initial state */
     void reset() override;
 
-    /** Integrates new SE(3) pose estimation of the vehicle wrt frame_id
+    /** Integrates new SE(3) pose odometry estimation of the vehicle wrt frame_id
      */
     void fuse_pose(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
