@@ -62,7 +62,7 @@ namespace mola::state_estimation_smoother
  *   coordinates, despite it may be actually either a `map` or `odom` frame, in
  *   the [ROS REP 105](https://www.ros.org/reps/rep-0105.html) sense.
  * - When publishing the vehicle pose in a timely manner, the reference frame
- *   is that defined in "params.reference_frame_name".
+ *   is the one defined in "params.reference_frame_name".
  * - IMU readings are, by definition, given in the robot body frame, although
  *   they can have a relative transformation between the vehicle and sensor.
  *
@@ -243,7 +243,6 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     struct State
     {
         State();
-        ~State();
 
         mrpt::pimpl<GtsamImpl> impl;
 
@@ -267,7 +266,10 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         std::optional<mrpt::Clock::time_point> get_current_extrapolated_stamp() const
         {
-            if (!last_observation_stamp_) return {};
+            if (!last_observation_stamp_)
+            {
+                return {};
+            }
             return mrpt::Clock::fromDouble(
                 (mrpt::Clock::nowDouble() -
                  mrpt::Clock::toDouble(last_observation_wallclock_stamp_)) +

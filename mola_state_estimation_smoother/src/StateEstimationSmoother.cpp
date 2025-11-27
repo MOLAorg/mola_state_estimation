@@ -78,7 +78,6 @@ StateEstimationSmoother::State::State()
     : impl(mrpt::make_impl<StateEstimationSmoother::GtsamImpl>())
 {
 }
-StateEstimationSmoother::State::~State() = default;
 
 StateEstimationSmoother::frameid_t StateEstimationSmoother::State::frame_id(
     const std::string& frame_name)

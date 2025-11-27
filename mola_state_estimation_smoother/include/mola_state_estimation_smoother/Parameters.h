@@ -21,14 +21,23 @@
 
 #pragma once
 
+#include <mola_kernel/Georeferencing.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/math/TTwist3D.h>
+#include <mrpt/typemeta/TEnumType.h>
 
 #include <regex>
 
 namespace mola::state_estimation_smoother
 {
+
+enum class KinematicModel : uint8_t
+{
+    ConstantVelocity,
+    Tricycle,
+};
+
 /** Parameters needed by StateEstimationSmoother.
  *
  * \ingroup mola_navstate_fuse__grp
@@ -41,12 +50,25 @@ class Parameters
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);
 
+    /** @name Reference frame IDs
+     * @{  */
+
     /// Used to publish timely pose updates
     std::string vehicle_frame_name = "base_link";
 
     /// Used to publish timely pose updates. Typically, 'map' or 'odom', etc.
     /// See the docs online.
     std::string reference_frame_name = "map";
+
+    /** @}  */
+
+    /** @name Kinematic factors (motion model)
+     * @{ */
+
+    /** Kinematic model to be used in the internal motion model factors.
+     *  Options: `KinematicModel::ConstantVelocity`, `KinematicModel::Tricycle`
+     */
+    KinematicModel kinematic_model = KinematicModel::ConstantVelocity;
 
     /** Valid estimations will be extrapolated only up to this time since the
      * last incorporated observation. If a request is done farther away, an
@@ -78,6 +100,31 @@ class Parameters
 
     bool enforce_planar_motion = false;
 
+    /** @} */
+
+    /** @name Geo-referencing
+     * @{  */
+
+    /** If `true`, this estimator will try to estimate the best geo-referencing for {enu} -> {map}
+     * from incoming GNSS readings and other sensors.
+     * If `false`, geo-referenciation is assumed to be given from either these initial parameters
+     * or, if not set, from an external source (e.g. a geo-referenced `.mm` map loaded in
+     * mola_lidar_odometry).
+     */
+    bool estimate_geo_reference = false;
+
+    /** If estimate_geo_reference is `false` and this is set, the geo-referenciation will be taken
+     * from this value and never attempted to be optimized or changed.
+     * Other geo-reference information coming from external sources may override this fixed initial
+     * value, though.
+     */
+    std::optional<mola::Georeferencing> fixed_geo_reference;
+
+    /** @} */
+
+    /** @name Sensor input names
+     * @{  */
+
     //!< regex for IMU sensor labels (ROS topics) to accept as IMU readings.
     std::regex do_process_imu_labels_re{".*"};
 
@@ -86,6 +133,14 @@ class Parameters
 
     //!< regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
     std::regex do_process_gnss_labels_re{".*"};
+
+    /** @} */
 };
 
 }  // namespace mola::state_estimation_smoother
+
+MRPT_ENUM_TYPE_BEGIN_NAMESPACE(
+    mola::state_estimation_smoother, mola::state_estimation_smoother::KinematicModel)
+MRPT_FILL_ENUM(KinematicModel::ConstantVelocity);
+MRPT_FILL_ENUM(KinematicModel::Tricycle);
+MRPT_ENUM_TYPE_END()
