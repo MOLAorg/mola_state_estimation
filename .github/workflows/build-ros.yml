@@ -120,8 +120,8 @@ jobs:
             --ignore-errors mismatch --rc geninfo_unexecuted_blocks=1
 
           # 2. Filter the report: Remove all files outside of your source code
-          lcov --remove coverage_filtered.info '/opt/ros/*' --ignore-errors unused --output-file coverage_filtered.info
-          lcov --remove coverage_filtered.info '/usr/*' --ignore-errors unused --output-file coverage_filtered.info
+          lcov --remove coverage.info '/opt/ros/*' '/usr/*' \
+            --ignore-errors unused --output-file coverage_filtered.info
 
           # 3. Print a summary to the log
           echo "--- Coverage Summary for mola-state-estimation ---"
