@@ -261,7 +261,7 @@ void test_noisy_straight()
 
     for (size_t i = 0; i < nSteps; i++)
     {
-        const double tt = T * i;
+        const double tt = T * static_cast<double>(i);
         const auto   t  = mrpt::Clock::fromDouble(tt);
 
         const mrpt::poses::CPose3D p = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
@@ -306,7 +306,10 @@ int main(int argc, char** argv)
     };
 
     int runOnlyIdx = -1;
-    if (argc == 2) { runOnlyIdx = std::stoi(argv[1]); }
+    if (argc == 2)
+    {
+        runOnlyIdx = std::stoi(argv[1]);
+    }
 
     bool anyFail = false;
 
@@ -315,7 +318,10 @@ int main(int argc, char** argv)
     {
         index++;
 
-        if (runOnlyIdx >= 0 && index != runOnlyIdx) { continue; }
+        if (runOnlyIdx >= 0 && index != runOnlyIdx)
+        {
+            continue;
+        }
 
         const auto sPrefix =
             mrpt::format("[ (%3i / %3zu) %20s ]", index, tests.size(), name.c_str());
