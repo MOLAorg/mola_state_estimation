@@ -10,6 +10,15 @@
 # Minimum CMake version: limited by CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS
 cmake_minimum_required(VERSION 3.5)
 
+# Set the possible values of build type for cmake-gui
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo" "Coverage")
+# Set flags for the "Coverage" build type. This is robust for use with colcon.
+set(CMAKE_CXX_FLAGS_COVERAGE "-g -O0 --coverage -fprofile-update=atomic" CACHE STRING "Flags for C++ coverage build")
+set(CMAKE_C_FLAGS_COVERAGE "-g -O0 --coverage -fprofile-update=atomic" CACHE STRING "Flags for C coverage build")
+set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Linker flags for coverage build")
+set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Linker flags for coverage build")
+
+
 if("$ENV{ROS_VERSION}" STREQUAL "2")
   set(DETECTED_ROS2 TRUE)
 endif()
