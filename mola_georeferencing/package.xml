@@ -9,7 +9,7 @@
   <description>C++ library for georeferencing key-frame maps (simplemaps) and related CLI tools</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
-  <license>GPLv3</license>
+  <license file="LICENSE">GPLv3</license>
 
   <url type="website">https://docs.mola-slam.org/</url>
   <url type="repository">https://github.com/MOLAorg/mola_state_estimation/</url>
