@@ -168,8 +168,8 @@ void mola::add_gnss_factors(
     gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,
     const AddGNSSFactorParams& params)
 {
-    using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
-    using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation
+    using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose, in the {map} frame
+    using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation: {enu} -> {map}
 
     v.insert(T(0), gtsam::Pose3::Identity());
 

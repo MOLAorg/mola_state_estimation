@@ -25,6 +25,7 @@
 #include <mrpt/core/get_env.h>
 #include <mrpt/core/lock_helper.h>
 #include <mrpt/math/gtsam_wrappers.h>
+#include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 
@@ -391,6 +392,14 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
              obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
     {
         this->fuse_odometry(*obsOdom, o->sensorLabel);
+    }
+    // Robot pose wrt "map":
+    else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
+             obsPose)
+    {
+        this->fuse_pose(
+            obsPose->timestamp, obsPose->pose + (-obsPose->sensorPose),
+            params.reference_frame_name);
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);
