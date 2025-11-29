@@ -156,7 +156,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
      * no valid observations yet, or if requested a timestamp out of the model
      * validity time window (e.g. too far in the future to be trustful).
      */
-    std::optional<NavState> estimated_navstate(
+    [[nodiscard]] std::optional<NavState> estimated_navstate(
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
     /// Returns a list of known frame_ids:

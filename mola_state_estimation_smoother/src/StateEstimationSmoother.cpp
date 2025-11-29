@@ -397,9 +397,14 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
-        this->fuse_pose(
-            obsPose->timestamp, obsPose->pose + (-obsPose->sensorPose),
-            params.reference_frame_name);
+        auto sensedSensorPose = obsPose->pose;
+        if (obsPose->sensorPose != mrpt::poses::CPose3D())
+        {
+            sensedSensorPose =
+                sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
+        }
+
+        this->fuse_pose(obsPose->timestamp, sensedSensorPose, params.reference_frame_name);
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);

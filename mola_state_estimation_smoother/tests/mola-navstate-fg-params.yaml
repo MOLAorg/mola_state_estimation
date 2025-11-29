@@ -85,8 +85,7 @@ max_rmse: 2.0
 #estimate_geo_reference: false
 
 # Fixed geo-reference to use when estimate_geo_reference is false
-# Format depends on Georeferencing class - typically includes origin lat/lon/alt
-#fixed_geo_reference: null
+#fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
 
 # ----------------------------------------------------------------------------
 # Sensor Input Filtering (Regex Patterns)
