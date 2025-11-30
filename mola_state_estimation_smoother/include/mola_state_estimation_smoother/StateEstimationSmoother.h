@@ -109,6 +109,13 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
    public:
     StateEstimationSmoother();
 
+    // Make not copiable due to the pimpl gtsam state.
+    StateEstimationSmoother(const StateEstimationSmoother&)            = delete;
+    StateEstimationSmoother(StateEstimationSmoother&&)                 = delete;
+    StateEstimationSmoother& operator=(const StateEstimationSmoother&) = delete;
+    StateEstimationSmoother& operator=(StateEstimationSmoother&&)      = delete;
+    ~StateEstimationSmoother()                                         = default;
+
     /** \name Main API
      *  @{ */
 
@@ -220,6 +227,9 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         std::optional<mrpt::Clock::time_point> last_observation_stamp;
         mrpt::Clock::time_point                last_observation_wallclock_stamp;
+
+        std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
+        std::optional<std::string>          last_wheels_odometry_name;
     };
 
     State                state_;

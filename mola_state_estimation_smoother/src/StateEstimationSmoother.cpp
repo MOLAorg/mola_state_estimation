@@ -25,6 +25,7 @@
 #include <mrpt/core/get_env.h>
 #include <mrpt/core/lock_helper.h>
 #include <mrpt/math/gtsam_wrappers.h>
+#include <mrpt/obs/CActionRobotMovement2D.h>
 #include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
@@ -59,7 +60,10 @@ namespace mola::state_estimation_smoother
 const bool NAVSTATE_PRINT_FG        = mrpt::get_env<bool>("NAVSTATE_PRINT_FG", false);
 const bool NAVSTATE_PRINT_FG_ERRORS = mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERRORS", false);
 
-using gtsam::symbol_shorthand::F;  // Frame of reference origin pose (Pose3)
+using gtsam::symbol_shorthand::F;  // Frame of references (Pose3)
+                                   // F(0): T_enu_to_map
+                                   // F(i): T_map_to_odometry_frame_i
+
 using gtsam::symbol_shorthand::P;  // Position                       (Point3)
 using gtsam::symbol_shorthand::R;  // Rotation                       (Rot3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
@@ -73,7 +77,8 @@ struct StateEstimationSmoother::GtsamImpl
 {
     GtsamImpl() = default;
 
-    gtsam::IncrementalFixedLagSmoother smoother;
+    // This is initialized in initialize(), once we have the parameters
+    std::optional<gtsam::IncrementalFixedLagSmoother> smoother;
 
     gtsam::Values values;
 };
@@ -94,10 +99,21 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 
+    // This also resets the GTSAM pimpl unique_ptr in state_.
     reset();
 
-    // Load params:
-    params.loadFrom(cfg["params"]);
+    {
+        auto lck = mrpt::lockHelper(stateMutex_);
+
+        // Load params:
+        params.loadFrom(cfg["params"]);
+
+        // Forward parameters to GTSAM smoother & iSAM2:
+        gtsam::ISAM2Params isam2Params;
+        isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
+
+        state_.impl->smoother.emplace(params.sliding_window_length, isam2Params);
+    }
 
     // Initialize parent:
     mola::NavStateFilter::initialize(cfg);
@@ -155,28 +171,51 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
-    using namespace std::string_literals;
-
-    auto lck = mrpt::lockHelper(stateMutex_);
-#if 0
-    state_.update_last_input_stamp(odom.timestamp);
-
-    THROW_EXCEPTION("finish implementation!");
-
-    ASSERT_(!odomName.empty());
-
-    OdomData d;
-    d.frameId = state_.frame_id(odomName);
-    d.pose    = mrpt::poses::CPose3D(odom.odometry);
-
-    state_.data.insert({odom.timestamp, d});
-
-    delete_too_old_entries();
-
     MRPT_LOG_DEBUG_FMT(
         "fuse_odometry: t=%f name=%s pose=%s", mrpt::Clock::toDouble(odom.timestamp),
         odomName.c_str(), odom.odometry.asString().c_str());
-#endif
+
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    // Integrates new wheels-based odometry observations into the estimator.
+    //  This is a convenience method that internally ends up calling
+    //  fuse_pose(), but computing the uncertainty of odometry increments
+    //  according to a given motion model.
+
+    mrpt::poses::CPose2D lastOdom;
+    if (state_.last_wheels_odometry_name.has_value())
+    {
+        ASSERTMSG_(
+            *state_.last_wheels_odometry_name == odomName,
+            "More than one different 'odomName's received for wheels odometry!");
+
+        ASSERT_(state_.last_wheels_odometry.has_value());
+        lastOdom = *state_.last_wheels_odometry;
+    }
+    else
+    {
+        lastOdom = odom.odometry;
+    }
+    // Use a probabilistic motion model:
+    mrpt::obs::CActionRobotMovement2D odoAct;
+    odoAct.motionModelConfiguration.modelSelection = mrpt::obs::CActionRobotMovement2D::mmThrun;
+    // Default params: odoAct.motionModelConfiguration.thrunModel;
+
+    const auto odometryIncrement = odom.odometry - lastOdom;
+
+    odoAct.computeFromOdometry(odometryIncrement, odoAct.motionModelConfiguration);
+
+    mrpt::poses::CPose3DPDFGaussian newOdomPosePdf;
+    newOdomPosePdf.copyFrom(*odoAct.poseChange);
+
+    MRPT_LOG_DEBUG_FMT("fuse_odometry: poseChange: %s", newOdomPosePdf.asString().c_str());
+
+    // Save for next iteration:
+    state_.last_wheels_odometry_name = odomName;
+    state_.last_wheels_odometry      = odom.odometry;
+
+    // Fuse this new probabilistic pose observation:
+    this->fuse_pose(odom.timestamp, newOdomPosePdf, odomName);
 }
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -802,7 +841,6 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     MRPT_LOG_DEBUG_STREAM(
         "[addFactor] FactorConstVelKinematics: "
         << f.from_kf << " ==> " << f.to_kf << " dt=" << f.deltaTime);
-#endif
 
     // Add const-vel factor to gtsam itself:
     double dt = f.deltaTime;
@@ -874,6 +912,7 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     // Impl. line 1 of eq (4) in the MOLA RSS2019 paper.
     state_.impl->fg.emplace_shared<mola::factors::FactorAngularVelocityIntegration>(
         kRi, kbWi, kRj, dt, noise_kinematicsOrientation);
+#endif
 }
 
 void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
@@ -930,10 +969,10 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     const auto newFrameIdx = static_cast<frame_index_t>(state_.stamp2frame_index.size());
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
-    // Remove really old entries:
+    // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
     const double newestTime =
         mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
-    const double minTime = newestTime - params.sliding_window_length;
+    const double minTime = newestTime - 2 * params.sliding_window_length;
 
     std::set<mrpt::Clock::time_point> to_erase;
     for (const auto& [existing_t, _] : state_.stamp2frame_index)

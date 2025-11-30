@@ -33,6 +33,7 @@ find_package(mola_common REQUIRED)
 # find CMake dependencies:
 find_package(mrpt-obs)
 find_package(GTSAM REQUIRED)
+find_package(GTSAM_UNSTABLE REQUIRED)
 
 # Find MOLA packages:
 find_package(mola_kernel REQUIRED)
@@ -55,6 +56,7 @@ mola_add_library(
     mola::mola_gtsam_factors
   PRIVATE_LINK_LIBRARIES
     gtsam
+    gtsam_unstable
   CMAKE_DEPENDENCIES
     mola_common
     mola_imu_preintegration
