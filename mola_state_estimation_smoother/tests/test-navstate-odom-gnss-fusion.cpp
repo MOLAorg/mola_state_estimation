@@ -82,6 +82,8 @@ void run_test()
 {
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
 
+    stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+
     stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
     const size_t numPoses = 20;

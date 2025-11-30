@@ -230,6 +230,15 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
         std::optional<std::string>          last_wheels_odometry_name;
+
+        /** Refer to Parameters for possible sources of this.
+         * Anyways: this will always hold either the estimated or the fixed (externally set)
+         * georeferencing parameters.
+         * When this is still empty, it means we are still waiting for someone external to
+         * send us the georeferencing data, or our internal estimator didn't obtained a quality
+         * estimation yet.
+         */
+        std::optional<mola::Georeferencing> geo_reference;
     };
 
     State                state_;
@@ -241,8 +250,10 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Creates or returns the existing ID, for an odometry frame_id:
     [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
 
-    std::optional<NavState> build_and_optimize_fg(
-        const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id);
+    // std::optional<NavState> build_and_optimize_fg(const mrpt::Clock::time_point queryTimestamp,
+    // const std::string& frame_id);
+
+    void process_pending_gtsam_updates();
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
     void addFactor(const mola::FactorConstVelKinematics& f);

@@ -63,6 +63,8 @@ const bool NAVSTATE_PRINT_FG_ERRORS = mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERR
 using gtsam::symbol_shorthand::F;  // Frame of references (Pose3)
                                    // F(0): T_enu_to_map
                                    // F(i): T_map_to_odometry_frame_i
+const auto symbol_T_enu_to_map    = F(0);
+const auto symbol_T_map_to_odom_0 = F(1);  // odom[i] = thisSymbol + i
 
 using gtsam::symbol_shorthand::P;  // Position                       (Point3)
 using gtsam::symbol_shorthand::R;  // Rotation                       (Rot3)
@@ -80,7 +82,10 @@ struct StateEstimationSmoother::GtsamImpl
     // This is initialized in initialize(), once we have the parameters
     std::optional<gtsam::IncrementalFixedLagSmoother> smoother;
 
-    gtsam::Values values;
+    // Queue of pending updates for incremental iSAM2:
+    gtsam::NonlinearFactorGraph              newFactors;
+    gtsam::Values                            newValues;
+    gtsam::FixedLagSmoother::KeyTimestampMap newKeyStamps;
 };
 
 // -------- StateEstimationSmoother::State -------
@@ -90,33 +95,57 @@ StateEstimationSmoother::State::State()
 }
 
 // -------- StateEstimationSmoother -------
-StateEstimationSmoother::StateEstimationSmoother() = default;
+StateEstimationSmoother::StateEstimationSmoother()
+{  //
+    profiler_.setName("StateEstimationSmoother");
+}
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
+    // Initialize parent:
+    mola::NavStateFilter::initialize(cfg);
+
     this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
 
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 
-    // This also resets the GTSAM pimpl unique_ptr in state_.
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    // This also resets the GTSAM pimpl unique_ptr in state_
     reset();
 
+    // Load params:
+    params.loadFrom(cfg["params"]);
+
+    // Forward parameters to GTSAM smoother & iSAM2:
+    gtsam::ISAM2Params isam2Params;
+    isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
+
+    state_.impl->smoother.emplace(params.sliding_window_length, isam2Params);
+
+    // Initialize georeference-related gtsam variables:
+    // Even if not using a geo-referenced map, even if not using GPS sensors,
+    // do define the T_enu_to_map transform variable, so it can be used for gravity-alignment
+    // via IMU accelerometer, at least:
+    constexpr double ENU2MAP_WEAK_SIGMA = 1e4;
+
+    auto           enu2map     = gtsam::Pose3::Identity();
+    gtsam::Matrix6 enu2map_cov = gtsam::Matrix6::Identity() * mrpt::square(ENU2MAP_WEAK_SIGMA);
+
+    if (params.fixed_geo_reference.has_value())
     {
-        auto lck = mrpt::lockHelper(stateMutex_);
+        state_.geo_reference = *params.fixed_geo_reference;
 
-        // Load params:
-        params.loadFrom(cfg["params"]);
-
-        // Forward parameters to GTSAM smoother & iSAM2:
-        gtsam::ISAM2Params isam2Params;
-        isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
-
-        state_.impl->smoother.emplace(params.sliding_window_length, isam2Params);
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(
+            state_.geo_reference->T_enu_to_map, enu2map, enu2map_cov);
     }
 
-    // Initialize parent:
-    mola::NavStateFilter::initialize(cfg);
+    // Initial value:
+    state_.impl->newValues.insert(symbol_T_enu_to_map, enu2map);
+
+    // Weak prior factor:
+    state_.impl->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
 }
 
 void StateEstimationSmoother::spinOnce()
@@ -251,6 +280,15 @@ void StateEstimationSmoother::fuse_pose(
     const std::string& frame_id)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
+
+    MRPT_LOG_DEBUG_FMT(
+        "fuse_pose: t=%f frame='%s' p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
+        "%.02e %.02e (deg)",
+        mrpt::Clock::toDouble(timestamp), frame_id.c_str(), pose.mean.asString().c_str(),
+        std::sqrt(pose.cov(0, 0)), std::sqrt(pose.cov(1, 1)), std::sqrt(pose.cov(2, 2)),
+        mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
+        mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
+
 #if 0
     state_.update_last_input_stamp(timestamp);
 
@@ -279,13 +317,6 @@ void StateEstimationSmoother::fuse_pose(
     state_.data.insert({timestamp, {d, newGuess}});
     delete_too_old_entries();
 
-    MRPT_LOG_DEBUG_FMT(
-        "fuse_pose: t=%f frame='%s' p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
-        "%.02e %.02e (deg)",
-        mrpt::Clock::toDouble(timestamp), frame_id.c_str(), pose.mean.asString().c_str(),
-        std::sqrt(pose.cov(0, 0)), std::sqrt(pose.cov(1, 1)), std::sqrt(pose.cov(2, 2)),
-        mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
-        mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
 
     // Estimate twist:
     // If we add an additional direct observation of twist, the result is
@@ -367,7 +398,9 @@ void StateEstimationSmoother::fuse_twist(
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
-    return build_and_optimize_fg(timestamp, frame_id);
+    process_pending_gtsam_updates();
+
+    return {};
 }
 
 std::set<std::string> StateEstimationSmoother::known_odometry_frame_ids()
@@ -450,6 +483,7 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
 
 }  // namespace
 
+#if 0
 std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id)
 {
@@ -460,7 +494,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     auto lck = mrpt::lockHelper(stateMutex_);
 
     delete_too_old_entries();
-#if 0
 
     // Return an empty answer if we don't have data, or we would need to
     // extrapolate too much:
@@ -828,11 +861,11 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 
         THROW_EXCEPTION("TODO");
     }
-#endif
     NavState out;
 
     return out;
 }
+#endif
 
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
 void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
@@ -953,6 +986,8 @@ void StateEstimationSmoother::delete_too_old_entries()
 StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_timestamp_frame_index(
     const mrpt::Clock::time_point& t)
 {
+    const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_timestamp_frame_index");
+
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // See if we have an existing frame index close enough to t:
@@ -968,6 +1003,11 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     // Create a new one:
     const auto newFrameIdx = static_cast<frame_index_t>(state_.stamp2frame_index.size());
     state_.stamp2frame_index.insert(t, newFrameIdx);
+
+    // As we create a new timely keyframe, update what's the last time we created such new
+    // frame:
+    state_.last_observation_stamp           = t;
+    state_.last_observation_wallclock_stamp = mrpt::Clock::now();
 
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
     const double newestTime =
@@ -995,6 +1035,8 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
 StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_odom_frame_id(
     const std::string& frame_id_name)
 {
+    const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_odom_frame_id");
+
     auto lck = mrpt::lockHelper(stateMutex_);
 
     if (auto it = state_.known_odom_frames.find_key(frame_id_name);
@@ -1006,6 +1048,61 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size());
     state_.known_odom_frames.insert(frame_id_name, newId);
     return newId;
+}
+
+void StateEstimationSmoother::process_pending_gtsam_updates()
+{
+    const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
+
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    // Even if we have no new factors/values, do update the stamps of "persistent" variables:
+    if (state_.last_observation_stamp.has_value())
+    {
+        const auto lastObservationStamp_sec = mrpt::Clock::toDouble(*state_.last_observation_stamp);
+
+        state_.impl->newKeyStamps[symbol_T_enu_to_map] = lastObservationStamp_sec;
+        for (const auto& [_, frameId] : state_.known_odom_frames)
+        {
+            state_.impl->newKeyStamps[symbol_T_map_to_odom_0 + frameId] = lastObservationStamp_sec;
+        }
+    }
+
+    // Update the smoother with pending factors/values:
+    if (!state_.impl->newFactors.empty() && !state_.impl->newValues.empty() &&
+        !state_.impl->newKeyStamps.empty())
+    {
+        state_.impl->smoother->update(
+            state_.impl->newFactors, state_.impl->newValues, state_.impl->newKeyStamps);
+    }
+
+    // Optional: Perform extra internal iterations for better accuracy
+    // TODO: If useful, expose as a parameter?
+    const size_t maxExtraIterations = 3;
+    for (size_t i = 1; i < maxExtraIterations; ++i)
+    {
+        state_.impl->smoother->update();
+    }
+
+    // Retrieve the latest estimate
+    const auto currentEstimate = state_.impl->smoother->calculateEstimate();
+    if (!currentEstimate.empty())
+    {
+        // ...
+    }
+
+    // Print debug info:
+    auto& smoother = *state_.impl->smoother;
+    MRPT_LOG_DEBUG_STREAM(
+        "[process_pending_gtsam_updates] After update: "
+        << smoother.getFactors().size() << " factors, " << smoother.getFactors().nrFactors()
+        << " nr factors. New factors=" << state_.impl->newFactors.size()
+        << ", new values=" << state_.impl->newValues.size());
+
+    // Clear pending updates:
+    state_.impl->newFactors.resize(0);
+    state_.impl->newValues.clear();
+    state_.impl->newKeyStamps.clear();
 }
 
 }  // namespace mola::state_estimation_smoother
