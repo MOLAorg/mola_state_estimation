@@ -67,12 +67,15 @@ using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
 
 // -------- GtsamImpl -------
 
+// everything related to gtsam is hidden in the public API via pimpl
+// to reduce compilation dependencies, and build time and memory usage.
 struct StateEstimationSmoother::GtsamImpl
 {
     GtsamImpl() = default;
 
-    gtsam::NonlinearFactorGraph fg;
-    gtsam::Values               values;
+    gtsam::IncrementalFixedLagSmoother smoother;
+
+    gtsam::Values values;
 };
 
 // -------- StateEstimationSmoother::State -------

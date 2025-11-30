@@ -174,6 +174,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
    private:
     // everything related to gtsam is hidden in the public API via pimpl
+    // to reduce compilation dependencies, and build time and memory usage.
     struct GtsamImpl;
 
     using odometry_frameid_t = uint8_t;
