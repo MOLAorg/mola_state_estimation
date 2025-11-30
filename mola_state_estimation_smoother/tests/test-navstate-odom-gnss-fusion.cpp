@@ -33,18 +33,20 @@ const char* navStateParams =
     R"###(# Config for Parameters
 params:
     # Frame name for the vehicle/robot base
-    #vehicle_frame_name: "base_link"
+    vehicle_frame_name: "base_link"
 
     # Reference frame for pose publication (typically 'map' or 'odom')
-    #reference_frame_name: "map"
+    reference_frame_name: "map"
+
+    max_time_to_use_velocity_model: 2.0
 
     # ----------------------------------------------------------------------------
     # Kinematic Model & Motion Factors
     # ----------------------------------------------------------------------------
 
     # Kinematic model for internal motion model factors
-    # Options: ConstantVelocity, Tricycle
-    #kinematic_model: ConstantVelocity
+    # Options: KinematicModel::ConstantVelocity, KinematicModel::Tricycle
+    kinematic_model: KinematicModel::ConstantVelocity
 
     # Time window to keep past observations in the filter [seconds]
     sliding_window_length: 5.0

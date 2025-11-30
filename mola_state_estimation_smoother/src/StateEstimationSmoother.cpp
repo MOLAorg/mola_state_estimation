@@ -42,6 +42,7 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
+#include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
 
 // Custom factors:
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
