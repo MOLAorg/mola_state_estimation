@@ -159,8 +159,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     [[nodiscard]] std::optional<NavState> estimated_navstate(
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
-    /// Returns a list of known frame_ids:
-    auto known_frame_ids() -> std::set<std::string>;
+    /// Returns a list of known odometry frame_ids:
+    auto known_odometry_frame_ids() -> std::set<std::string>;
 
     /** @} */
 
@@ -176,122 +176,59 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     // everything related to gtsam is hidden in the public API via pimpl
     struct GtsamImpl;
 
-    using frameid_t = uint8_t;
-
-    // an observation from fuse_pose()
-    struct PoseData
-    {
-        PoseData() = default;
-
-        mrpt::poses::CPose3DPDFGaussian pose;
-        frameid_t                       frameId = 0;
-    };
-
-    // an observation from fuse_odometry()
-    struct OdomData
-    {
-        OdomData() = default;
-
-        mrpt::poses::CPose3D pose;
-        frameid_t            frameId = 0;
-    };
-
-    // an observation from fuse_twist()
-    struct TwistData
-    {
-        TwistData() = default;
-        mrpt::math::TTwist3D        twist;  // in the local frame of reference
-        mrpt::math::CMatrixDouble66 twistCov;
-    };
-
-    // Dummy type representing the query point.
-    struct QueryPointData
-    {
-        QueryPointData() = default;
-    };
+    using odometry_frameid_t = uint8_t;
+    using frame_index_t      = uint32_t;
 
     struct KinematicState
     {
-        mrpt::poses::CPose3D pose;
-        mrpt::math::TTwist3D twist;
+        mrpt::poses::CPose3D pose;  //!< in the reference frame
+        mrpt::math::TTwist3D twist;  //!< in the local frame of reference
     };
 
-    struct PointData
-    {
-        PointData() = default;
-
-        PointData(const PoseData& p, const KinematicState& ks = {}) : pose(p), last_known_state(ks)
-        {
-        }
-        PointData(const OdomData& p, const KinematicState& ks = {}) : odom(p), last_known_state(ks)
-        {
-        }
-        PointData(const TwistData& p, const KinematicState& ks = {})
-            : twist(p), last_known_state(ks)
-        {
-        }
-        PointData(const QueryPointData& p, const KinematicState& ks = {})
-            : query(p), last_known_state(ks)
-        {
-        }
-
-        std::optional<PoseData>       pose;
-        std::optional<OdomData>       odom;
-        std::optional<TwistData>      twist;
-        std::optional<QueryPointData> query;
-
-        // Estimation from last iteration, or initial guess,
-        // to make estimation faster starting closer to the real values:
-        KinematicState last_known_state;
-
-        std::string asString() const;
-
-        bool empty() const { return !pose && !odom && !twist && !query; }
-    };
-
+    // Accesses to this struct values in state_ must be protected by stateMutex_
     struct State
     {
         State();
 
         mrpt::pimpl<GtsamImpl> impl;
 
-        /// A bimap of known "frame_id" <=> "numeric IDs":
-        mrpt::containers::bimap<std::string, frameid_t> known_frames;
+        /// The next numeric ID to assign to a new frame, for usage in GTSAM symbols P(i), v(i)...
+        frame_index_t next_frame_index = 0;
 
-        /// Returns the existing ID, or creates a new ID, for a frame:
-        frameid_t frame_id(const std::string& frame_name);
+        /// A bimap of timestamps <=> frame indices. Updated by
+        mrpt::containers::bimap<mrpt::Clock::time_point, frame_index_t> stamp2frame_index;
 
-        /// The sliding window of observation data:
-        std::map<mrpt::Clock::time_point, PointData> data;
+        /// A bimap of known odometry "frame_id" <=> "numeric IDs":
+        mrpt::containers::bimap<std::string, odometry_frameid_t> known_odom_frames;
 
-        auto last_pose_of_frame_id(const std::string& frame_id)
-            -> std::optional<std::pair<mrpt::Clock::time_point, PointData>>;
-
-        void update_last_input_stamp(const mrpt::Clock::time_point& t)
-        {
-            last_observation_stamp_           = t;
-            last_observation_wallclock_stamp_ = mrpt::Clock::now();
-        }
-
+        /** For real-time mode operation (not offline): returns the current extrapolated stamp,
+         *  by adding the difference between the last observation wallclock time and now to the
+         *  last observation timestamp.
+         */
         std::optional<mrpt::Clock::time_point> get_current_extrapolated_stamp() const
         {
-            if (!last_observation_stamp_)
+            if (!last_observation_stamp)
             {
                 return {};
             }
             return mrpt::Clock::fromDouble(
                 (mrpt::Clock::nowDouble() -
-                 mrpt::Clock::toDouble(last_observation_wallclock_stamp_)) +
-                mrpt::Clock::toDouble(*last_observation_stamp_));
+                 mrpt::Clock::toDouble(last_observation_wallclock_stamp)) +
+                mrpt::Clock::toDouble(*last_observation_stamp));
         }
 
-       private:
-        std::optional<mrpt::Clock::time_point> last_observation_stamp_;
-        mrpt::Clock::time_point                last_observation_wallclock_stamp_;
+        std::optional<mrpt::Clock::time_point> last_observation_stamp;
+        mrpt::Clock::time_point                last_observation_wallclock_stamp;
     };
 
     State                state_;
     std::recursive_mutex stateMutex_;
+
+    /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
+    [[nodiscard]] frame_index_t add_or_get_timestamp_frame_index(const mrpt::Clock::time_point& t);
+
+    /// Creates or returns the existing ID, for an odometry frame_id:
+    [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
 
     std::optional<NavState> build_and_optimize_fg(
         const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id);

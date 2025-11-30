@@ -50,6 +50,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
+    MCP_LOAD_OPT(cfg, min_time_difference_to_create_new_frame);
+
     MCP_LOAD_OPT(cfg, estimate_geo_reference);
 
     MCP_LOAD_REQ(cfg, kinematic_model);

@@ -79,6 +79,8 @@ class Parameters
     /// Time to keep past observations in the filter
     double sliding_window_length = 5.0;  // [s]
 
+    double min_time_difference_to_create_new_frame = 0.01;  // [s]
+
     /// If the time between two keyframes is larger than this, a warning will be
     /// emitted; but the algorithm will keep trying its best.
     double time_between_frames_to_warning = 3.0;  // [s]

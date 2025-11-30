@@ -36,15 +36,46 @@ namespace
 const char* navStateParams =
     R"###(# Config for Parameters
 params:
-    sliding_window_length: 5.0 # [s]
-    max_time_to_use_velocity_model: 2.0  # [s]
-    time_between_frames_to_warning: 2.0  # [s]
-    sigma_random_walk_acceleration_linear: 1.0 # [m/s²]
-    sigma_random_walk_acceleration_angular: 1.0 # [rad/s²]
-    sigma_integrator_position: 0.10 # [m]
-    sigma_integrator_orientation: 0.10 # [rad]
-    robust_param: 0
-    max_rmse: 2
+    # Frame name for the vehicle/robot base
+    vehicle_frame_name: "base_link"
+
+    # Reference frame for pose publication (typically 'map' or 'odom')
+    reference_frame_name: "map"
+
+    max_time_to_use_velocity_model: 2.0
+
+    # ----------------------------------------------------------------------------
+    # Kinematic Model & Motion Factors
+    # ----------------------------------------------------------------------------
+
+    # Kinematic model for internal motion model factors
+    # Options: KinematicModel::ConstantVelocity, KinematicModel::Tricycle
+    kinematic_model: KinematicModel::ConstantVelocity
+
+    # Time window to keep past observations in the filter [seconds]
+    sliding_window_length: 5.0
+    
+    # Minimum time difference between frames to create a new frame [seconds]
+    min_time_difference_to_create_new_frame: 0.01
+
+    # Random walk model for linear acceleration uncertainty [m/s²]
+    sigma_random_walk_acceleration_linear: 1.0
+
+    # Random walk model for angular acceleration uncertainty [rad/s²]
+    sigma_random_walk_acceleration_angular: 1.0
+
+    # Integrator uncertainty for position [m]
+    sigma_integrator_position: 0.10
+
+    # Integrator uncertainty for orientation [rad]
+    sigma_integrator_orientation: 0.10
+
+    # Enable estimation of geo-referencing from GNSS and other sensors
+    # If false, geo-reference must be provided externally or via fixed_geo_reference
+    estimate_geo_reference: true
+
+    # Fixed geo-reference to use when estimate_geo_reference is false
+    #fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
 )###";
 
 using namespace mrpt::literals;  // _deg
@@ -101,7 +132,7 @@ void test_init_state()
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
-    ASSERT_(nav.known_frame_ids().empty());
+    ASSERT_(nav.known_odometry_frame_ids().empty());
 
     const auto ret = nav.estimated_navstate(mrpt::Clock::now(), "odom");
     ASSERT_(!ret.has_value());

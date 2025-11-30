@@ -29,6 +29,9 @@ kinematic_model: KinematicModel::ConstantVelocity
 # Time window to keep past observations in the filter [seconds]
 sliding_window_length: 5.0
 
+# Minimum time difference between frames to create a new frame [seconds]
+min_time_difference_to_create_new_frame: 0.01
+
 # Maximum time to extrapolate velocity model since last observation [seconds]
 # Beyond this time, empty estimations will be returned
 max_time_to_use_velocity_model: 2.0

@@ -50,6 +50,9 @@ params:
 
     # Time window to keep past observations in the filter [seconds]
     sliding_window_length: 5.0
+    
+    # Minimum time difference between frames to create a new frame [seconds]
+    min_time_difference_to_create_new_frame: 0.01
 
     # Random walk model for linear acceleration uncertainty [m/s²]
     sigma_random_walk_acceleration_linear: 1.0

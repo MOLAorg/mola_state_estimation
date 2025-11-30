@@ -81,42 +81,6 @@ StateEstimationSmoother::State::State()
 {
 }
 
-StateEstimationSmoother::frameid_t StateEstimationSmoother::State::frame_id(
-    const std::string& frame_name)
-{
-    if (auto it = known_frames.find_key(frame_name); it != known_frames.getDirectMap().end())
-    {
-        return it->second;
-    }
-
-    {
-        const auto newId = static_cast<frameid_t>(known_frames.size());
-        known_frames.insert(frame_name, newId);
-        return newId;
-    }
-}
-
-std::optional<std::pair<mrpt::Clock::time_point, StateEstimationSmoother::PointData>>
-    StateEstimationSmoother::State::last_pose_of_frame_id(const std::string& frameId)
-{
-    const auto frId = frame_id(frameId);
-
-    for (auto it = data.rbegin(); it != data.rend(); ++it)
-    {
-        if (!it->second.pose)
-        {
-            continue;
-        }
-        const auto& p = *it->second.pose;
-        if (p.frameId != frId)
-        {
-            continue;
-        }
-        return std::make_pair(it->first, it->second);
-    }
-    return {};
-}
-
 // -------- StateEstimationSmoother -------
 StateEstimationSmoother::StateEstimationSmoother() = default;
 
@@ -138,8 +102,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
 void StateEstimationSmoother::spinOnce()
 {
-    // At the predefined module rate, publish the current estimation,
-    // if we have any subscriber:
+    // At the predefined module rate, publish the current estimation, if we have any subscriber:
     if (!anyUpdateLocalizationSubscriber())
     {
         return;
@@ -192,7 +155,7 @@ void StateEstimationSmoother::fuse_odometry(
     using namespace std::string_literals;
 
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     state_.update_last_input_stamp(odom.timestamp);
 
     THROW_EXCEPTION("finish implementation!");
@@ -210,33 +173,34 @@ void StateEstimationSmoother::fuse_odometry(
     MRPT_LOG_DEBUG_FMT(
         "fuse_odometry: t=%f name=%s pose=%s", mrpt::Clock::toDouble(odom.timestamp),
         odomName.c_str(), odom.odometry.asString().c_str());
+#endif
 }
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     state_.update_last_input_stamp(imu.timestamp);
 
     THROW_EXCEPTION("TODO");
     (void)imu;
 
     delete_too_old_entries();
-
+#endif
     MRPT_LOG_DEBUG_FMT("fuse_imu: t=%f", mrpt::Clock::toDouble(imu.timestamp));
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     state_.update_last_input_stamp(gps.timestamp);
 
     THROW_EXCEPTION("TODO");
     (void)gps;
 
     delete_too_old_entries();
-
+#endif
     MRPT_LOG_DEBUG_FMT("fuse_gnss: t=%f", mrpt::Clock::toDouble(gps.timestamp));
 }
 
@@ -245,7 +209,7 @@ void StateEstimationSmoother::fuse_pose(
     const std::string& frame_id)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     state_.update_last_input_stamp(timestamp);
 
     // find last KF of this frame_id before adding the new one:
@@ -329,6 +293,7 @@ void StateEstimationSmoother::fuse_pose(
     }
 
     this->fuse_twist(timestamp, tw, twCov);
+#endif
 }
 
 void StateEstimationSmoother::fuse_twist(
@@ -336,7 +301,7 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::math::CMatrixDouble66& twistCov)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     state_.update_last_input_stamp(timestamp);
 
     TwistData d;
@@ -354,6 +319,7 @@ void StateEstimationSmoother::fuse_twist(
         std::sqrt(twistCov(1, 1)), std::sqrt(twistCov(2, 2)),
         mrpt::RAD2DEG(std::sqrt(twistCov(3, 3))), mrpt::RAD2DEG(std::sqrt(twistCov(4, 4))),
         mrpt::RAD2DEG(std::sqrt(twistCov(5, 5))));
+#endif
 }
 
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
@@ -362,12 +328,15 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     return build_and_optimize_fg(timestamp, frame_id);
 }
 
-std::set<std::string> StateEstimationSmoother::known_frame_ids()
+std::set<std::string> StateEstimationSmoother::known_odometry_frame_ids()
 {
     auto lck = mrpt::lockHelper(stateMutex_);
 
     std::set<std::string> ret;
-    for (const auto& [name, id] : state_.known_frames.getDirectMap()) ret.insert(name);
+    for (const auto& [name, id] : state_.known_odom_frames.getDirectMap())
+    {
+        ret.insert(name);
+    }
 
     return ret;
 }
@@ -449,10 +418,14 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     auto lck = mrpt::lockHelper(stateMutex_);
 
     delete_too_old_entries();
+#if 0
 
     // Return an empty answer if we don't have data, or we would need to
     // extrapolate too much:
-    if (state_.data.empty() || state_.known_frames.empty()) return {};
+    if (state_.data.empty() || state_.known_frames.empty())
+    {
+        return {};
+    }
     {
         const double tq_2_tfirst =
             mrpt::system::timeDifference(queryTimestamp, state_.data.begin()->first);
@@ -813,6 +786,8 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 
         THROW_EXCEPTION("TODO");
     }
+#endif
+    NavState out;
 
     return out;
 }
@@ -907,7 +882,7 @@ void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
 void StateEstimationSmoother::delete_too_old_entries()
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-
+#if 0
     if (state_.data.empty())
     {
         return;
@@ -929,30 +904,66 @@ void StateEstimationSmoother::delete_too_old_entries()
             ++it;
         }
     }
+#endif
 }
 
-std::string StateEstimationSmoother::PointData::asString() const
+// Creates a new frame index for timestamp t, or returns the existing one if close enough.
+StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_timestamp_frame_index(
+    const mrpt::Clock::time_point& t)
 {
-    std::ostringstream ss;
+    auto lck = mrpt::lockHelper(stateMutex_);
 
-    if (pose)
+    // See if we have an existing frame index close enough to t:
+    for (const auto& [existing_t, frame_idx] : state_.stamp2frame_index)
     {
-        ss << "pose: " << pose->pose.mean << " ";
-    }
-    if (odom)
-    {
-        ss << "odom: " << odom->pose << " ";
-    }
-    if (twist)
-    {
-        ss << "twist: " << twist->twist.asString() << " ";
-    }
-    if (query)
-    {
-        ss << "query";
+        const double dt = std::abs(mrpt::system::timeDifference(existing_t, t));
+        if (dt < params.min_time_difference_to_create_new_frame)
+        {
+            return frame_idx;
+        }
     }
 
-    return ss.str();
+    // Create a new one:
+    const auto newFrameIdx = static_cast<frame_index_t>(state_.stamp2frame_index.size());
+    state_.stamp2frame_index.insert(t, newFrameIdx);
+
+    // Remove really old entries:
+    const double newestTime =
+        mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
+    const double minTime = newestTime - params.sliding_window_length;
+
+    std::set<mrpt::Clock::time_point> to_erase;
+    for (const auto& [existing_t, _] : state_.stamp2frame_index)
+    {
+        const double t_existing = mrpt::Clock::toDouble(existing_t);
+        if (t_existing < minTime)
+        {
+            to_erase.insert(existing_t);
+        }
+    }
+    for (const auto& t_erase : to_erase)
+    {
+        state_.stamp2frame_index.erase_by_key(t_erase);
+    }
+
+    return newFrameIdx;
+}
+
+// Creates or returns the existing ID, for an odometry frame_id:
+StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_odom_frame_id(
+    const std::string& frame_id_name)
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    if (auto it = state_.known_odom_frames.find_key(frame_id_name);
+        it != state_.known_odom_frames.getDirectMap().end())
+    {
+        return it->second;
+    }
+
+    const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size());
+    state_.known_odom_frames.insert(frame_id_name, newId);
+    return newId;
 }
 
 }  // namespace mola::state_estimation_smoother
