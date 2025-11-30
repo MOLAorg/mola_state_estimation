@@ -108,7 +108,7 @@ void run_test()
         if (i > 0)
         {
             const double v_lin = 1.0;  // m/s
-            const double v_ang = 0.1;  // rad/s
+            const double v_ang = 0.3;  // rad/s
 
             // Increment in local frame
             const auto deltaPose = mrpt::poses::CPose3D(v_lin * T, 0.0, 0.0, v_ang * T, 0.0, 0.0);
@@ -125,9 +125,9 @@ void run_test()
         // Note: In a real scenario, noise is incremental. Here we just add noise
         // to the absolute GT to simulate a drifting input.
         auto noisyOdoPose = mrpt::poses::CPose2D(actualVehiclePose);
-        noisyOdoPose.x_incr(rng.drawGaussian1D(0, 0.05));
-        noisyOdoPose.y_incr(rng.drawGaussian1D(0, 0.05));
-        noisyOdoPose.phi_incr(rng.drawGaussian1D(0, 0.01));
+        noisyOdoPose.x_incr(rng.drawGaussian1D(0, 0.02));
+        noisyOdoPose.y_incr(rng.drawGaussian1D(0, 0.02));
+        noisyOdoPose.phi_incr(rng.drawGaussian1D(0, 0.002));
 
         obsOdo.odometry        = noisyOdoPose;
         obsOdo.hasEncodersInfo = false;
@@ -169,6 +169,10 @@ void run_test()
         // Send both to state estimator:
         stateEst.fuse_odometry(obsOdo);
         stateEst.fuse_gnss(obsGps);
+
+        // Enforce updating estimation:
+        const auto stateOpt = stateEst.estimated_navstate(
+            mrpt::Clock::fromDouble(t), stateEst.params.reference_frame_name);
     }
 
     // Recover pose:

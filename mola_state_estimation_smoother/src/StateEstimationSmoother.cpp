@@ -223,12 +223,14 @@ void StateEstimationSmoother::fuse_odometry(
     }
     else
     {
+        // This is the first time we have wheels odometry.
         lastOdom = odom.odometry;
     }
     // Use a probabilistic motion model:
     mrpt::obs::CActionRobotMovement2D odoAct;
-    odoAct.motionModelConfiguration.modelSelection = mrpt::obs::CActionRobotMovement2D::mmThrun;
-    // Default params: odoAct.motionModelConfiguration.thrunModel;
+    odoAct.motionModelConfiguration.modelSelection = mrpt::obs::CActionRobotMovement2D::mmGaussian;
+    odoAct.motionModelConfiguration.gaussianModel.minStdPHI = 1e-3;
+    odoAct.motionModelConfiguration.gaussianModel.minStdPHI = mrpt::DEG2RAD(0.1);
 
     const auto odometryIncrement = odom.odometry - lastOdom;
 
@@ -236,8 +238,15 @@ void StateEstimationSmoother::fuse_odometry(
 
     mrpt::poses::CPose3DPDFGaussian newOdomPosePdf;
     newOdomPosePdf.copyFrom(*odoAct.poseChange);
+    // Ensure as minimal uncertainty in all 3D DOFs to prevent numerical issues:
+    newOdomPosePdf.cov.asEigen().diagonal().array() += 1e-4;
 
-    MRPT_LOG_DEBUG_FMT("fuse_odometry: poseChange: %s", newOdomPosePdf.asString().c_str());
+    // Convert probabilistic pose back to global "odom" frame for data fusion the in "odom" frame:
+    newOdomPosePdf.changeCoordinatesReference(mrpt::poses::CPose3D(lastOdom));
+
+    MRPT_LOG_DEBUG_FMT(
+        "fuse_odometry: poseChange: %s newOdomPosePdf.mean: %s",
+        odoAct.poseChange->getMeanVal().asString().c_str(), newOdomPosePdf.mean.asString().c_str());
 
     // Save for next iteration:
     state_.last_wheels_odometry_name = odomName;
@@ -281,13 +290,26 @@ void StateEstimationSmoother::fuse_pose(
 {
     auto lck = mrpt::lockHelper(stateMutex_);
 
+    // get this numerical frame_id :
+    const auto frame_id_idx = add_or_get_odom_frame_id(frame_id);
+
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = add_or_get_timestamp_frame_index(timestamp);
+
     MRPT_LOG_DEBUG_FMT(
-        "fuse_pose: t=%f frame='%s' p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
+        "fuse_pose: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
         "%.02e %.02e (deg)",
-        mrpt::Clock::toDouble(timestamp), frame_id.c_str(), pose.mean.asString().c_str(),
+        static_cast<std::size_t>(this_kf_id), mrpt::Clock::toDouble(timestamp), frame_id.c_str(),
+        static_cast<std::size_t>(frame_id_idx), pose.mean.asString().c_str(),
         std::sqrt(pose.cov(0, 0)), std::sqrt(pose.cov(1, 1)), std::sqrt(pose.cov(2, 2)),
         mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
         mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
+
+    // numerical sanity:
+    for (int i = 0; i < 6; i++)
+    {
+        ASSERT_GT_(pose.cov(i, i), .0);
+    }
 
 #if 0
     state_.update_last_input_stamp(timestamp);
@@ -295,11 +317,6 @@ void StateEstimationSmoother::fuse_pose(
     // find last KF of this frame_id before adding the new one:
     const auto lastKF = state_.last_pose_of_frame_id(frame_id);
 
-    // numerical sanity:
-    for (int i = 0; i < 6; i++)
-    {
-        ASSERT_GT_(pose.cov(i, i), .0);
-    }
 
     PoseData d;
     d.frameId = state_.frame_id(frame_id);
