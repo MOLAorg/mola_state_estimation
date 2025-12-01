@@ -183,7 +183,7 @@ void StateEstimationSmoother::spinOnce()
     lu.cov       = nv->pose.cov_inv.inverse();
 
     MRPT_LOG_DEBUG_FMT(
-        "Publishing timely pose estimate: t=%f pose=%s", mrpt::Clock::toDouble(*tNowOpt),
+        "[spinOnce] Publishing timely pose estimate: t=%f pose=%s", mrpt::Clock::toDouble(*tNowOpt),
         lu.pose.asString().c_str());
 
     advertiseUpdatedLocalization(lu);
@@ -200,10 +200,6 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
-    MRPT_LOG_DEBUG_FMT(
-        "fuse_odometry: t=%f name=%s pose=%s", mrpt::Clock::toDouble(odom.timestamp),
-        odomName.c_str(), odom.odometry.asString().c_str());
-
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // Integrates new wheels-based odometry observations into the estimator.
@@ -245,8 +241,9 @@ void StateEstimationSmoother::fuse_odometry(
     newOdomPosePdf.changeCoordinatesReference(mrpt::poses::CPose3D(lastOdom));
 
     MRPT_LOG_DEBUG_FMT(
-        "fuse_odometry: poseChange: %s newOdomPosePdf.mean: %s",
-        odoAct.poseChange->getMeanVal().asString().c_str(), newOdomPosePdf.mean.asString().c_str());
+        "[fuse_odometry]: t=%f name=%s pose=%s poseChange=%s",
+        mrpt::Clock::toDouble(odom.timestamp), odomName.c_str(), odom.odometry.asString().c_str(),
+        odoAct.poseChange->getMeanVal().asString().c_str());
 
     // Save for next iteration:
     state_.last_wheels_odometry_name = odomName;
@@ -265,9 +262,8 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     THROW_EXCEPTION("TODO");
     (void)imu;
 
-    delete_too_old_entries();
 #endif
-    MRPT_LOG_DEBUG_FMT("fuse_imu: t=%f", mrpt::Clock::toDouble(imu.timestamp));
+    MRPT_LOG_DEBUG_FMT("[fuse_imu]: t=%f", mrpt::Clock::toDouble(imu.timestamp));
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
@@ -279,9 +275,8 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     THROW_EXCEPTION("TODO");
     (void)gps;
 
-    delete_too_old_entries();
 #endif
-    MRPT_LOG_DEBUG_FMT("fuse_gnss: t=%f", mrpt::Clock::toDouble(gps.timestamp));
+    MRPT_LOG_DEBUG_FMT("[fuse_gnss]: t=%f", mrpt::Clock::toDouble(gps.timestamp));
 }
 
 void StateEstimationSmoother::fuse_pose(
@@ -297,7 +292,7 @@ void StateEstimationSmoother::fuse_pose(
     const auto this_kf_id = add_or_get_timestamp_frame_index(timestamp);
 
     MRPT_LOG_DEBUG_FMT(
-        "fuse_pose: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
+        "[fuse_pose]: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
         "%.02e %.02e (deg)",
         static_cast<std::size_t>(this_kf_id), mrpt::Clock::toDouble(timestamp), frame_id.c_str(),
         static_cast<std::size_t>(frame_id_idx), pose.mean.asString().c_str(),
@@ -332,7 +327,6 @@ void StateEstimationSmoother::fuse_pose(
     }
 
     state_.data.insert({timestamp, {d, newGuess}});
-    delete_too_old_entries();
 
 
     // Estimate twist:
@@ -400,10 +394,9 @@ void StateEstimationSmoother::fuse_twist(
 
     state_.data.insert({timestamp, d});
 
-    delete_too_old_entries();
 
     MRPT_LOG_DEBUG_FMT(
-        "fuse_twist: t=%f twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
+        "[fuse_twist]: t=%f twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
         "%.02e (deg)",
         mrpt::Clock::toDouble(timestamp), twist.asString().c_str(), std::sqrt(twistCov(0, 0)),
         std::sqrt(twistCov(1, 1)), std::sqrt(twistCov(2, 2)),
@@ -509,8 +502,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     mrpt::system::CTimeLoggerEntry tle(profiler_, "build_and_optimize_fg");
 
     auto lck = mrpt::lockHelper(stateMutex_);
-
-    delete_too_old_entries();
 
     // Return an empty answer if we don't have data, or we would need to
     // extrapolate too much:
@@ -973,33 +964,37 @@ void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
 
 void StateEstimationSmoother::delete_too_old_entries()
 {
-    auto lck = mrpt::lockHelper(stateMutex_);
-#if 0
-    if (state_.data.empty())
-    {
-        return;
-    }
+    // auto lck = mrpt::lockHelper(stateMutex_); // this is assumed to be acquired by caller
 
-    const double newestTime = mrpt::Clock::toDouble(state_.data.rbegin()->first);
-    const double minTime    = newestTime - params.sliding_window_length;
+    // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
+    const double newestTime =
+        mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
+    const double minTime = newestTime - 2 * params.sliding_window_length;
 
-    for (auto it = state_.data.begin(); it != state_.data.end();)
+    std::set<mrpt::Clock::time_point> stamps_to_erase;
+    std::set<frame_index_t>           ids_to_erase;
+    for (const auto& [existing_t, frame_idx] : state_.stamp2frame_index)
     {
-        const double t = mrpt::Clock::toDouble(it->first);
-        if (t < minTime)
+        const double t_existing = mrpt::Clock::toDouble(existing_t);
+        if (t_existing < minTime)
         {
-            // remove it:
-            it = state_.data.erase(it);
-        }
-        else
-        {
-            ++it;
+            stamps_to_erase.insert(existing_t);
+            ids_to_erase.insert(frame_idx);
         }
     }
-#endif
+    for (const auto& t_erase : stamps_to_erase)
+    {
+        state_.stamp2frame_index.erase_by_key(t_erase);
+    }
+    for (const auto& idx : ids_to_erase)
+    {
+        state_.last_estimated_state.erase(idx);
+    }
 }
 
 // Creates a new frame index for timestamp t, or returns the existing one if close enough.
+// This also is in charge of the complex task of finding nearby existing frames and adding the
+// kinematic factors to ensure smooth motion estimation.
 StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_timestamp_frame_index(
     const mrpt::Clock::time_point& t)
 {
@@ -1008,8 +1003,15 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // See if we have an existing frame index close enough to t:
-    for (const auto& [existing_t, frame_idx] : state_.stamp2frame_index)
+    const auto closestPrior = find_before_after(state_.stamp2frame_index.getDirectMap(), t);
+    for (const auto& it : {closestPrior.first, closestPrior.second})
     {
+        if (it == state_.stamp2frame_index.getDirectMap().end())
+        {
+            continue;
+        }
+        const auto& [existing_t, frame_idx] = *it;
+
         const double dt = std::abs(mrpt::system::timeDifference(existing_t, t));
         if (dt < params.min_time_difference_to_create_new_frame)
         {
@@ -1021,29 +1023,33 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     const auto newFrameIdx = static_cast<frame_index_t>(state_.stamp2frame_index.size());
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
-    // As we create a new timely keyframe, update what's the last time we created such new
-    // frame:
+    // As we create a new timely keyframe, update what's the last time we created such new frame:
     state_.last_observation_stamp           = t;
     state_.last_observation_wallclock_stamp = mrpt::Clock::now();
 
-    // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
-    const double newestTime =
-        mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
-    const double minTime = newestTime - 2 * params.sliding_window_length;
+    // Look for the closest existing frames, and create kinematic pairs if they don't exist yet:
+    const auto closestPost = find_before_after(state_.stamp2frame_index.getDirectMap(), t);
 
-    std::set<mrpt::Clock::time_point> to_erase;
-    for (const auto& [existing_t, _] : state_.stamp2frame_index)
+    if (closestPost.first != state_.stamp2frame_index.getDirectMap().end())
     {
-        const double t_existing = mrpt::Clock::toDouble(existing_t);
-        if (t_existing < minTime)
-        {
-            to_erase.insert(existing_t);
-        }
+        const auto [t_before, idx_before] = *closestPost.first;
+        MRPT_LOG_DEBUG_FMT(
+            "[add_or_get_timestamp_frame_index] New frame created: idx=%zu, t_before=%f (idx=%zu)",
+            static_cast<size_t>(newFrameIdx), mrpt::Clock::toDouble(t_before),
+            static_cast<size_t>(idx_before));
     }
-    for (const auto& t_erase : to_erase)
+
+    if (closestPost.second != state_.stamp2frame_index.getDirectMap().end())
     {
-        state_.stamp2frame_index.erase_by_key(t_erase);
+        const auto [t_after, idx_after] = *closestPost.second;
+        MRPT_LOG_DEBUG_FMT(
+            "[add_or_get_timestamp_frame_index] New frame created: idx=%zu, t_after=%f (idx=%zu)",
+            static_cast<size_t>(newFrameIdx), mrpt::Clock::toDouble(t_after),
+            static_cast<size_t>(idx_after));
     }
+
+    // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
+    delete_too_old_entries();
 
     return newFrameIdx;
 }
@@ -1106,6 +1112,10 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     if (!currentEstimate.empty())
     {
         // ...
+        currentEstimate.print("Current estimate:");
+
+        // TODO!! Save into:
+        // state_.last_estimated_state
     }
 
     // Print debug info:
@@ -1120,6 +1130,64 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     state_.impl->newFactors.resize(0);
     state_.impl->newValues.clear();
     state_.impl->newKeyStamps.clear();
+}
+
+auto StateEstimationSmoother::find_before_after(
+    const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
+    const mrpt::Clock::time_point&                          t)
+    -> std::pair<
+        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
+        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>
+{
+    using Iterator = std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator;
+
+    // Handle the empty map case first
+    if (stamp2frame.empty())
+    {
+        return {stamp2frame.end(), stamp2frame.end()};
+    }
+
+    // upper_bound finds the first element whose key is > t. This is the 'after' element.
+    Iterator after = stamp2frame.upper_bound(t);
+
+    // Now determine the 'before' element.
+    Iterator before;
+
+    if (after == stamp2frame.begin())
+    {
+        // Case A: t is smaller than ALL keys.
+        // No element before t. 'after' is the first element.
+        before = stamp2frame.end();
+    }
+    else
+    {
+        // Case B: t is greater than or equal to some key(s).
+        // 'before' is the element immediately preceding 'after'.
+        before = std::prev(after);
+    }
+
+    // Now refine the 'after' iterator based on an exact match with the 'before' iterator.
+    // If the 'before' element's key is exactly 't', then 'before' is the exact match.
+    // The element *after* it is what upper_bound already found.
+    // If the 'before' element's key is < 't', then 'before' is the correct predecessor.
+
+    // Check if t is an exact match:
+    if (before != stamp2frame.end() && before->first == t)
+    {
+        // An exact match for t exists.
+        // 'before' is the exact match element.
+        // The element BEFORE the exact match is its predecessor, if it exists.
+        Iterator element_before_match =
+            (before == stamp2frame.begin()) ? stamp2frame.end() : std::prev(before);
+
+        // The element AFTER the exact match is what upper_bound already found (the current
+        // 'after').
+        return {element_before_match, after};
+    }
+
+    // General case: t lies strictly between 'before' and 'after' (or is smaller/larger than all).
+    // The iterators 'before' and 'after' are correct as computed above.
+    return {before, after};
 }
 
 }  // namespace mola::state_estimation_smoother

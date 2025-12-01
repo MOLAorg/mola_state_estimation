@@ -187,10 +187,11 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     using odometry_frameid_t = uint8_t;
     using frame_index_t      = uint32_t;
 
-    struct KinematicState
+    struct FrameState
     {
-        mrpt::poses::CPose3D pose;  //!< in the reference frame
-        mrpt::math::TTwist3D twist;  //!< in the local frame of reference
+        mrpt::poses::CPose3D    pose;  //!< in the reference frame
+        mrpt::math::TTwist3D    twist;  //!< in the local frame of reference
+        std::set<frame_index_t> kinematic_links_to;
     };
 
     // Accesses to this struct values in state_ must be protected by stateMutex_
@@ -208,6 +209,9 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         /// A bimap of known odometry "frame_id" <=> "numeric IDs":
         mrpt::containers::bimap<std::string, odometry_frameid_t> known_odom_frames;
+
+        /// The latest values from the estimator (updated in )
+        std::map<frame_index_t, FrameState> last_estimated_state;
 
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
@@ -245,23 +249,30 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     std::recursive_mutex stateMutex_;
 
     /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
+    /// This also is in charge of the complex task of finding nearby existing frames and adding the
+    /// kinematic factors to ensure smooth motion estimation.
     [[nodiscard]] frame_index_t add_or_get_timestamp_frame_index(const mrpt::Clock::time_point& t);
 
     /// Creates or returns the existing ID, for an odometry frame_id:
     [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
 
-    // std::optional<NavState> build_and_optimize_fg(const mrpt::Clock::time_point queryTimestamp,
-    // const std::string& frame_id);
-
+    /// Adds new factors to the smoother, optimizes it, and saves the variable values into
+    /// state_.last_estimated_state
     void process_pending_gtsam_updates();
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
     void addFactor(const mola::FactorConstVelKinematics& f);
     void addFactor(const mola::FactorTricycleKinematics& f);
 
+    /// Delete out-of-window entries in stamp2frame_index and last_estimated_state
     void delete_too_old_entries();
 
-    mrpt::system::CTimeLogger profiler_{true, "StateEstimationSmoother"};
+    auto find_before_after(
+        const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
+        const mrpt::Clock::time_point&                          t)
+        -> std::pair<
+            std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
+            std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
 };
 
 }  // namespace mola::state_estimation_smoother
