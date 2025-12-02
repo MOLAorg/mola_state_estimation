@@ -29,6 +29,7 @@
 #include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/poses/gtsam_wrappers.h>
+#include <mrpt/topography/conversions.h>
 
 // GTSAM:
 #include <gtsam/geometry/Point3.h>
@@ -299,14 +300,59 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-#if 0
-    state_.update_last_input_stamp(gps.timestamp);
 
-    THROW_EXCEPTION("TODO");
-    (void)gps;
-
-#endif
     MRPT_LOG_DEBUG_FMT("[fuse_gnss]: t=%f", mrpt::Clock::toDouble(gps.timestamp));
+
+    if (!gps.has_GGA_datum())
+    {
+        MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since it has no GGA data.");
+        return;
+    }
+    const auto& gga = gps.getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+
+    if (!gga.fields.fix_quality)
+    {
+        MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading. GGA has no valid datum (fix_quality)");
+        return;
+    }
+
+    const auto geoCoords = gga.getAsStruct<mrpt::topography::TGeodeticCoords>();
+
+    std::optional<mrpt::topography::TGeodeticCoords> refGeoCoords;
+
+    // First, are we using geo-referencing at all?
+    if (params.estimate_geo_reference && !state_.geo_reference.has_value())
+    {
+        // We are still starting to estimating the geo-reference T_enu2map.
+        if (!state_.tentative_geo_coord_reference)
+        {
+            state_.tentative_geo_coord_reference = geoCoords;
+
+            MRPT_LOG_DEBUG_STREAM(
+                "[fuse_gnss]: Defining as geodetic reference: lat="
+                << geoCoords.lat.getAsString() << ", lon=" << geoCoords.lon.getAsString()
+                << ", h=" << geoCoords.height);
+        }
+
+        refGeoCoords = state_.tentative_geo_coord_reference;
+    }
+    // Use fixed reference coming from an external source:
+    if (!params.estimate_geo_reference && state_.geo_reference.has_value())
+    {
+        refGeoCoords = state_.geo_reference->geo_coord;
+    }
+
+    // Can we use geo-referencing now:
+    if (!refGeoCoords.has_value())
+    {
+        MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since there is no geo-reference data (yet?)");
+        return;
+    }
+
+    mrpt::math::TPoint3D ENU_point;
+    mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
+
+    MRPT_LOG_DEBUG_STREAM("[fuse_gnss]: ENU=" << ENU_point);
 }
 
 void StateEstimationSmoother::fuse_pose(

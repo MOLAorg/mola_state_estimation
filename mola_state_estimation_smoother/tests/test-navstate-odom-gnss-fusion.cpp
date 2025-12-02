@@ -160,6 +160,7 @@ void run_test()
         gga_msg.fields.longitude_degrees =
             currentGeoCoords.lon + rng.drawGaussian1D(0, gnss_noise_deg);
         gga_msg.fields.altitude_meters = currentGeoCoords.height + rng.drawGaussian1D(0, 1.5);
+        gga_msg.fields.fix_quality     = 1;
         obsGps.setMsg(gga_msg);
 
         // Set GNSS Covariance (in meters)
