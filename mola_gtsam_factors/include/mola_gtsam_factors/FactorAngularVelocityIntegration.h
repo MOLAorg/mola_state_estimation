@@ -129,4 +129,103 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
 #endif
 };
 
+/**
+ * Factor for angular velocity integration model, equivalent to expressions:
+ *
+ *   gtsam::Expression<gtsam::Point3> deltaWi = dt * bWi;
+ *   gtsam::Expression<gtsam::Rot3> expmap_(&gtsam::Rot3::Expmap, deltaWi);
+ *
+ *   gtsam::between( gtsam::compose(Ri, expmap_), Rj ) = Rot_Identity
+ *
+ */
+class FactorAngularVelocityIntegrationPose : public gtsam::ExpressionFactorN<
+                                                 gtsam::Rot3 /*return type*/, gtsam::Pose3 /* Ti */,
+                                                 gtsam::Point3 /* bWi */, gtsam::Pose3 /* Tj */
+                                                 >
+{
+   private:
+    using This = FactorAngularVelocityIntegrationPose;
+    using Base = gtsam::ExpressionFactorN<
+        gtsam::Rot3 /*return type*/, gtsam::Pose3 /* Ti */, gtsam::Point3 /* bWi */,
+        gtsam::Pose3 /* Tj */
+        >;
+
+    double dt_ = .0;
+
+   public:
+    FactorAngularVelocityIntegrationPose() = default;
+
+    FactorAngularVelocityIntegrationPose(
+        gtsam::Key kTi, gtsam::Key kbWi, gtsam::Key kTj, const double dt,
+        const gtsam::SharedNoiseModel& model)
+        : Base({kTi, kbWi, kTj}, model, gtsam::Rot3()), dt_(dt)
+    {
+        this->initialize(This::expression({kTi, kbWi, kTj}));
+    }
+
+    /// @return a deep copy of this factor
+    gtsam::NonlinearFactor::shared_ptr clone() const override
+    {
+#if GTSAM_USES_BOOST
+        return boost::static_pointer_cast<This>(
+            gtsam::NonlinearFactor::shared_ptr(new This(*this)));
+#else
+        return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+#endif
+    }
+
+    // Return measurement expression
+    gtsam::Expression<gtsam::Rot3> expression(
+        const std::array<gtsam::Key, NARY_EXPRESSION_SIZE>& keys) const override
+    {
+        gtsam::Rot3_                     Ri = gtsam::rotation(gtsam::Pose3_(keys[0]));
+        gtsam::Point3_                   bWi(keys[1]);
+        gtsam::Rot3_                     Rj      = gtsam::rotation(gtsam::Pose3_(keys[2]));
+        gtsam::Expression<gtsam::Point3> deltaWi = dt_ * bWi;
+        gtsam::Expression<gtsam::Rot3>   expmap_(&gtsam::Rot3::Expmap, deltaWi);
+
+        return gtsam::between(gtsam::compose(Ri, expmap_), Rj);
+    }
+
+    /** implement functions needed for Testable */
+
+    /** print */
+    void print(
+        const std::string&         s,
+        const gtsam::KeyFormatter& keyFormatter = gtsam::DefaultKeyFormatter) const override
+    {
+        std::cout << s << "FactorAngularVelocityIntegrationPose(" << keyFormatter(Factor::keys_[0])
+                  << "," << keyFormatter(Factor::keys_[1]) << "," << keyFormatter(Factor::keys_[2])
+                  << ")\n";
+        gtsam::traits<gtsam::Rot3>::Print(measured_, "  measured: ");
+        gtsam::traits<double>::Print(dt_, "  dt: ");
+        this->noiseModel_->print("  noise model: ");
+    }
+
+    /** equals */
+    bool equals(const gtsam::NonlinearFactor& expected, double tol = 1e-9) const override
+    {
+        const This* e = dynamic_cast<const This*>(&expected);
+        return e != nullptr && Base::equals(*e, tol) &&
+               gtsam::traits<double>::Equals(dt_, e->dt_, tol);
+    }
+
+   private:
+#if GTSAM_USES_BOOST
+    /** Serialization function */
+    friend class boost::serialization::access;
+    template <class ARCHIVE>
+    void serialize(ARCHIVE& ar, const unsigned int /*version*/)
+    {
+        // **IMPORTANT** We need to deserialize parameters before the base
+        // class, since it calls expression() and we need all parameters ready
+        // at that point.
+        ar& BOOST_SERIALIZATION_NVP(measured_);
+        ar& BOOST_SERIALIZATION_NVP(dt_);
+        ar& boost::serialization::make_nvp(
+            "FactorAngularVelocityIntegrationPose", boost::serialization::base_object<Base>(*this));
+    }
+#endif
+};
+
 }  // namespace mola::factors

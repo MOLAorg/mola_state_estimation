@@ -54,6 +54,28 @@
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
 
+namespace
+{
+constexpr double ENU2MAP_WEAK_SIGMA          = 1e4;
+constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e6;
+constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
+constexpr double PLANAR_XY_SIGMA             = 1e10;
+constexpr double PLANAR_Z_SIGMA              = 1e-4;
+
+void enforce_planar_pose(mrpt::poses::CPose3D& p)
+{
+    p.z(0);
+    p.setYawPitchRoll(p.yaw(), .0, .0);
+}
+void enforce_planar_twist(mrpt::math::TTwist3D& tw)
+{
+    tw.vz = 0;
+    tw.wx = 0;
+    tw.wy = 0;
+}
+
+}  // namespace
+
 namespace mola::state_estimation_smoother
 {
 
@@ -66,10 +88,10 @@ using gtsam::symbol_shorthand::F;  // Frame of references (Pose3)
 const auto symbol_T_enu_to_map    = F(0);
 const auto symbol_T_map_to_odom_0 = F(1);  // odom[i] = thisSymbol + i
 
-using gtsam::symbol_shorthand::P;  // Position                       (Point3)
-using gtsam::symbol_shorthand::R;  // Rotation                       (Rot3)
+using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
+//  TODO: IMU bias
 
 // -------- GtsamImpl -------
 
@@ -128,8 +150,6 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     // Even if not using a geo-referenced map, even if not using GPS sensors,
     // do define the T_enu_to_map transform variable, so it can be used for gravity-alignment
     // via IMU accelerometer, at least:
-    constexpr double ENU2MAP_WEAK_SIGMA = 1e4;
-
     auto           enu2map     = gtsam::Pose3::Identity();
     gtsam::Matrix6 enu2map_cov = gtsam::Matrix6::Identity() * mrpt::square(ENU2MAP_WEAK_SIGMA);
 
@@ -143,7 +163,6 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Initial value:
     state_.gtsam->newValues.insert(symbol_T_enu_to_map, enu2map);
-
     // Weak prior factor:
     state_.gtsam->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
 }
@@ -306,29 +325,18 @@ void StateEstimationSmoother::fuse_pose(
         ASSERT_GT_(pose.cov(i, i), .0);
     }
 
+    // Add factor:
+    gtsam::Pose3   pose_out;
+    gtsam::Matrix6 cov_out;
+    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(pose, pose_out, cov_out);
+
+    // TODO: robust factors here?
+
+    state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        F(symbol_T_map_to_odom_0 + frame_id_idx), T(this_kf_id), pose_out,
+        gtsam::noiseModel::Gaussian::Covariance(cov_out));
+
 #if 0
-    state_.update_last_input_stamp(timestamp);
-
-    // find last KF of this frame_id before adding the new one:
-    const auto lastKF = state_.last_pose_of_frame_id(frame_id);
-
-
-    PoseData d;
-    d.frameId = state_.frame_id(frame_id);
-    d.pose    = pose;
-
-    // Help with initial pose hint:
-    KinematicState newGuess;
-    if (lastKF.has_value())
-    {
-        const auto poseIncr = pose.mean - lastKF->second.pose->pose.mean;
-        newGuess.pose       = lastKF->second.last_known_state.pose + poseIncr;
-        newGuess.twist      = lastKF->second.last_known_state.twist;
-    }
-
-    state_.data.insert({timestamp, {d, newGuess}});
-
-
     // Estimate twist:
     // If we add an additional direct observation of twist, the result is
     // more accurate for coarser time steps:
@@ -360,12 +368,6 @@ void StateEstimationSmoother::fuse_pose(
     tw.wx = logRot[0] / dt;
     tw.wy = logRot[1] / dt;
     tw.wz = logRot[2] / dt;
-
-#if 0
-    // Estimate twist cov:
-    auto twCov = mrpt::math::CMatrixDouble66(
-        incrPosePdf.cov.asEigen() * (1.0 / (dt * dt)));
-#endif
 
     // Ensure minimum covariance for avoiding overconfidence and numerical
     // illness:
@@ -409,6 +411,10 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
     process_pending_gtsam_updates();
+
+    // TODO!
+    (void)timestamp;
+    (void)frame_id;
 
     return {};
 }
@@ -476,22 +482,6 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
             o->sensorLabel.c_str(), o->GetRuntimeClass()->className);
     }
 }
-
-namespace
-{
-void enforce_planar_pose(mrpt::poses::CPose3D& p)
-{
-    p.z(0);
-    p.setYawPitchRoll(p.yaw(), .0, .0);
-}
-void enforce_planar_twist(mrpt::math::TTwist3D& tw)
-{
-    tw.vz = 0;
-    tw.wx = 0;
-    tw.wy = 0;
-}
-
-}  // namespace
 
 #if 0
 std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
@@ -886,43 +876,28 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
 
     if (dt > params.time_between_frames_to_warning)
     {
-        MRPT_LOG_WARN_FMT(
-            "A constant-velocity kinematics factor has been added for a "
-            "dT=%.03f s.",
-            dt);
+        MRPT_LOG_WARN_FMT("Constant-velocity kinematics factor added for large dT=%.03f s.", dt);
     }
 
     // 1) Add GTSAM factors for constant velocity model
     // -------------------------------------------------
-
-    auto Pi  = gtsam::Point3_(P(f.from_kf));
-    auto Pj  = gtsam::Point3_(P(f.to_kf));
-    auto Ri  = gtsam::Rot3_(R(f.from_kf));
-    auto Rj  = gtsam::Rot3_(R(f.to_kf));
-    auto bVi = gtsam::Point3_(V(f.from_kf));
-    auto bVj = gtsam::Point3_(V(f.to_kf));
-    auto bWi = gtsam::Point3_(W(f.from_kf));
-    auto bWj = gtsam::Point3_(W(f.to_kf));
-
-    const auto kPi  = P(f.from_kf);
-    const auto kPj  = P(f.to_kf);
+    const auto kTi  = T(f.from_kf);
+    const auto kTj  = T(f.to_kf);
     const auto kbVi = V(f.from_kf);
     const auto kbVj = V(f.to_kf);
-    const auto kRi  = R(f.from_kf);
-    const auto kRj  = R(f.to_kf);
     const auto kbWi = W(f.from_kf);
     const auto kbWj = W(f.to_kf);
 
     // See line 3 of eq (4) in the MOLA RSS2019 paper
     // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
     // here too:
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocity>(
-        kRi, kbVi, kRj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_linvel * dt));
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbVi, kTj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_linvel * dt));
 
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocity>(
-        kRi, kbWi, kRj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_angvel * dt));
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_angvel * dt));
 
     // 2) Add kinematics / numerical integration factor
     // ---------------------------------------------------
@@ -933,12 +908,12 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
         gtsam::noiseModel::Isotropic::Sigma(3, params.sigma_integrator_orientation);
 
     // Impl. line 2 of eq (1) in the MOLA RSS2019 paper
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTrapezoidalIntegrator>(
-        kPi, kbVi, kRi, kPj, kbVj, kRj, dt, noise_kinematicsPosition);
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTrapezoidalIntegratorPose>(
+        kTi, kbVi, kTj, kbVj, dt, noise_kinematicsPosition);
 
     // Impl. line 1 of eq (4) in the MOLA RSS2019 paper.
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorAngularVelocityIntegration>(
-        kRi, kbWi, kRj, dt, noise_kinematicsOrientation);
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorAngularVelocityIntegrationPose>(
+        kTi, kbWi, kTj, dt, noise_kinematicsOrientation);
 }
 
 void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
@@ -1067,8 +1042,13 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size());
     state_.known_odom_frames.insert(frame_id_name, newId);
 
-    // Initialize gtsam symbol and prior factor:
-    // xx;
+    // Initialize gtsam symbol and prior factor for the new frame:
+    const gtsam::Pose3 initFramePose = gtsam::Pose3::Identity();
+
+    state_.gtsam->newValues.insert(F(symbol_T_map_to_odom_0 + newId), initFramePose);
+    state_.gtsam->newFactors.addPrior(
+        F(symbol_T_map_to_odom_0 + newId), initFramePose,
+        gtsam::noiseModel::Isotropic::Sigma(6, INIT_ODOM_FRAME_POSE_SIGMA));
 
     return newId;
 }
@@ -1116,6 +1096,40 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
 
         // TODO!! Save into:
         // state_.last_estimated_state
+#if 0
+
+    // Save optimized values into data entries to bootstrap optimization
+    // in next iterations:
+    // -------------------------------------------------------------------
+    for (size_t i = 0; i < entries.size(); i++)
+    {
+        auto& e = entries[i]->second;
+
+        const auto pose =
+            gtsam::Pose3(optimal.at<gtsam::Rot3>(R(i)), optimal.at<gtsam::Point3>(P(i)));
+
+        auto& ks = e.last_known_state;
+
+        ks.pose = mrpt::poses::CPose3D::FromRotationAndTranslation(
+            pose.rotation().matrix(), pose.translation());
+
+        const auto linV = optimal.at<gtsam::Vector3>(V(i));
+        const auto angV = optimal.at<gtsam::Vector3>(W(i));
+        ks.twist.vx     = linV.x();
+        ks.twist.vy     = linV.y();
+        ks.twist.vz     = linV.z();
+        ks.twist.wx     = angV.x();
+        ks.twist.wy     = angV.y();
+        ks.twist.wz     = angV.z();
+
+        if (params.enforce_planar_motion)
+        {
+            enforce_planar_pose(ks.pose);
+            enforce_planar_twist(ks.twist);
+        }
+    }
+
+#endif
     }
 
     // Print debug info:
@@ -1251,22 +1265,17 @@ void StateEstimationSmoother::initialize_new_frame(
     {
         // This is the first ever frame.
         // Add weak prior factors for the system to be determinate.
-        constexpr double LARGE_PRIOR_SIGMA = 1e6;
-        const auto       priorNoise3 = gtsam::noiseModel::Isotropic::Sigma(3, LARGE_PRIOR_SIGMA);
+        const auto priorNoise3 =
+            gtsam::noiseModel::Isotropic::Sigma(3, FIRST_POSE_WEAK_PRIOR_SIGMA);
 
-        state_.gtsam->newFactors.addPrior(P(id), pose.translation(), priorNoise3);
-        state_.gtsam->newFactors.addPrior(R(id), pose.rotation(), priorNoise3);
+        state_.gtsam->newFactors.addPrior(T(id), pose, priorNoise3);
         state_.gtsam->newFactors.addPrior(V(id), linVelocity, priorNoise3);
         state_.gtsam->newFactors.addPrior(W(id), angVelocity, priorNoise3);
     }
 
-    // P: Position
-    state_.gtsam->newValues.insert(P(id), pose.translation());
-    state_.gtsam->newKeyStamps[P(id)] = stamp_s;
-
-    // R: Rotation
-    state_.gtsam->newValues.insert(R(id), pose.rotation());
-    state_.gtsam->newKeyStamps[R(id)] = stamp_s;
+    // T: Pose
+    state_.gtsam->newValues.insert(T(id), pose);
+    state_.gtsam->newKeyStamps[T(id)] = stamp_s;
 
     // V: Lin Velocity
     state_.gtsam->newValues.insert(V(id), linVelocity);
@@ -1279,12 +1288,12 @@ void StateEstimationSmoother::initialize_new_frame(
     // Add planar constraints:
     if (params.enforce_planar_motion)
     {
-        const double XY_SIGMA = 1e10;
-        const double Z_SIGMA  = 1e-4;
-        const auto   planar_z_noise =
-            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+        const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector6(
+                PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA,
+                PLANAR_Z_SIGMA));
 
-        state_.gtsam->newFactors.addPrior(P(id), gtsam::Vector3(0, 0, 0), planar_z_noise);
+        state_.gtsam->newFactors.addPrior(T(id), gtsam::Pose3::Identity(), planar_z_noise);
     }
 }
 
