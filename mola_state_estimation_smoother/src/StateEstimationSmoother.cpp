@@ -90,7 +90,7 @@ struct StateEstimationSmoother::GtsamImpl
 
 // -------- StateEstimationSmoother::State -------
 StateEstimationSmoother::State::State()
-    : impl(mrpt::make_impl<StateEstimationSmoother::GtsamImpl>())
+    : gtsam(mrpt::make_impl<StateEstimationSmoother::GtsamImpl>())
 {
 }
 
@@ -122,7 +122,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     gtsam::ISAM2Params isam2Params;
     isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
 
-    state_.impl->smoother.emplace(params.sliding_window_length, isam2Params);
+    state_.gtsam->smoother.emplace(params.sliding_window_length, isam2Params);
 
     // Initialize georeference-related gtsam variables:
     // Even if not using a geo-referenced map, even if not using GPS sensors,
@@ -142,10 +142,10 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     }
 
     // Initial value:
-    state_.impl->newValues.insert(symbol_T_enu_to_map, enu2map);
+    state_.gtsam->newValues.insert(symbol_T_enu_to_map, enu2map);
 
     // Weak prior factor:
-    state_.impl->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
+    state_.gtsam->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
 }
 
 void StateEstimationSmoother::spinOnce()
@@ -528,8 +528,8 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     }
 
     // shortcuts:
-    auto& fg     = state_.impl->fg;
-    auto& values = state_.impl->values;
+    auto& fg     = state_.gtsam->fg;
+    auto& values = state_.gtsam->values;
 
     values.clear();
     fg.resize(0);
@@ -573,12 +573,12 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         const auto& e = entries[i]->second;
 
         const auto lastPose = mrpt::gtsam_wrappers::toPose3(e.last_known_state.pose);
-        state_.impl->values.insert<gtsam::Point3>(P(i), lastPose.translation());
-        state_.impl->values.insert<gtsam::Rot3>(R(i), lastPose.rotation());
+        state_.gtsam->values.insert<gtsam::Point3>(P(i), lastPose.translation());
+        state_.gtsam->values.insert<gtsam::Rot3>(R(i), lastPose.rotation());
 
         const auto& tw = e.last_known_state.twist;
-        state_.impl->values.insert<gtsam::Point3>(V(i), gtsam::Vector3(tw.vx, tw.vy, tw.vz));
-        state_.impl->values.insert<gtsam::Point3>(W(i), gtsam::Vector3(tw.wx, tw.wy, tw.wz));
+        state_.gtsam->values.insert<gtsam::Point3>(V(i), gtsam::Vector3(tw.vx, tw.vy, tw.vz));
+        state_.gtsam->values.insert<gtsam::Point3>(W(i), gtsam::Vector3(tw.wx, tw.wy, tw.wz));
     }
     for (const auto& [frameName, frameId] : state_.known_frames.getDirectMap())
     {
@@ -591,22 +591,9 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         }
 
         // TODO: Save and reuse last optimized value!
-        state_.impl->values.insert<gtsam::Pose3>(F(frameId), gtsam::Pose3::Identity());
+        state_.gtsam->values.insert<gtsam::Pose3>(F(frameId), gtsam::Pose3::Identity());
     }
 
-    // Add planar constraints:
-    if (params.enforce_planar_motion)
-    {
-        const double XY_SIGMA = 1e10;
-        const double Z_SIGMA  = 1e-4;
-        const auto   planar_z_noise =
-            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
-
-        for (size_t i = 0; i < entries.size(); i++)
-        {
-            state_.impl->fg.addPrior(P(i), gtsam::Vector3(0, 0, 0), planar_z_noise);
-        }
-    }
 
     // Unary prior for initial twist:
     const auto& tw = params.initial_twist;
@@ -737,14 +724,14 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     if (NAVSTATE_PRINT_FG)
     {
         fg.print();
-        state_.impl->values.print();
+        state_.gtsam->values.print();
 
 #if 0
         fg.saveGraph("fg.dot");
 #endif
     }
 
-    gtsam::LevenbergMarquardtOptimizer lm(fg, state_.impl->values);
+    gtsam::LevenbergMarquardtOptimizer lm(fg, state_.gtsam->values);
 
     const auto& optimal = lm.optimize();
 
@@ -753,7 +740,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     MRPT_LOG_DEBUG_STREAM(
         "[build_and_optimize_fg] LM ran for "
         << lm.iterations() << " iterations, " << fg.size() << " factors, " << state_.data.size()
-        << " KFs, RMSE: " << std::sqrt(fg.error(state_.impl->values) / fg.size()) << " => "
+        << " KFs, RMSE: " << std::sqrt(fg.error(state_.gtsam->values) / fg.size()) << " => "
         << final_rmse);
 
     if (NAVSTATE_PRINT_FG)
@@ -878,10 +865,9 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
 void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
 {
-#if 0
     MRPT_LOG_DEBUG_STREAM(
-        "[addFactor] FactorConstVelKinematics: "
-        << f.from_kf << " ==> " << f.to_kf << " dt=" << f.deltaTime);
+        "[addFactor] FactorConstVelKinematics: " << f.from_kf << " ==> " << f.to_kf
+                                                 << " dt=" << f.deltaTime);
 
     // Add const-vel factor to gtsam itself:
     double dt = f.deltaTime;
@@ -930,12 +916,12 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     // See line 3 of eq (4) in the MOLA RSS2019 paper
     // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
     // here too:
-    state_.impl->fg.emplace_shared<mola::factors::FactorConstLocalVelocity>(
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocity>(
         kRi, kbVi, kRj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_linvel * dt));
 
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
-    state_.impl->fg.emplace_shared<mola::factors::FactorConstLocalVelocity>(
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocity>(
         kRi, kbWi, kRj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_angvel * dt));
 
     // 2) Add kinematics / numerical integration factor
@@ -947,13 +933,12 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
         gtsam::noiseModel::Isotropic::Sigma(3, params.sigma_integrator_orientation);
 
     // Impl. line 2 of eq (1) in the MOLA RSS2019 paper
-    state_.impl->fg.emplace_shared<mola::factors::FactorTrapezoidalIntegrator>(
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTrapezoidalIntegrator>(
         kPi, kbVi, kRi, kPj, kbVj, kRj, dt, noise_kinematicsPosition);
 
     // Impl. line 1 of eq (4) in the MOLA RSS2019 paper.
-    state_.impl->fg.emplace_shared<mola::factors::FactorAngularVelocityIntegration>(
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorAngularVelocityIntegration>(
         kRi, kbWi, kRj, dt, noise_kinematicsOrientation);
-#endif
 }
 
 void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
@@ -1020,7 +1005,7 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     }
 
     // Create a new one:
-    const auto newFrameIdx = static_cast<frame_index_t>(state_.stamp2frame_index.size());
+    const auto newFrameIdx = state_.next_frame_index++;
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
     // As we create a new timely keyframe, update what's the last time we created such new frame:
@@ -1030,6 +1015,9 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     // Look for the closest existing frames, and create kinematic pairs if they don't exist yet:
     const auto closestPost = find_before_after(state_.stamp2frame_index.getDirectMap(), t);
 
+    // Create new GTSAM symbols for this keyframe:
+    initialize_new_frame(newFrameIdx, closestPost);
+
     if (closestPost.first != state_.stamp2frame_index.getDirectMap().end())
     {
         const auto [t_before, idx_before] = *closestPost.first;
@@ -1037,6 +1025,9 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
             "[add_or_get_timestamp_frame_index] New frame created: idx=%zu, t_before=%f (idx=%zu)",
             static_cast<size_t>(newFrameIdx), mrpt::Clock::toDouble(t_before),
             static_cast<size_t>(idx_before));
+
+        // Add kinematic factors:
+        add_kinematic_factor_between(idx_before, newFrameIdx);
     }
 
     if (closestPost.second != state_.stamp2frame_index.getDirectMap().end())
@@ -1046,6 +1037,9 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
             "[add_or_get_timestamp_frame_index] New frame created: idx=%zu, t_after=%f (idx=%zu)",
             static_cast<size_t>(newFrameIdx), mrpt::Clock::toDouble(t_after),
             static_cast<size_t>(idx_after));
+
+        // Add kinematic factors:
+        add_kinematic_factor_between(newFrameIdx, idx_after);
     }
 
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
@@ -1060,16 +1054,22 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
 {
     const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_odom_frame_id");
 
-    auto lck = mrpt::lockHelper(stateMutex_);
+    // auto lck = mrpt::lockHelper(stateMutex_); // acquired by caller
 
+    // Existing frame?
     if (auto it = state_.known_odom_frames.find_key(frame_id_name);
         it != state_.known_odom_frames.getDirectMap().end())
     {
         return it->second;
     }
 
+    // New one:
     const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size());
     state_.known_odom_frames.insert(frame_id_name, newId);
+
+    // Initialize gtsam symbol and prior factor:
+    // xx;
+
     return newId;
 }
 
@@ -1084,19 +1084,19 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     {
         const auto lastObservationStamp_sec = mrpt::Clock::toDouble(*state_.last_observation_stamp);
 
-        state_.impl->newKeyStamps[symbol_T_enu_to_map] = lastObservationStamp_sec;
+        state_.gtsam->newKeyStamps[symbol_T_enu_to_map] = lastObservationStamp_sec;
         for (const auto& [_, frameId] : state_.known_odom_frames)
         {
-            state_.impl->newKeyStamps[symbol_T_map_to_odom_0 + frameId] = lastObservationStamp_sec;
+            state_.gtsam->newKeyStamps[symbol_T_map_to_odom_0 + frameId] = lastObservationStamp_sec;
         }
     }
 
     // Update the smoother with pending factors/values:
-    if (!state_.impl->newFactors.empty() && !state_.impl->newValues.empty() &&
-        !state_.impl->newKeyStamps.empty())
+    if (!state_.gtsam->newFactors.empty() && !state_.gtsam->newValues.empty() &&
+        !state_.gtsam->newKeyStamps.empty())
     {
-        state_.impl->smoother->update(
-            state_.impl->newFactors, state_.impl->newValues, state_.impl->newKeyStamps);
+        state_.gtsam->smoother->update(
+            state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps);
     }
 
     // Optional: Perform extra internal iterations for better accuracy
@@ -1104,11 +1104,11 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     const size_t maxExtraIterations = 3;
     for (size_t i = 1; i < maxExtraIterations; ++i)
     {
-        state_.impl->smoother->update();
+        state_.gtsam->smoother->update();
     }
 
     // Retrieve the latest estimate
-    const auto currentEstimate = state_.impl->smoother->calculateEstimate();
+    const auto currentEstimate = state_.gtsam->smoother->calculateEstimate();
     if (!currentEstimate.empty())
     {
         // ...
@@ -1119,25 +1119,22 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     }
 
     // Print debug info:
-    auto& smoother = *state_.impl->smoother;
+    auto& smoother = *state_.gtsam->smoother;
     MRPT_LOG_DEBUG_STREAM(
         "[process_pending_gtsam_updates] After update: "
         << smoother.getFactors().size() << " factors, " << smoother.getFactors().nrFactors()
-        << " nr factors. New factors=" << state_.impl->newFactors.size()
-        << ", new values=" << state_.impl->newValues.size());
+        << " nr factors. New factors=" << state_.gtsam->newFactors.size()
+        << ", new values=" << state_.gtsam->newValues.size());
 
     // Clear pending updates:
-    state_.impl->newFactors.resize(0);
-    state_.impl->newValues.clear();
-    state_.impl->newKeyStamps.clear();
+    state_.gtsam->newFactors.resize(0);
+    state_.gtsam->newValues.clear();
+    state_.gtsam->newKeyStamps.clear();
 }
 
-auto StateEstimationSmoother::find_before_after(
+StateEstimationSmoother::pair_nearby_frame_iterators_t StateEstimationSmoother::find_before_after(
     const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
     const mrpt::Clock::time_point&                          t)
-    -> std::pair<
-        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
-        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>
 {
     using Iterator = std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator;
 
@@ -1188,6 +1185,166 @@ auto StateEstimationSmoother::find_before_after(
     // General case: t lies strictly between 'before' and 'after' (or is smaller/larger than all).
     // The iterators 'before' and 'after' are correct as computed above.
     return {before, after};
+}
+
+// Pick the closest of the two possible frames, or none if both iterators are end()
+std::optional<StateEstimationSmoother::frame_index_t> StateEstimationSmoother::pick_closest(
+    const StateEstimationSmoother::pair_nearby_frame_iterators_t& closestFrames,
+    const mrpt::Clock::time_point&                                stamp) const
+{
+    const auto& [before, after] = closestFrames;
+
+    // Both iterators are end(), no frames available
+    if (before == state_.stamp2frame_index.getDirectMap().end() &&
+        after == state_.stamp2frame_index.getDirectMap().end())
+    {
+        return std::nullopt;
+    }
+
+    // Only 'after' is available
+    if (before == state_.stamp2frame_index.getDirectMap().end())
+    {
+        return after->second;
+    }
+
+    // Only 'before' is available
+    if (after == state_.stamp2frame_index.getDirectMap().end())
+    {
+        return before->second;
+    }
+
+    // Both available, pick the closest by timestamp
+    const double dtBefore = std::abs(mrpt::system::timeDifference(stamp, before->first));
+    const double dtAfter  = std::abs(mrpt::system::timeDifference(stamp, after->first));
+
+    return (dtBefore < dtAfter) ? before->second : after->second;
+}
+
+void StateEstimationSmoother::initialize_new_frame(
+    frame_index_t id, const pair_nearby_frame_iterators_t& closestFrames)
+{
+    const auto stamp   = state_.stamp2frame_index.find_value(id)->second;
+    const auto stamp_s = mrpt::Clock::toDouble(stamp);
+
+    const auto closest_idx_opt = pick_closest(closestFrames, stamp);
+
+    // Pick the data from closest frame as initial value, or 0 if none (first ever frame)
+    gtsam::Pose3  pose        = gtsam::Pose3::Identity();
+    gtsam::Point3 linVelocity = gtsam::Point3::Zero();
+    gtsam::Point3 angVelocity = gtsam::Point3::Zero();
+
+    // Initialize the state struct too:
+    auto& newKfState = state_.last_estimated_state[id];
+
+    if (closest_idx_opt.has_value())
+    {
+        const auto& kfState = state_.last_estimated_state.at(*closest_idx_opt);
+
+        pose        = mrpt::gtsam_wrappers::toPose3(kfState.pose);
+        linVelocity = {kfState.twist.vx, kfState.twist.vy, kfState.twist.vz};
+        angVelocity = {kfState.twist.wx, kfState.twist.wy, kfState.twist.wz};
+
+        // And initialize the state struct too:
+        newKfState = kfState;
+    }
+    else
+    {
+        // This is the first ever frame.
+        // Add weak prior factors for the system to be determinate.
+        constexpr double LARGE_PRIOR_SIGMA = 1e6;
+        const auto       priorNoise3 = gtsam::noiseModel::Isotropic::Sigma(3, LARGE_PRIOR_SIGMA);
+
+        state_.gtsam->newFactors.addPrior(P(id), pose.translation(), priorNoise3);
+        state_.gtsam->newFactors.addPrior(R(id), pose.rotation(), priorNoise3);
+        state_.gtsam->newFactors.addPrior(V(id), linVelocity, priorNoise3);
+        state_.gtsam->newFactors.addPrior(W(id), angVelocity, priorNoise3);
+    }
+
+    // P: Position
+    state_.gtsam->newValues.insert(P(id), pose.translation());
+    state_.gtsam->newKeyStamps[P(id)] = stamp_s;
+
+    // R: Rotation
+    state_.gtsam->newValues.insert(R(id), pose.rotation());
+    state_.gtsam->newKeyStamps[R(id)] = stamp_s;
+
+    // V: Lin Velocity
+    state_.gtsam->newValues.insert(V(id), linVelocity);
+    state_.gtsam->newKeyStamps[V(id)] = stamp_s;
+
+    // W: Ang Velocity
+    state_.gtsam->newValues.insert(W(id), angVelocity);
+    state_.gtsam->newKeyStamps[W(id)] = stamp_s;
+
+    // Add planar constraints:
+    if (params.enforce_planar_motion)
+    {
+        const double XY_SIGMA = 1e10;
+        const double Z_SIGMA  = 1e-4;
+        const auto   planar_z_noise =
+            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+
+        state_.gtsam->newFactors.addPrior(P(id), gtsam::Vector3(0, 0, 0), planar_z_noise);
+    }
+}
+
+void StateEstimationSmoother::add_kinematic_factor_between(
+    const frame_index_t from, const frame_index_t to)  // NOLINT
+{
+    ASSERT_NOT_EQUAL_(from, to);
+
+    // Take note of already connected frames to avoid duplications
+    // --------------------------------------------------------------------
+    // From => to
+    {
+        auto& fromKf = state_.last_estimated_state.at(from);
+        if (fromKf.kinematic_links_to.count(to) != 0)
+        {
+            return;  // already added
+        }
+        fromKf.kinematic_links_to.insert(to);
+    }
+
+    // To => From
+    {
+        auto& toKf = state_.last_estimated_state.at(to);
+        if (toKf.kinematic_links_to.count(from) != 0)
+        {
+            return;  // already added
+        }
+        toKf.kinematic_links_to.insert(from);
+    }
+
+    // Dispatch to factor generation:
+    // --------------------------------------------------------------------
+    const double dt = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(to)) -
+                      mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(from));
+
+    switch (params.kinematic_model)
+    {
+        case KinematicModel::ConstantVelocity:
+        {
+            mola::FactorConstVelKinematics f;
+            f.from_kf   = from;
+            f.to_kf     = to;
+            f.deltaTime = dt;
+            addFactor(f);
+        }
+        break;
+
+        case KinematicModel::Tricycle:
+        {
+            mola::FactorTricycleKinematics f;
+            f.from_kf   = from;
+            f.to_kf     = to;
+            f.deltaTime = dt;
+            addFactor(f);
+        }
+        break;
+
+        default:
+            THROW_EXCEPTION("Invalid kinematic_model value");
+    }
 }
 
 }  // namespace mola::state_estimation_smoother

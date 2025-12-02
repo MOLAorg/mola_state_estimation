@@ -199,7 +199,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     {
         State();
 
-        mrpt::pimpl<GtsamImpl> impl;
+        mrpt::pimpl<GtsamImpl> gtsam;
 
         /// The next numeric ID to assign to a new frame, for usage in GTSAM symbols P(i), v(i)...
         frame_index_t next_frame_index = 0;
@@ -267,12 +267,21 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Delete out-of-window entries in stamp2frame_index and last_estimated_state
     void delete_too_old_entries();
 
-    auto find_before_after(
+    using pair_nearby_frame_iterators_t = std::pair<
+        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
+        std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
+
+    pair_nearby_frame_iterators_t find_before_after(
         const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
-        const mrpt::Clock::time_point&                          t)
-        -> std::pair<
-            std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
-            std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
+        const mrpt::Clock::time_point&                          t);
+
+    void initialize_new_frame(frame_index_t id, const pair_nearby_frame_iterators_t& closestFrames);
+
+    std::optional<frame_index_t> pick_closest(
+        const pair_nearby_frame_iterators_t& closestFrames,
+        const mrpt::Clock::time_point&       stamp) const;
+
+    void add_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
 };
 
 }  // namespace mola::state_estimation_smoother
