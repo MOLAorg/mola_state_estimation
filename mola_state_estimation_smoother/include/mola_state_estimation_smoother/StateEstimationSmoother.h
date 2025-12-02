@@ -210,8 +210,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
         /// A bimap of known odometry "frame_id" <=> "numeric IDs":
         mrpt::containers::bimap<std::string, odometry_frameid_t> known_odom_frames;
 
-        /// The latest values from the estimator (updated in )
-        std::map<frame_index_t, FrameState> last_estimated_state;
+        /// The latest values from the estimator; updated in process_pending_gtsam_updates()
+        std::map<frame_index_t, FrameState> last_estimated_states;
 
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
@@ -243,6 +243,9 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
          * estimation yet.
          */
         std::optional<mola::Georeferencing> geo_reference;
+
+        /// Will be populated with the first GNSS coords when in active estimation mode.
+        std::optional<mrpt::topography::TGeodeticCoords> tentative_geo_coord_reference;
     };
 
     State                state_;

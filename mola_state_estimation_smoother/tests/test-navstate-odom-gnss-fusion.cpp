@@ -49,7 +49,7 @@ params:
     kinematic_model: KinematicModel::ConstantVelocity
 
     # Time window to keep past observations in the filter [seconds]
-    sliding_window_length: 5.0
+    sliding_window_length: 2.0
     
     # Minimum time difference between frames to create a new frame [seconds]
     min_time_difference_to_create_new_frame: 0.01
@@ -83,10 +83,11 @@ void run_test()
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
 
     stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    stateEst.profiler_.enable();
 
     stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
-    const size_t numPoses = 20;
+    const size_t numPoses = 40;
 
     const double T = 0.1;  // sensors period
 
@@ -98,6 +99,7 @@ void run_test()
     actualVehicleInitialGeoCoords.height = 50.0;
 
     auto& rng = mrpt::random::getRandomGenerator();
+    rng.randomize(1234);
 
     for (size_t i = 0; i <= numPoses; i++)
     {
