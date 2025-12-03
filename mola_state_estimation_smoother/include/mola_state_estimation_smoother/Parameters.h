@@ -124,6 +124,15 @@ class Parameters
 
     /** @} */
 
+    /** @name Nonlinear optimization
+     * @{ */
+
+    /** Each new sensor will become a call to isam2.update(), plus this number of additional
+     * refining steps. In theory, more steps lead to more accurate results. */
+    uint32_t additional_isam2_update_steps = 3;
+
+    /** @} */
+
     /** @name Sensor input names
      * @{  */
 

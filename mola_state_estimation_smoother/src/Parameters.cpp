@@ -56,6 +56,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_REQ(cfg, kinematic_model);
 
+    MCP_LOAD_OPT(cfg, additional_isam2_update_steps);
+
     {
         std::string do_process_imu_labels;
         MCP_LOAD_OPT(cfg, do_process_imu_labels);

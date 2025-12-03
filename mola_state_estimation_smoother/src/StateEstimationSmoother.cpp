@@ -467,13 +467,53 @@ void StateEstimationSmoother::fuse_twist(
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
+    // 1) Make sure we processed all pending sensor data, and have updated the cached values from
+    //    GTSAM values
     process_pending_gtsam_updates();
 
-    // TODO!
-    (void)timestamp;
-    (void)frame_id;
+    // 2) Get the vehicle state from cached optimized values:
+    // Look for the closest frame and extrapolate.
+    auto lck = mrpt::lockHelper(stateMutex_);
 
-    return {};
+    std::optional<double>        closestFrameDt;
+    std::optional<frame_index_t> closesFrameIdx;
+
+    const auto closestPrior = find_before_after(state_.stamp2frame_index.getDirectMap(), timestamp);
+    for (const auto& it : {closestPrior.first, closestPrior.second})
+    {
+        if (it == state_.stamp2frame_index.getDirectMap().end())
+        {
+            continue;
+        }
+        const auto& [existing_t, frame_idx] = *it;
+
+        const double dt = std::abs(mrpt::system::timeDifference(existing_t, timestamp));
+        if (!closestFrameDt.has_value() || dt < *closestFrameDt)
+        {
+            closestFrameDt = dt;
+            closesFrameIdx = frame_idx;
+        }
+    }
+
+    if (!closesFrameIdx.has_value())
+    {
+        MRPT_LOG_DEBUG_FMT(
+            "[estimated_navstate] Could not find any nearby frame near requested t=%.03f",
+            mrpt::Clock::toDouble(timestamp));
+        return {};
+    }
+
+    // Recover
+    const NavState ret = get_latest_state_and_covariance(*closesFrameIdx);
+
+    MRPT_TODO("Implement probabilistic extrapolation");
+
+    // Check maximum extrapolation time:
+    // state_.last_estimated_states;
+
+    // 3) Convert pose to the requested frame_id:
+
+    return ret;
 }
 
 std::set<std::string> StateEstimationSmoother::known_odometry_frame_ids()
@@ -1149,9 +1189,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     }
 
     // Optional: Perform extra internal iterations for better accuracy
-    // TODO: If useful, expose as a parameter?
-    const size_t maxExtraIterations = 5;
-    for (size_t i = 1; i < maxExtraIterations; ++i)
+    for (unsigned int i = 1; i < params.additional_isam2_update_steps; ++i)
     {
         smoother.update();
     }
@@ -1421,6 +1459,33 @@ void StateEstimationSmoother::add_kinematic_factor_between(
         default:
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
+}
+
+NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_index_t idx) const
+{
+    const auto& frame = state_.last_estimated_states.at(idx);
+
+    NavState ns;
+
+    // Pose:
+    ns.pose.mean       = frame.pose;
+    const auto poseCov = gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(idx)));
+    ASSERT_(poseCov.determinant() > 0);
+    ns.pose.cov_inv = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov).inverse_LLt();
+
+    // Twist:
+    ns.twist        = frame.twist;
+    const auto vCov = gtsam::Matrix3(state_.gtsam->smoother->marginalCovariance(V(idx)));
+    const auto wCov = gtsam::Matrix3(state_.gtsam->smoother->marginalCovariance(W(idx)));
+
+    gtsam::Matrix6 twCov    = gtsam::Matrix6::Zero();
+    twCov.block<3, 3>(0, 0) = vCov;
+    twCov.block<3, 3>(3, 3) = wCov;
+
+    ASSERT_(twCov.determinant() > 0);
+    ns.twist_inv_cov = twCov;
+
+    return ns;
 }
 
 }  // namespace mola::state_estimation_smoother

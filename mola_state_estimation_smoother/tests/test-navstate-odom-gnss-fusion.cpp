@@ -183,10 +183,8 @@ void run_test()
     const auto   stateOpt = stateEst.estimated_navstate(
         mrpt::Clock::fromDouble(last_t), stateEst.params.reference_frame_name);
 
-#if 0
     ASSERT_(stateOpt.has_value());
     std::cout << "State: " << stateOpt->asString() << "\n";
-#endif
 }
 
 }  // namespace

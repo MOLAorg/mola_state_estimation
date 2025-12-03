@@ -167,7 +167,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
     /// Returns a list of known odometry frame_ids:
-    auto known_odometry_frame_ids() -> std::set<std::string>;
+    [[nodiscard]] auto known_odometry_frame_ids() -> std::set<std::string>;
 
     /** @} */
 
@@ -274,17 +274,20 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
 
-    pair_nearby_frame_iterators_t find_before_after(
+    [[nodiscard]] pair_nearby_frame_iterators_t find_before_after(
         const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
         const mrpt::Clock::time_point&                          t);
 
     void initialize_new_frame(frame_index_t id, const pair_nearby_frame_iterators_t& closestFrames);
 
-    std::optional<frame_index_t> pick_closest(
+    [[nodiscard]] std::optional<frame_index_t> pick_closest(
         const pair_nearby_frame_iterators_t& closestFrames,
         const mrpt::Clock::time_point&       stamp) const;
 
     void add_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
+
+    /// Gets the latest state of a pose wrt the reference frame ("map")
+    [[nodiscard]] NavState get_latest_state_and_covariance(const frame_index_t idx) const;
 };
 
 }  // namespace mola::state_estimation_smoother
