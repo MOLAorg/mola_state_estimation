@@ -89,7 +89,7 @@ class Parameters
     double time_between_frames_to_warning = 3.0;  // [s]
 
     /** When adding GNSS observations, specially with consumer grade receivers with errors larger
-     * than a few centimeters, we may be more persimissive in the temporal distance between the GNSS
+     * than a few centimeters, we may be more permissive in the temporal distance between the GNSS
      * datum and the associated existing keyframe. This parameter is the extended, alternative value
      * to use instead of "min_time_difference_to_create_new_frame". [seconds]
      */
@@ -119,13 +119,13 @@ class Parameters
 
     /** If `true`, this estimator will try to estimate the best geo-referencing for {enu} -> {map}
      * from incoming GNSS readings and other sensors.
-     * If `false`, geo-referenciation is assumed to be given from either these initial parameters
+     * If `false`, geo-referencing is assumed to be given from either these initial parameters
      * or, if not set, from an external source (e.g. a geo-referenced `.mm` map loaded in
      * mola_lidar_odometry).
      */
     bool estimate_geo_reference = false;
 
-    /** If estimate_geo_reference is `false` and this is set, the geo-referenciation will be taken
+    /** If estimate_geo_reference is `false` and this is set, the geo-referencing will be taken
      * from this value and never attempted to be optimized or changed.
      * Other geo-reference information coming from external sources may override this fixed initial
      * value, though.

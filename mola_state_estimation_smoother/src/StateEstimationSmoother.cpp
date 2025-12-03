@@ -158,6 +158,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
     isam2Params.relinearizeThreshold  = 0.1;
     isam2Params.relinearizeSkip       = 1;
+    // isam2Params.optimizationParams    = gtsam::ISAM2DoglegParams();
 
     state_.gtsam->smoother.emplace(params.sliding_window_length, isam2Params);
 
@@ -535,7 +536,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         return {};
     }
 
-    // Recover
+    // Recover the state *in the reference frame*:
     const NavState ret = get_latest_state_and_covariance(*closesFrameIdx);
 
     MRPT_TODO("Implement probabilistic extrapolation");
@@ -544,7 +545,10 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // state_.last_estimated_states;
 
     // 3) Convert pose to the requested frame_id:
-    MRPT_TODO("Implement frame transform");
+    if (frame_id != params.reference_frame_name)
+    {
+        // Transform:
+    }
 
     return ret;
 }
@@ -1276,7 +1280,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
         const auto T_enu_to_map_cov = smoother.marginalCovariance(symbol_T_enu_to_map);
 
         std::cout << "T_enu_to_map: " << mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map)
-                  << "\ncov: " << T_enu_to_map_cov.diagonal().array().sqrt().eval() << "\n\n";
+                  << "\ncov: " << T_enu_to_map_cov.diagonal().array().sqrt().eval().transpose()
+                  << "\n\n";
     }
 
     if (NAVSTATE_PRINT_FG)
