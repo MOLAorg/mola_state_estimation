@@ -60,6 +60,9 @@ class Parameters
     /// See the docs online.
     std::string reference_frame_name = "map";
 
+    /// The ENU geo-reference frame. See the docs online.
+    std::string enu_frame_name = "enu";
+
     /** @}  */
 
     /** @name Kinematic factors (motion model)

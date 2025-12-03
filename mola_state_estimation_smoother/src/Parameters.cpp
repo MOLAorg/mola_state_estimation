@@ -28,6 +28,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 {
     MCP_LOAD_REQ(cfg, vehicle_frame_name);
     MCP_LOAD_REQ(cfg, reference_frame_name);
+    MCP_LOAD_OPT(cfg, enu_frame_name);
 
     MCP_LOAD_REQ(cfg, max_time_to_use_velocity_model);
 

@@ -87,13 +87,15 @@ const double NAVSTATE_PRINT_FG_ERRORS_THRESHOLD =
 using gtsam::symbol_shorthand::F;  // Frame of references (Pose3)
                                    // F(0): T_enu_to_map
                                    // F(i): T_map_to_odometry_frame_i
-const auto symbol_T_enu_to_map    = F(0);
-const auto symbol_T_map_to_odom_0 = F(1);  // odom[i] = thisSymbol + i
+const auto symbol_T_enu_to_map         = F(0);
+const auto symbol_T_map_to_odom_i_base = F(0);  // odom[i] = thisSymbol + i (with i>=1)
 
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
 //  TODO: IMU bias
+
+constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
 
 // -------- GtsamImpl -------
 
@@ -365,7 +367,7 @@ void StateEstimationSmoother::fuse_pose(
     const auto frame_id_idx = add_or_get_odom_frame_id(frame_id);
 
     // Create a new KF id (or reuse a very close match):
-    const auto this_kf_id = add_or_get_timestamp_frame_index(timestamp);
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp(timestamp);
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_pose]: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
@@ -389,9 +391,19 @@ void StateEstimationSmoother::fuse_pose(
 
     // TODO: robust factors here?
 
-    state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        symbol_T_map_to_odom_0 + frame_id_idx, T(this_kf_id), pose_out,
-        gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    if (frame_id_idx == REFERENCE_FRAME_ID)
+    {
+        // reference frame:
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            T(this_kf_id), pose_out, gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    }
+    else
+    {
+        // odometry frame:
+        state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
+            gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    }
 
 #if 0
     // Estimate twist:
@@ -478,7 +490,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     std::optional<double>        closestFrameDt;
     std::optional<frame_index_t> closesFrameIdx;
 
-    const auto closestPrior = find_before_after(state_.stamp2frame_index.getDirectMap(), timestamp);
+    const auto closestPrior = find_before_after(timestamp, true);
     for (const auto& it : {closestPrior.first, closestPrior.second})
     {
         if (it == state_.stamp2frame_index.getDirectMap().end())
@@ -512,6 +524,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // state_.last_estimated_states;
 
     // 3) Convert pose to the requested frame_id:
+    MRPT_TODO("Implement frame transform");
 
     return ret;
 }
@@ -1052,15 +1065,15 @@ void StateEstimationSmoother::delete_too_old_entries()
 // Creates a new frame index for timestamp t, or returns the existing one if close enough.
 // This also is in charge of the complex task of finding nearby existing frames and adding the
 // kinematic factors to ensure smooth motion estimation.
-StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_timestamp_frame_index(
+StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_keyframe_by_timestamp(
     const mrpt::Clock::time_point& t)
 {
-    const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_timestamp_frame_index");
+    const auto tle = mola::ProfilerEntry(profiler_, "create_or_get_keyframe_by_timestamp");
 
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // See if we have an existing frame index close enough to t:
-    const auto closestPrior = find_before_after(state_.stamp2frame_index.getDirectMap(), t);
+    const auto closestPrior = find_before_after(t, true);
     for (const auto& it : {closestPrior.first, closestPrior.second})
     {
         if (it == state_.stamp2frame_index.getDirectMap().end())
@@ -1070,6 +1083,7 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
         const auto& [existing_t, frame_idx] = *it;
 
         const double dt = std::abs(mrpt::system::timeDifference(existing_t, t));
+
         if (dt < params.min_time_difference_to_create_new_frame)
         {
             return frame_idx;
@@ -1085,7 +1099,7 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::add_or_get_times
     state_.last_observation_wallclock_stamp = mrpt::Clock::now();
 
     // Look for the closest existing frames, and create kinematic pairs if they don't exist yet:
-    const auto closestPost = find_before_after(state_.stamp2frame_index.getDirectMap(), t);
+    const auto closestPost = find_before_after(t, false);
 
     // Create new GTSAM symbols for this keyframe:
     initialize_new_frame(newFrameIdx, closestPost);
@@ -1126,6 +1140,15 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
 {
     const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_odom_frame_id");
 
+    // F(0): is special, it's the reference frame ("map"), not a floating "odometry" frame
+    if (frame_id_name == params.reference_frame_name)
+    {
+        return REFERENCE_FRAME_ID;
+    }
+
+    ASSERT_NOT_EQUAL_(frame_id_name, params.vehicle_frame_name);
+    ASSERT_NOT_EQUAL_(frame_id_name, params.enu_frame_name);
+
     // auto lck = mrpt::lockHelper(stateMutex_); // acquired by caller
 
     // Existing frame?
@@ -1135,16 +1158,18 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
         return it->second;
     }
 
-    // New one:
-    const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size());
+    // New one: starting at "1" (0=reserved for "map")
+    const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size()) + 1;
     state_.known_odom_frames.insert(frame_id_name, newId);
 
     // Initialize gtsam symbol and prior factor for the new frame:
     const gtsam::Pose3 initFramePose = gtsam::Pose3::Identity();
 
-    state_.gtsam->newValues.insert(symbol_T_map_to_odom_0 + newId, initFramePose);
+    ASSERT_GE_(newId, 1);
+
+    state_.gtsam->newValues.insert(symbol_T_map_to_odom_i_base + newId, initFramePose);
     state_.gtsam->newFactors.addPrior(
-        symbol_T_map_to_odom_0 + newId, initFramePose,
+        symbol_T_map_to_odom_i_base + newId, initFramePose,
         gtsam::noiseModel::Isotropic::Sigma(6, INIT_ODOM_FRAME_POSE_SIGMA));
 
     return newId;
@@ -1164,7 +1189,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
         state_.gtsam->newKeyStamps[symbol_T_enu_to_map] = lastObservationStamp_sec;
         for (const auto& [_, frameId] : state_.known_odom_frames)
         {
-            state_.gtsam->newKeyStamps[symbol_T_map_to_odom_0 + frameId] = lastObservationStamp_sec;
+            state_.gtsam->newKeyStamps[symbol_T_map_to_odom_i_base + frameId] =
+                lastObservationStamp_sec;
         }
     }
 
@@ -1250,12 +1276,12 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
 }
 
 StateEstimationSmoother::pair_nearby_frame_iterators_t StateEstimationSmoother::find_before_after(
-    const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
-    const mrpt::Clock::time_point&                          t)
+    const mrpt::Clock::time_point& t, bool allow_exact_match)
 {
+    const auto& stamp2frame = state_.stamp2frame_index.getDirectMap();
+
     using Iterator = std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator;
 
-    // Handle the empty map case first
     if (stamp2frame.empty())
     {
         return {stamp2frame.end(), stamp2frame.end()};
@@ -1264,43 +1290,62 @@ StateEstimationSmoother::pair_nearby_frame_iterators_t StateEstimationSmoother::
     // upper_bound finds the first element whose key is > t. This is the 'after' element.
     Iterator after = stamp2frame.upper_bound(t);
 
-    // Now determine the 'before' element.
-    Iterator before;
+    if (!allow_exact_match)
+    {
+        // Now determine the 'before' element.
+        Iterator before;
+        if (after == stamp2frame.begin())
+        {
+            // Case A: t is smaller than ALL keys.
+            // No element before t. 'after' is the first element.
+            before = stamp2frame.end();
+        }
+        else
+        {
+            // Case B: t is greater than or equal to some key(s).
+            // 'before' is the element immediately preceding 'after'.
+            before = std::prev(after);
+        }
 
+        // Now refine the 'after' iterator based on an exact match with the 'before' iterator.
+        // If the 'before' element's key is exactly 't', then 'before' is the exact match.
+        // The element *after* it is what upper_bound already found.
+        // If the 'before' element's key is < 't', then 'before' is the correct predecessor.
+        // Check if t is an exact match:
+        if (before != stamp2frame.end() && before->first == t)
+        {
+            // An exact match for t exists.
+            // 'before' is the exact match element.
+            // The element BEFORE the exact match is its predecessor, if it exists.
+            Iterator element_before_match =
+                (before == stamp2frame.begin()) ? stamp2frame.end() : std::prev(before);
+
+            // The element AFTER the exact match is what upper_bound already found (the current
+            // 'after').
+            return {element_before_match, after};
+        }
+
+        // General case: t lies strictly between 'before' and 'after' (or is smaller/larger than
+        // all). The iterators 'before' and 'after' are correct as computed above.
+        return {before, after};
+    }
+
+    // case: allow_exact_match is "true"
+
+    // If 'after' is the beginning, t is smaller than all keys.
     if (after == stamp2frame.begin())
     {
-        // Case A: t is smaller than ALL keys.
-        // No element before t. 'after' is the first element.
-        before = stamp2frame.end();
-    }
-    else
-    {
-        // Case B: t is greater than or equal to some key(s).
-        // 'before' is the element immediately preceding 'after'.
-        before = std::prev(after);
+        return {stamp2frame.end(), after};  // Case A: No 'before' element
     }
 
-    // Now refine the 'after' iterator based on an exact match with the 'before' iterator.
-    // If the 'before' element's key is exactly 't', then 'before' is the exact match.
-    // The element *after* it is what upper_bound already found.
-    // If the 'before' element's key is < 't', then 'before' is the correct predecessor.
+    // Otherwise, 'before' is the element immediately preceding 'after'.
+    Iterator before = std::prev(after);
 
-    // Check if t is an exact match:
-    if (before != stamp2frame.end() && before->first == t)
-    {
-        // An exact match for t exists.
-        // 'before' is the exact match element.
-        // The element BEFORE the exact match is its predecessor, if it exists.
-        Iterator element_before_match =
-            (before == stamp2frame.begin()) ? stamp2frame.end() : std::prev(before);
+    // This pair correctly handles:
+    // 1. t between K_i and K_j: before = K_i, after = K_j
+    // 2. t exactly matches K_i: before = K_i, after = K_{i+1}
+    // 3. t larger than all: before = K_max, after = end()
 
-        // The element AFTER the exact match is what upper_bound already found (the current
-        // 'after').
-        return {element_before_match, after};
-    }
-
-    // General case: t lies strictly between 'before' and 'after' (or is smaller/larger than all).
-    // The iterators 'before' and 'after' are correct as computed above.
     return {before, after};
 }
 

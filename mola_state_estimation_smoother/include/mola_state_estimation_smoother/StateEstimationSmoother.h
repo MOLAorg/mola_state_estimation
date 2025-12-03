@@ -254,7 +254,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
     /// This also is in charge of the complex task of finding nearby existing frames and adding the
     /// kinematic factors to ensure smooth motion estimation.
-    [[nodiscard]] frame_index_t add_or_get_timestamp_frame_index(const mrpt::Clock::time_point& t);
+    [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp(
+        const mrpt::Clock::time_point& t);
 
     /// Creates or returns the existing ID, for an odometry frame_id:
     [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
@@ -275,8 +276,7 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
 
     [[nodiscard]] pair_nearby_frame_iterators_t find_before_after(
-        const std::map<mrpt::Clock::time_point, frame_index_t>& stamp2frame,
-        const mrpt::Clock::time_point&                          t);
+        const mrpt::Clock::time_point& t, bool allow_exact_match);
 
     void initialize_new_frame(frame_index_t id, const pair_nearby_frame_iterators_t& closestFrames);
 

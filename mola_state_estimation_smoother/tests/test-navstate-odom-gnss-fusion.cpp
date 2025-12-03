@@ -98,6 +98,18 @@ void run_test()
     actualVehicleInitialGeoCoords.lon    = 3.0;
     actualVehicleInitialGeoCoords.height = 50.0;
 
+    // Link the "map" frame origin with "odom" for this toy example.
+    // Otherwise, "odom" would "float" around without any particular XYZ known displacement.
+    {
+        auto map2odom_cov = mrpt::math::CMatrixDouble66::Identity();
+        map2odom_cov *= 1e-6;
+
+        stateEst.fuse_pose(
+            mrpt::Clock::fromDouble(0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), map2odom_cov),
+            stateEst.params.reference_frame_name);
+    }
+
     auto& rng = mrpt::random::getRandomGenerator();
     rng.randomize(1234);
 
@@ -127,9 +139,9 @@ void run_test()
         // Note: In a real scenario, noise is incremental. Here we just add noise
         // to the absolute GT to simulate a drifting input.
         auto noisyOdoPose = mrpt::poses::CPose2D(actualVehiclePose);
-        noisyOdoPose.x_incr(rng.drawGaussian1D(0, 0.02));
-        noisyOdoPose.y_incr(rng.drawGaussian1D(0, 0.02));
-        noisyOdoPose.phi_incr(rng.drawGaussian1D(0, 0.002));
+        noisyOdoPose.x_incr(rng.drawGaussian1D(0, 0.05));
+        noisyOdoPose.y_incr(rng.drawGaussian1D(0, 0.05));
+        noisyOdoPose.phi_incr(rng.drawGaussian1D(0, 0.05));
 
         obsOdo.odometry        = noisyOdoPose;
         obsOdo.hasEncodersInfo = false;
@@ -173,9 +185,15 @@ void run_test()
         stateEst.fuse_odometry(obsOdo);
         stateEst.fuse_gnss(obsGps);
 
+#if 0
         // Enforce updating estimation:
         const auto stateOpt = stateEst.estimated_navstate(
             mrpt::Clock::fromDouble(t), stateEst.params.reference_frame_name);
+        if (stateOpt)
+        {
+            std::cout << stateOpt->asString() << "\nGT: " << actualVehiclePose << "\n\n";
+        }
+#endif
     }
 
     // Recover pose:
