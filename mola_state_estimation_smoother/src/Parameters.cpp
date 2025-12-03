@@ -41,7 +41,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_linear);
     MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_angular);
 
+    MCP_LOAD_OPT(cfg, min_time_difference_to_create_new_frame);
     MCP_LOAD_OPT(cfg, time_between_frames_to_warning);
+    MCP_LOAD_OPT(cfg, gnss_nearby_keyframe_stamp_tolerance);
 
     MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
     MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
@@ -50,8 +52,6 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, robust_param);
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
-
-    MCP_LOAD_OPT(cfg, min_time_difference_to_create_new_frame);
 
     MCP_LOAD_OPT(cfg, estimate_geo_reference);
 

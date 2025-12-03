@@ -29,6 +29,9 @@ using namespace std::string_literals;
 
 namespace
 {
+constexpr double gnss_noise_xy_m = 0.5;
+constexpr double gnss_noise_z_m  = 0.5;
+
 const char* navStateParams =
     R"###(# Config for Parameters
 params:
@@ -91,7 +94,7 @@ void run_test()
 
     const double T = 0.1;  // sensors period
 
-    mrpt::poses::CPose3D actualVehiclePose = mrpt::poses::CPose3D::Identity();
+    mrpt::poses::CPose3D actualVehiclePose = mrpt::poses::CPose3D::Identity();  // wrt "map" frame
 
     mrpt::topography::TGeodeticCoords actualVehicleInitialGeoCoords;
     actualVehicleInitialGeoCoords.lat    = 4.0;
@@ -122,7 +125,7 @@ void run_test()
         if (i > 0)
         {
             const double v_lin = 1.0;  // m/s
-            const double v_ang = 0.3;  // rad/s
+            const double v_ang = 0.1;  // rad/s
 
             // Increment in local frame
             const auto deltaPose = mrpt::poses::CPose3D(v_lin * T, 0.0, 0.0, v_ang * T, 0.0, 0.0);
@@ -164,36 +167,38 @@ void run_test()
 
         // Add noise to GNSS (Approx 1.0 meter noise)
         // 1 deg Lat ~= 111km -> 1m ~= 9e-6 deg
-        const double gnss_noise_deg = 1.0 / 111139.0;
+        constexpr double gnss_noise_deg = gnss_noise_xy_m / 111139.0;
 
         mrpt::obs::gnss::Message_NMEA_GGA gga_msg;
         gga_msg.fields.latitude_degrees =
             currentGeoCoords.lat + rng.drawGaussian1D(0, gnss_noise_deg);
         gga_msg.fields.longitude_degrees =
             currentGeoCoords.lon + rng.drawGaussian1D(0, gnss_noise_deg);
-        gga_msg.fields.altitude_meters = currentGeoCoords.height + rng.drawGaussian1D(0, 1.5);
-        gga_msg.fields.fix_quality     = 1;
+        gga_msg.fields.altitude_meters =
+            currentGeoCoords.height + rng.drawGaussian1D(0, gnss_noise_z_m);
+        gga_msg.fields.fix_quality = 1;
         obsGps.setMsg(gga_msg);
 
         // Set GNSS Covariance (in meters)
         auto& cov = obsGps.covariance_enu.emplace();
         cov.setIdentity();
-        cov(0, 0) = cov(1, 1) = 1.0;  // 1m variance xy
-        cov(2, 2)             = 2.25;  // 1.5m std dev z
+        cov(0, 0) = cov(1, 1) = mrpt::square(gnss_noise_xy_m);
+        cov(2, 2)             = mrpt::square(gnss_noise_z_m);
 
         // Send both to state estimator:
         stateEst.fuse_odometry(obsOdo);
         stateEst.fuse_gnss(obsGps);
 
-#if 0
-        // Enforce updating estimation:
-        const auto stateOpt = stateEst.estimated_navstate(
-            mrpt::Clock::fromDouble(t), stateEst.params.reference_frame_name);
-        if (stateOpt)
+        if (i % 5 == 0)
         {
-            std::cout << stateOpt->asString() << "\nGT: " << actualVehiclePose << "\n\n";
+            // Enforce updating estimation:
+            const auto stateOpt = stateEst.estimated_navstate(
+                mrpt::Clock::fromDouble(t), stateEst.params.reference_frame_name);
+            if (stateOpt)
+            {
+                std::cout << stateOpt->asString() << "\nGT: " << actualVehiclePose << "\n\n";
+            }
         }
-#endif
     }
 
     // Recover pose:
@@ -203,6 +208,10 @@ void run_test()
 
     ASSERT_(stateOpt.has_value());
     std::cout << "State: " << stateOpt->asString() << "\n";
+
+    const double final_se3_error =
+        mrpt::poses::Lie::SE<3>::log(stateOpt->pose.mean - actualVehiclePose).norm();
+    std::cout << "final_se3_error: " << final_se3_error << "\n";
 }
 
 }  // namespace

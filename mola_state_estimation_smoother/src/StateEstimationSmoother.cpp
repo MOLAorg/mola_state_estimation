@@ -47,6 +47,7 @@
 // Custom factors:
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
+#include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 
 // arguments: class_name, parent_class, class namespace
@@ -303,8 +304,6 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
 
-    MRPT_LOG_DEBUG_FMT("[fuse_gnss]: t=%f", mrpt::Clock::toDouble(gps.timestamp));
-
     if (!gps.has_GGA_datum())
     {
         MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since it has no GGA data.");
@@ -351,10 +350,31 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
         return;
     }
 
+    if (!gps.covariance_enu.has_value())
+    {
+        MRPT_LOG_THROTTLE_WARN(
+            5.0, "Discarding GNSS (GPS) reading since it does not have ENU covariance.");
+        return;
+    }
+
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
 
-    MRPT_LOG_DEBUG_STREAM("[fuse_gnss]: ENU=" << ENU_point);
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp(
+        gps.timestamp, params.gnss_nearby_keyframe_stamp_tolerance);
+
+    MRPT_LOG_DEBUG_FMT(
+        "[fuse_gnss]: t=%f this_kf_id=%zu ENU=%s", mrpt::Clock::toDouble(gps.timestamp),
+        static_cast<size_t>(this_kf_id), ENU_point.asString().c_str());
+
+    // Add geo-ref factor:
+    const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
+    const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
+    const auto enuCov = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
+
+    state_.gtsam->newFactors.emplace_shared<mola::FactorGnssMapEnu>(
+        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuCov);
 }
 
 void StateEstimationSmoother::fuse_pose(
@@ -1066,11 +1086,14 @@ void StateEstimationSmoother::delete_too_old_entries()
 // This also is in charge of the complex task of finding nearby existing frames and adding the
 // kinematic factors to ensure smooth motion estimation.
 StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_keyframe_by_timestamp(
-    const mrpt::Clock::time_point& t)
+    const mrpt::Clock::time_point& t, const std::optional<double>& overrideCloseEnough)
 {
     const auto tle = mola::ProfilerEntry(profiler_, "create_or_get_keyframe_by_timestamp");
 
     auto lck = mrpt::lockHelper(stateMutex_);
+
+    const double threshold =
+        overrideCloseEnough ? *overrideCloseEnough : params.min_time_difference_to_create_new_frame;
 
     // See if we have an existing frame index close enough to t:
     const auto closestPrior = find_before_after(t, true);
@@ -1084,7 +1107,7 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
         const double dt = std::abs(mrpt::system::timeDifference(existing_t, t));
 
-        if (dt < params.min_time_difference_to_create_new_frame)
+        if (dt < threshold)
         {
             return frame_idx;
         }
@@ -1244,6 +1267,16 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
             enforce_planar_pose(kf.pose);
             enforce_planar_twist(kf.twist);
         }
+    }
+
+    // Retrieve latest enu_to_map for geo-referencing:
+    if (params.estimate_geo_reference)
+    {
+        const auto T_enu_to_map     = optValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
+        const auto T_enu_to_map_cov = smoother.marginalCovariance(symbol_T_enu_to_map);
+
+        std::cout << "T_enu_to_map: " << mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map)
+                  << "\ncov: " << T_enu_to_map_cov.diagonal().array().sqrt().eval() << "\n\n";
     }
 
     if (NAVSTATE_PRINT_FG)

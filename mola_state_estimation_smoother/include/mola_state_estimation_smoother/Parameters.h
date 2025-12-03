@@ -88,6 +88,13 @@ class Parameters
     /// emitted; but the algorithm will keep trying its best.
     double time_between_frames_to_warning = 3.0;  // [s]
 
+    /** When adding GNSS observations, specially with consumer grade receivers with errors larger
+     * than a few centimeters, we may be more persimissive in the temporal distance between the GNSS
+     * datum and the associated existing keyframe. This parameter is the extended, alternative value
+     * to use instead of "min_time_difference_to_create_new_frame". [seconds]
+     */
+    double gnss_nearby_keyframe_stamp_tolerance = 1.0;
+
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
     double sigma_integrator_position              = 0.10;  // [m]
