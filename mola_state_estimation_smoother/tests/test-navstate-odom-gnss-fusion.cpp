@@ -31,14 +31,17 @@ using namespace mrpt::literals;
 namespace
 {
 
-constexpr double GNSS_NOISE_XY_M    = 0.10;
-constexpr double GNSS_NOISE_Z_M     = 0.10;
+constexpr double GNSS_NOISE_XY_M    = 0.05;
+constexpr double GNSS_NOISE_Z_M     = 0.05;
 constexpr double MOTION_LIN_VX      = 1.0;  // m/s
-constexpr double MOTION_ANG_WZ      = 0.1;  // rad/s
+constexpr double MOTION_ANG_WZ      = 0.5;  // rad/s
 constexpr double ODOMETRY_NOISE_XY  = 0.01;
 constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 
 constexpr const char* ODOMETRY_NAME = "odom";
+
+const size_t numPoses = 120;
+const double T        = 0.1;  // sensors period
 
 const char* navStateParams =
     R"###(# Config for Parameters
@@ -60,7 +63,7 @@ params:
     kinematic_model: KinematicModel::ConstantVelocity
 
     # Time window to keep past observations in the filter [seconds]
-    sliding_window_length: 2.0
+    sliding_window_length: 6.0
     
     # Minimum time difference between frames to create a new frame [seconds]
     min_time_difference_to_create_new_frame: 0.01
@@ -91,16 +94,20 @@ params:
 //
 void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
 {
+    std::cout
+        << "\n"
+           "================================================================================\n"
+           "=== Running test for initial pose: "
+        << actualInitialPoseWrtMap
+        << "...\n"
+           "================================================================================\n";
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
 
     stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     stateEst.profiler_.enable();
 
     stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
-
-    const size_t numPoses = 40;
-
-    const double T = 0.1;  // sensors period
 
     mrpt::poses::CPose3D actualVehiclePose = actualInitialPoseWrtMap;  // wrt "map" frame
     mrpt::poses::CPose2D odometryPose      = mrpt::poses::CPose2D::Identity();  // wrt "odom" frame
@@ -257,6 +264,14 @@ void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
         std::cout << "final_se3_error: " << final_se3_error << "\n";
         ASSERT_LT_(final_se3_error, 0.30);
     }
+
+    std::cout
+        << "\n"
+           "================================================================================\n"
+           "✅ SUCCESSFULL test for initial pose: "
+        << actualInitialPoseWrtMap
+        << "\n"
+           "================================================================================\n\n";
 }
 
 }  // namespace

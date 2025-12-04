@@ -113,13 +113,6 @@ struct StateEstimationSmoother::GtsamImpl
     gtsam::NonlinearFactorGraph              newFactors;
     gtsam::Values                            newValues;
     gtsam::FixedLagSmoother::KeyTimestampMap newKeyStamps;
-
-#if 0
-    // Batch version:
-    gtsam::NonlinearFactorGraph     fg;
-    gtsam::Values                   values;
-    gtsam::LevenbergMarquardtParams lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
-#endif
 };
 
 // -------- StateEstimationSmoother::State -------
@@ -372,10 +365,12 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     // Add geo-ref factor:
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
-    const auto enuCov = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
+    const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
+    auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
 
     state_.gtsam->newFactors.emplace_shared<mola::FactorGnssMapEnu>(
-        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuCov);
+        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
 }
 
 void StateEstimationSmoother::fuse_pose(
@@ -412,19 +407,14 @@ void StateEstimationSmoother::fuse_pose(
 
     // TODO: robust factors here?
 
-    if (frame_id_idx == REFERENCE_FRAME_ID)
-    {
-        // reference frame:
-        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-            T(this_kf_id), pose_out, gtsam::noiseModel::Gaussian::Covariance(cov_out));
-    }
-    else
-    {
-        // odometry frame:
-        state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
-            gtsam::noiseModel::Gaussian::Covariance(cov_out));
-    }
+    // reference frame ("map") or "odom_i"
+    const auto symbol_ref_frame = (frame_id_idx == REFERENCE_FRAME_ID)
+                                      ? symbol_T_enu_to_map
+                                      : (symbol_T_map_to_odom_i_base + frame_id_idx);
+
+    state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        symbol_ref_frame, T(this_kf_id), pose_out,
+        gtsam::noiseModel::Gaussian::Covariance(cov_out));
 
 #if 0
     // Estimate twist:
