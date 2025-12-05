@@ -407,14 +407,20 @@ void StateEstimationSmoother::fuse_pose(
 
     // TODO: robust factors here?
 
-    // reference frame ("map") or "odom_i"
-    const auto symbol_ref_frame = (frame_id_idx == REFERENCE_FRAME_ID)
-                                      ? symbol_T_enu_to_map
-                                      : (symbol_T_map_to_odom_i_base + frame_id_idx);
-
-    state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        symbol_ref_frame, T(this_kf_id), pose_out,
-        gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    // reference frame ("map") or "odom_i"?
+    if (frame_id_idx == REFERENCE_FRAME_ID)
+    {
+        // ref is "map":
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            T(this_kf_id), pose_out, gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    }
+    else
+    {
+        // ref is an odometry frame:
+        state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
+            gtsam::noiseModel::Gaussian::Covariance(cov_out));
+    }
 }
 
 void StateEstimationSmoother::fuse_twist(

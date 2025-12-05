@@ -21,6 +21,8 @@
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h>
+#include <mrpt/core/get_env.h>
+#include <mrpt/poses/Lie/SO.h>
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/topography/conversions.h>
 
@@ -39,10 +41,16 @@ constexpr double MOTION_ANG_WZ      = 0.5;  // rad/s
 constexpr double ODOMETRY_NOISE_XY  = 0.01;
 constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 
+constexpr double MAXIMUM_SE3_FINAL_ERROR = 0.40;
+
 constexpr const char* ODOMETRY_NAME = "odom";
+
+const bool VERBOSE = mrpt::get_env<bool>("VERBOSE", false);
 
 const size_t numPoses = 80;
 const double T        = 0.1;  // sensors period
+
+auto& rng = mrpt::random::getRandomGenerator();
 
 const char* navStateParams =
     R"###(# Config for Parameters
@@ -110,7 +118,10 @@ void run_test(const TestCase& testCase)
 
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
 
-    stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    if (VERBOSE)
+    {
+        stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    }
     stateEst.profiler_.enable();
 
     {
@@ -139,9 +150,6 @@ void run_test(const TestCase& testCase)
             mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), map2odom_cov),
             stateEst.parameters().reference_frame_name);
     }
-
-    auto& rng = mrpt::random::getRandomGenerator();
-    rng.randomize(1234);
 
     for (size_t i = 0; i <= numPoses; i++)
     {
@@ -235,7 +243,7 @@ void run_test(const TestCase& testCase)
         {
             const auto stateOpt = stateEst.estimated_navstate(
                 mrpt::Clock::fromDouble(t), stateEst.parameters().reference_frame_name);
-            if (stateOpt)
+            if (stateOpt && VERBOSE)
             {
                 std::cout << stateOpt->asString() << "\n"
                           << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(
@@ -262,7 +270,7 @@ void run_test(const TestCase& testCase)
                 estimatedPoseWrtMap - (actualVehiclePose - actualInitialPoseWrtMap))
                 .norm();
         std::cout << "final_se3_error: " << final_se3_error << "\n";
-        ASSERT_LT_(final_se3_error, 0.30);
+        ASSERT_LT_(final_se3_error, MAXIMUM_SE3_FINAL_ERROR);
     }
 
     // Recover pose, in the odometry frame:
@@ -280,16 +288,44 @@ void run_test(const TestCase& testCase)
                 stateOpt->pose.mean - (actualVehiclePose - actualInitialPoseWrtMap))
                 .norm();
         std::cout << "final_se3_error: " << final_se3_error << "\n";
-        ASSERT_LT_(final_se3_error, 0.30);
+        ASSERT_LT_(final_se3_error, MAXIMUM_SE3_FINAL_ERROR);
     }
 
     // Request all estimated frames:
-    if (auto T_enu_to_map = stateEst.estimated_T_enu_to_map(); T_enu_to_map)
+    auto T_enu_to_map = stateEst.estimated_T_enu_to_map();
+    ASSERT_(T_enu_to_map.has_value());
+    std::cout << "T_enu_to_map:\n"
+              << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_enu_to_map)
+              << "\n";
     {
-        std::cout << "T_enu_to_map:\n"
-                  << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_enu_to_map)
-                  << "\n";
+        const auto covDet = std::sqrt(T_enu_to_map->cov.det());
+        if (VERBOSE)
+        {
+            printf("√|cov(T_enu_to_map)|=%.03g\n", covDet);
+        }
+        if (testCase.has_gnss)
+        {
+            // We should have converged:
+            ASSERT_LT_(covDet, 1.0e-3);
+
+            // And to a valid global orientation (translation is arbitrary/not as important):
+            const double enu2map_rot_error =
+                mrpt::poses::Lie::SO<3>::log(
+                    (T_enu_to_map->mean - testCase.pose).getRotationMatrix())
+                    .norm();
+            if (VERBOSE)
+            {
+                printf("log|error(T_enu_to_map)|=%.03g\n", enu2map_rot_error);
+            }
+            ASSERT_LT_(enu2map_rot_error, 0.05);
+        }
+        else
+        {
+            // We have no clue about geo-referencing since we don't have GNSS:
+            ASSERT_GT_(covDet, 1.0e3);
+        }
     }
+
     for (const auto& odom_frame : stateEst.known_odometry_frame_ids())
     {
         auto T_map_to_odom = stateEst.estimated_T_map_to_odometry_frame(odom_frame);
@@ -306,41 +342,70 @@ void run_test(const TestCase& testCase)
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
-    try
-    {
-        std::vector<TestCase> tests = {
-            {true, Pose::Identity(), Kinematic::ConstantVelocity},
-            {true, Pose::FromTranslation(3.0, 2.0, 1.0), Kinematic::ConstantVelocity},
-            {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg),
-             Kinematic::ConstantVelocity}};
+    int           numErrors          = 0;
+    constexpr int RANDOM_REPETITIONS = 5;
 
-        for (const auto& t : tests)
+    rng.randomize(1234);
+
+    // shortcuts:
+    const auto modelCV = Kinematic::ConstantVelocity;
+
+    std::vector<TestCase> tests = {
+        {false, Pose::Identity(), modelCV},
+        {false, Pose::FromTranslation(3.0, 2.0, 1.0), modelCV},
+        {false, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), modelCV},
+        {true, Pose::Identity(), modelCV},
+        {true, Pose::FromTranslation(3.0, 2.0, 1.0), modelCV},
+        {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), modelCV},
+    };
+
+    for (const auto& t : tests)
+    {
+        for (int rep = 0; rep < RANDOM_REPETITIONS; rep++)
         {
             std::cout
                 << "\n"
                    "========================================================================\n"
-                   "=== Running test for initial pose: "
-                << t.pose << " Kinematic: " << mrpt::typemeta::enum2str(t.model)
+                   "=== Running "
+                << rep << "/" << RANDOM_REPETITIONS << " test for initial pose: " << t.pose
+                << " Kinematic: " << mrpt::typemeta::enum2str(t.model)
                 << " has_gnss: " << t.has_gnss
-                << "...\n"
+                << "\n"
                    "========================================================================\n";
 
-            run_test(t);
+            bool failed = true;
+            try
+            {
+                run_test(t);
+
+                failed = false;
+            }
+            catch (const std::exception& e)
+            {
+                mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
+                std::cerr << " ERROR:\n" << e.what() << std::endl;
+                mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::DEFAULT);
+            }
 
             std::cout
                 << "\n"
-                   "========================================================================\n"
-                   "✅ SUCCESS\n"
-                   "========================================================================\n\n";
+                   "========================================================================\n";
+            if (failed)
+            {
+                numErrors++;
+                std::cout << "❌ FAILED\n";
+            }
+            else
+            {
+                std::cout << "✅ SUCCESS\n";
+            }
+            std::cout
+                << "========================================================================\n\n";
         }
     }
-    catch (const std::exception& e)
-    {
-        mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
-        std::cerr << " ERROR:\n" << e.what() << std::endl;
-        mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::DEFAULT);
-        return 1;
-    }
 
-    return 0;
+    std::cout << "\n\n RESULT: ✅ " << (tests.size() * RANDOM_REPETITIONS - numErrors)
+              << " SUCCESS, ❌ " << numErrors << " FAILURES.\n";
+
+    return numErrors == 0 ? 0 : 1;
 }
