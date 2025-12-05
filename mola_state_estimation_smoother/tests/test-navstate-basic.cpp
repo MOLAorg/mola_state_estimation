@@ -174,7 +174,7 @@ void test_one_pose_extrapolate()
     const auto ret = nav.estimated_navstate(t1, "odom");
     ASSERT_(ret.has_value());
 
-    // std::cout << "Result:\n" << ret->asString() << std::endl;
+    std::cout << "Result:\n" << ret->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 
@@ -204,7 +204,7 @@ void test_2_poses()
     const auto ret3 = nav.estimated_navstate(t3, "odom");
     ASSERT_(ret3.has_value());
 
-    // std::cout << "Result:\n" << ret2->asString() << std::endl;
+    std::cout << "Result:\n" << ret2->asString() << std::endl;
 
     const auto expected2 =
         mrpt::poses::CPose3D::FromXYZYawPitchRoll(0.6, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
@@ -262,7 +262,7 @@ void test_3_poses()
     const auto ret2 = nav.estimated_navstate(t3, "odom");
     ASSERT_(ret2.has_value());
 
-    // std::cout << "Result:\n" << ret2->asString() << std::endl;
+    std::cout << "Result:\n" << ret2->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - _.pc3).norm(), 0.0, 1e-1);
 

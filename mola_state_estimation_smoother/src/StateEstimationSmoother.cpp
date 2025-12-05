@@ -670,16 +670,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     }
 
 
-    // Unary prior for initial twist:
-    const auto& tw = params_.initial_twist;
-    fg.addPrior(
-        V(0), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
-        gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_lin));
-
-    fg.addPrior(
-        W(0), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
-        gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
-
     // Process pose observations:
     // ------------------------------------------
     for (size_t kfId = 0; kfId < entries.size(); kfId++)
@@ -1069,6 +1059,8 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
     }
 
     // Create a new one:
+    const bool is_first_ever_frame = state_.next_frame_index == 0;
+
     const auto newFrameIdx = state_.next_frame_index++;
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
@@ -1104,6 +1096,19 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
         // Add kinematic factors:
         add_kinematic_factor_between(newFrameIdx, idx_after);
+    }
+
+    // Was this the first ever pose? then add unary prior for initial twiste)
+    if (is_first_ever_frame)
+    {
+        const auto& tw = params_.initial_twist;
+        state_.gtsam->newFactors.addPrior(
+            V(newFrameIdx), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
+            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_lin));
+
+        state_.gtsam->newFactors.addPrior(
+            W(newFrameIdx), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
+            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
     }
 
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
