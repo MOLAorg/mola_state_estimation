@@ -77,14 +77,16 @@ namespace mola::state_estimation_smoother
  *
  * Main API methods and frame conventions:
  * - `estimated_navstate()`: Output estimations can be requested in any of the
- *    existing frames of reference.
+ *      existing frames of reference.
  * - `fuse_pose()`: Can be used to integrate information from any "odometry" or
- *   "localization" input, as mentioned above.
- * - `fuse_gnss()`: TO-DO.
- * - `fuse_imu()`: TO-DO.
+ *     "localization" input, as mentioned above.
+ * - `fuse_gnss()`: Integrate GNSS observations, to help with localization in geo-referenced maps,
+ *     or to automatically find-out the geo-referencing of a map.
+ * - `fuse_imu()`: Used to help with (1) global azimuth in geo-referenced maps, (2) vertical
+ *     direction from accelerometer, (3) angular velocity from gyroscope.
  *
  * Usage:
- * - (1) Call initialize() or set the required parameters directly in params_.
+ * - (1) Call initialize() to set the required parameters.
  * - (2) Integrate measurements with `fuse_*()` methods. Each CObservation
  *       class includes a `timestamp` field which is used to estimate the
  *       trajectory.
@@ -119,7 +121,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /** \name Main API
      *  @{ */
 
-    Parameters params;
+    /** Parameters can only be set via initialize(), then read-only accesses through this method. */
+    const Parameters& parameters() { return params_; }
 
     /**
      * @brief Initializes the object and reads all parameters from a YAML node.
@@ -169,6 +172,13 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Returns a list of known odometry frame_ids:
     [[nodiscard]] auto known_odometry_frame_ids() -> std::set<std::string>;
 
+    /// Gets the latest estimated transform of T_enu_to_map
+    [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map() const;
+
+    /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
+    [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_map_to_odometry_frame(
+        const std::string& frame_id) const;
+
     /** @} */
 
    protected:
@@ -180,6 +190,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 #endif
 
    private:
+    Parameters params_;
+
     // everything related to gtsam is hidden in the public API via pimpl
     // to reduce compilation dependencies, and build time and memory usage.
     struct GtsamImpl;
@@ -212,6 +224,9 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<frame_index_t, FrameState> last_estimated_states;
+
+        /// The latest values from the estimator; updated in process_pending_gtsam_updates()
+        std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
 
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
@@ -289,6 +304,13 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
     /// Gets the latest state of a pose wrt the reference frame ("map")
     [[nodiscard]] NavState get_latest_state_and_covariance(const frame_index_t idx) const;
+
+    /// Gets the latest estimated transform of T_enu_to_map
+    [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> get_estimated_T_enu_to_map() const;
+
+    /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
+    [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian>
+        get_estimated_T_map_to_odometry_frame(const frame_index_t idx) const;
 };
 
 }  // namespace mola::state_estimation_smoother

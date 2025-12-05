@@ -47,8 +47,11 @@ mola_add_library(
   SOURCES
     src/Parameters.cpp
     src/StateEstimationSmoother.cpp
+    src/pose_pdf_to_string_with_sigmas.cpp
     src/register.cpp
     include/mola_state_estimation_smoother/Parameters.h
+    include/mola_state_estimation_smoother/StateEstimationSmoother.h
+    include/mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h
   PUBLIC_LINK_LIBRARIES
     mrpt::obs
     mola::mola_kernel

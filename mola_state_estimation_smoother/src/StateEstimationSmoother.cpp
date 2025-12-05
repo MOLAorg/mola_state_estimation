@@ -144,7 +144,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     reset();
 
     // Load params:
-    params.loadFrom(cfg["params"]);
+    params_.loadFrom(cfg["params"]);
 
     // Forward parameters to GTSAM smoother & iSAM2:
     gtsam::ISAM2Params isam2Params;
@@ -153,7 +153,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     isam2Params.relinearizeSkip       = 1;
     // isam2Params.optimizationParams    = gtsam::ISAM2DoglegParams();
 
-    state_.gtsam->smoother.emplace(params.sliding_window_length, isam2Params);
+    state_.gtsam->smoother.emplace(params_.sliding_window_length, isam2Params);
 
     // Initialize georeference-related gtsam variables:
     // Even if not using a geo-referenced map, even if not using GPS sensors,
@@ -162,9 +162,9 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     auto           enu2map     = gtsam::Pose3::Identity();
     gtsam::Matrix6 enu2map_cov = gtsam::Matrix6::Identity() * mrpt::square(ENU2MAP_WEAK_SIGMA);
 
-    if (params.fixed_geo_reference.has_value())
+    if (params_.fixed_geo_reference.has_value())
     {
-        state_.geo_reference = *params.fixed_geo_reference;
+        state_.geo_reference = *params_.fixed_geo_reference;
 
         mrpt::gtsam_wrappers::to_gtsam_se3_cov6(
             state_.geo_reference->T_enu_to_map, enu2map, enu2map_cov);
@@ -193,7 +193,7 @@ void StateEstimationSmoother::spinOnce()
         return;
     }
 
-    const auto nv = estimated_navstate(*tNowOpt, params.reference_frame_name);
+    const auto nv = estimated_navstate(*tNowOpt, params_.reference_frame_name);
     if (!nv)
     {
         MRPT_LOG_THROTTLE_WARN(5.0, "Cannot publish vehicle pose (stalled input data?)");
@@ -201,8 +201,8 @@ void StateEstimationSmoother::spinOnce()
     }
 
     LocalizationUpdate lu;
-    lu.child_frame     = params.vehicle_frame_name;
-    lu.reference_frame = params.reference_frame_name;
+    lu.child_frame     = params_.vehicle_frame_name;
+    lu.reference_frame = params_.reference_frame_name;
 
     lu.method    = "state_estimator";
     lu.quality   = 1;
@@ -316,7 +316,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     std::optional<mrpt::topography::TGeodeticCoords> refGeoCoords;
 
     // First, are we using geo-referencing at all?
-    if (params.estimate_geo_reference && !state_.geo_reference.has_value())
+    if (params_.estimate_geo_reference && !state_.geo_reference.has_value())
     {
         // We are still starting to estimating the geo-reference T_enu2map.
         if (!state_.tentative_geo_coord_reference)
@@ -332,7 +332,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
         refGeoCoords = state_.tentative_geo_coord_reference;
     }
     // Use fixed reference coming from an external source:
-    if (!params.estimate_geo_reference && state_.geo_reference.has_value())
+    if (!params_.estimate_geo_reference && state_.geo_reference.has_value())
     {
         refGeoCoords = state_.geo_reference->geo_coord;
     }
@@ -356,7 +356,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp(
-        gps.timestamp, params.gnss_nearby_keyframe_stamp_tolerance);
+        gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance);
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_gnss]: t=%f this_kf_id=%zu ENU=%s", mrpt::Clock::toDouble(gps.timestamp),
@@ -415,51 +415,6 @@ void StateEstimationSmoother::fuse_pose(
     state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
         symbol_ref_frame, T(this_kf_id), pose_out,
         gtsam::noiseModel::Gaussian::Covariance(cov_out));
-
-#if 0
-    // Estimate twist:
-    // If we add an additional direct observation of twist, the result is
-    // more accurate for coarser time steps:
-    if (!lastKF)
-    {
-        return;
-    }
-
-    const double dt = mrpt::system::timeDifference(lastKF->first, timestamp);
-
-    if (dt > params.max_time_to_use_velocity_model)
-    {
-        return;
-    }
-
-    ASSERT_GT_(dt, .0);
-
-    mrpt::math::TTwist3D tw;
-
-    const auto incrPosePdf = pose - lastKF->second.pose->pose;
-    const auto incrPose    = incrPosePdf.mean;
-
-    tw.vx = incrPose.x() / dt;
-    tw.vy = incrPose.y() / dt;
-    tw.vz = incrPose.z() / dt;
-
-    const auto logRot = mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
-
-    tw.wx = logRot[0] / dt;
-    tw.wy = logRot[1] / dt;
-    tw.wz = logRot[2] / dt;
-
-    // Ensure minimum covariance for avoiding overconfidence and numerical
-    // illness:
-    auto twCov = mrpt::math::CMatrixDouble66::Zero();
-    for (int i = 0; i < 3; i++)
-    {
-        twCov(i, i) += mrpt::square(params.sigma_twist_from_consecutive_poses_linear);
-        twCov(3 + i, 3 + i) += mrpt::square(params.sigma_twist_from_consecutive_poses_angular);
-    }
-
-    this->fuse_twist(timestamp, tw, twCov);
-#endif
 }
 
 void StateEstimationSmoother::fuse_twist(
@@ -535,7 +490,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // state_.last_estimated_states;
 
     // 3) Convert pose to the requested frame_id:
-    if (frame_id != params.reference_frame_name)
+    if (frame_id != params_.reference_frame_name)
     {
         // Transform:
     }
@@ -568,13 +523,13 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
 
     // IMU:
     if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o);
-        obsIMU && std::regex_match(o->sensorLabel, params.do_process_imu_labels_re))
+        obsIMU && std::regex_match(o->sensorLabel, params_.do_process_imu_labels_re))
     {
         this->fuse_imu(*obsIMU);
     }
     // Odometry source:
     else if (auto obsOdom = std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(o);
-             obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+             obsOdom && std::regex_match(o->sensorLabel, params_.do_process_odometry_labels_re))
     {
         this->fuse_odometry(*obsOdom, o->sensorLabel);
     }
@@ -589,11 +544,11 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
                 sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
         }
 
-        this->fuse_pose(obsPose->timestamp, sensedSensorPose, params.reference_frame_name);
+        this->fuse_pose(obsPose->timestamp, sensedSensorPose, params_.reference_frame_name);
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);
-             obsGPS && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+             obsGPS && std::regex_match(o->sensorLabel, params_.do_process_odometry_labels_re))
     {
         this->fuse_gnss(*obsGPS);
     }
@@ -628,14 +583,14 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
             mrpt::system::timeDifference(queryTimestamp, state_.data.begin()->first);
         const double tlast_2_tq =
             mrpt::system::timeDifference(state_.data.rbegin()->first, queryTimestamp);
-        if (tq_2_tfirst > params.max_time_to_use_velocity_model ||
-            tlast_2_tq > params.max_time_to_use_velocity_model)
+        if (tq_2_tfirst > params_.max_time_to_use_velocity_model ||
+            tlast_2_tq > params_.max_time_to_use_velocity_model)
         {
             MRPT_LOG_DEBUG_STREAM(
                 "[build_and_optimize_fg] Skipping due to need to extrapolate "
                 "too much: tq_2_tfirst="
                 << tq_2_tfirst << " tlast_2_tq=" << tlast_2_tq
-                << " max_time_to_use_velocity_model=" << params.max_time_to_use_velocity_model);
+                << " max_time_to_use_velocity_model=" << params_.max_time_to_use_velocity_model);
 
             return {};
         }
@@ -710,14 +665,14 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 
 
     // Unary prior for initial twist:
-    const auto& tw = params.initial_twist;
+    const auto& tw = params_.initial_twist;
     fg.addPrior(
         V(0), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
-        gtsam::noiseModel::Isotropic::Sigma(3, params.initial_twist_sigma_lin));
+        gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_lin));
 
     fg.addPrior(
         W(0), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
-        gtsam::noiseModel::Isotropic::Sigma(3, params.initial_twist_sigma_ang));
+        gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
 
     // Process pose observations:
     // ------------------------------------------
@@ -744,11 +699,11 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
                     auto noisePos = gtsam::noiseModel::Gaussian::Covariance(pCov.block<3, 3>(3, 3));
 
                     gtsam::noiseModel::Base::shared_ptr robNoisePos;
-                    if (params.robust_param > 0)
+                    if (params_.robust_param > 0)
                     {
                         robNoisePos = gtsam::noiseModel::Robust::Create(
                             gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params.robust_param),
+                                params_.robust_param),
                             noisePos);
                     }
                     else
@@ -763,11 +718,11 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
                     auto noiseRot = gtsam::noiseModel::Gaussian::Covariance(pCov.block<3, 3>(0, 0));
 
                     gtsam::noiseModel::Base::shared_ptr robNoiseRot;
-                    if (params.robust_param > 0)
+                    if (params_.robust_param > 0)
                     {
                         robNoiseRot = gtsam::noiseModel::Robust::Create(
                             gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params.robust_param),
+                                params_.robust_param),
                             noiseRot);
                     }
                     else
@@ -800,10 +755,10 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
             {
                 auto noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
                 gtsam::noiseModel::Base::shared_ptr robNoiseV;
-                if (params.robust_param > 0)
+                if (params_.robust_param > 0)
                 {
                     robNoiseV = gtsam::noiseModel::Robust::Create(
-                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params.robust_param),
+                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param),
                         noiseV);
                 }
                 else
@@ -816,10 +771,10 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
             {
                 auto noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
                 gtsam::noiseModel::Base::shared_ptr robNoiseW;
-                if (params.robust_param > 0)
+                if (params_.robust_param > 0)
                 {
                     robNoiseW = gtsam::noiseModel::Robust::Create(
-                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params.robust_param),
+                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param),
                         noiseW);
                 }
                 else
@@ -875,7 +830,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     }
 
     // final sanity check:
-    if (final_rmse > params.max_rmse)
+    if (final_rmse > params_.max_rmse)
     {
         MRPT_LOG_WARN_STREAM(
             "[build_and_optimize_fg] Discarding solution due to high "
@@ -948,7 +903,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         ks.twist.wy     = angV.y();
         ks.twist.wz     = angV.z();
 
-        if (params.enforce_planar_motion)
+        if (params_.enforce_planar_motion)
         {
             enforce_planar_pose(ks.pose);
             enforce_planar_twist(ks.twist);
@@ -995,10 +950,10 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     ASSERT_GT_(dt, 0.);
 
     // errors in constant vel:
-    const double std_lin_vel = params.sigma_random_walk_acceleration_linear;
-    const double std_ang_vel = params.sigma_random_walk_acceleration_angular;
+    const double std_lin_vel = params_.sigma_random_walk_acceleration_linear;
+    const double std_ang_vel = params_.sigma_random_walk_acceleration_angular;
 
-    if (dt > params.time_between_frames_to_warning)
+    if (dt > params_.time_between_frames_to_warning)
     {
         MRPT_LOG_WARN_FMT("Constant-velocity kinematics factor added for large dT=%.03f s.", dt);
     }
@@ -1026,10 +981,10 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
     // 2) Add kinematics / numerical integration factor
     // ---------------------------------------------------
     auto noise_kinematicsPosition =
-        gtsam::noiseModel::Isotropic::Sigma(3, params.sigma_integrator_position);
+        gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_position);
 
     auto noise_kinematicsOrientation =
-        gtsam::noiseModel::Isotropic::Sigma(3, params.sigma_integrator_orientation);
+        gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_orientation);
 
     // Impl. line 2 of eq (1) in the MOLA RSS2019 paper
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTrapezoidalIntegratorPose>(
@@ -1053,7 +1008,7 @@ void StateEstimationSmoother::delete_too_old_entries()
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
     const double newestTime =
         mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
-    const double minTime = newestTime - params.sliding_window_length;
+    const double minTime = newestTime - params_.sliding_window_length;
 
     std::set<mrpt::Clock::time_point> stamps_to_erase;
     std::set<frame_index_t>           ids_to_erase;
@@ -1086,8 +1041,8 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
     auto lck = mrpt::lockHelper(stateMutex_);
 
-    const double threshold =
-        overrideCloseEnough ? *overrideCloseEnough : params.min_time_difference_to_create_new_frame;
+    const double threshold = overrideCloseEnough ? *overrideCloseEnough
+                                                 : params_.min_time_difference_to_create_new_frame;
 
     // See if we have an existing frame index close enough to t:
     const auto closestPrior = find_before_after(t, true);
@@ -1158,13 +1113,13 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     const auto tle = mola::ProfilerEntry(profiler_, "add_or_get_odom_frame_id");
 
     // F(0): is special, it's the reference frame ("map"), not a floating "odometry" frame
-    if (frame_id_name == params.reference_frame_name)
+    if (frame_id_name == params_.reference_frame_name)
     {
         return REFERENCE_FRAME_ID;
     }
 
-    ASSERT_NOT_EQUAL_(frame_id_name, params.vehicle_frame_name);
-    ASSERT_NOT_EQUAL_(frame_id_name, params.enu_frame_name);
+    ASSERT_NOT_EQUAL_(frame_id_name, params_.vehicle_frame_name);
+    ASSERT_NOT_EQUAL_(frame_id_name, params_.enu_frame_name);
 
     // auto lck = mrpt::lockHelper(stateMutex_); // acquired by caller
 
@@ -1232,7 +1187,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     }
 
     // Optional: Perform extra internal iterations for better accuracy
-    for (unsigned int i = 1; i < params.additional_isam2_update_steps; ++i)
+    for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
     {
         smoother.update();
     }
@@ -1256,7 +1211,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
         kf.pose  = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(pose));
         kf.twist = {linV.x(), linV.y(), linV.z(), angV.x(), angV.y(), angV.z()};
 
-        if (params.enforce_planar_motion)
+        if (params_.enforce_planar_motion)
         {
             enforce_planar_pose(kf.pose);
             enforce_planar_twist(kf.twist);
@@ -1264,14 +1219,28 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     }
 
     // Retrieve latest enu_to_map for geo-referencing:
-    if (params.estimate_geo_reference)
+    if (params_.estimate_geo_reference)
     {
         const auto T_enu_to_map     = optValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
         const auto T_enu_to_map_cov = smoother.marginalCovariance(symbol_T_enu_to_map);
 
-        std::cout << "T_enu_to_map: " << mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map)
-                  << "\ncov: " << T_enu_to_map_cov.diagonal().array().sqrt().eval().transpose()
-                  << "\n\n";
+        auto& pdf = state_.last_estimated_frames[REFERENCE_FRAME_ID];
+
+        pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
+        pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
+    }
+
+    // retrieve odometry frames:
+    for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
+    {
+        const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
+        const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
+        const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
+
+        auto& pdf = state_.last_estimated_frames[odomFrameIdx];
+
+        pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
+        pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
     }
 
     if (NAVSTATE_PRINT_FG)
@@ -1464,7 +1433,7 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
     // Add planar constraints:
-    if (params.enforce_planar_motion)
+    if (params_.enforce_planar_motion)
     {
         const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
             gtsam::Vector6(
@@ -1507,7 +1476,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
     const double dt = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(to)) -
                       mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(from));
 
-    switch (params.kinematic_model)
+    switch (params_.kinematic_model)
     {
         case KinematicModel::ConstantVelocity:
         {
@@ -1559,6 +1528,48 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     ns.twist_inv_cov = twCov;
 
     return ns;
+}
+
+std::optional<mrpt::poses::CPose3DPDFGaussian> StateEstimationSmoother::estimated_T_enu_to_map()
+    const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    auto it = state_.last_estimated_frames.find(REFERENCE_FRAME_ID);
+    if (it == state_.last_estimated_frames.end())
+    {
+        return {};
+    }
+    return {it->second};
+}
+
+std::optional<mrpt::poses::CPose3DPDFGaussian>
+    StateEstimationSmoother::get_estimated_T_map_to_odometry_frame(const frame_index_t idx) const
+{
+    ASSERT_GE_(idx, 1);
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    auto it = state_.last_estimated_frames.find(idx);
+    if (it == state_.last_estimated_frames.end())
+    {
+        return {};
+    }
+    return {it->second};
+}
+
+std::optional<mrpt::poses::CPose3DPDFGaussian>
+    StateEstimationSmoother::estimated_T_map_to_odometry_frame(const std::string& frame_id) const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    const auto& str2id = state_.known_odom_frames.getDirectMap();
+    if (auto it = str2id.find(frame_id); it != str2id.end())
+    {
+        return get_estimated_T_map_to_odometry_frame(it->second);
+    }
+
+    // frame not known or not estimated yet
+    return {};
 }
 
 }  // namespace mola::state_estimation_smoother

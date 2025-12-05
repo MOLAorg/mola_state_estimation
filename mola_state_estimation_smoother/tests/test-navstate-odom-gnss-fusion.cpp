@@ -20,6 +20,7 @@
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
+#include <mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h>
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/topography/conversions.h>
 
@@ -40,7 +41,7 @@ constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 
 constexpr const char* ODOMETRY_NAME = "odom";
 
-const size_t numPoses = 120;
+const size_t numPoses = 80;
 const double T        = 0.1;  // sensors period
 
 const char* navStateParams =
@@ -63,7 +64,7 @@ params:
     kinematic_model: KinematicModel::ConstantVelocity
 
     # Time window to keep past observations in the filter [seconds]
-    sliding_window_length: 6.0
+    sliding_window_length: 4.0
     
     # Minimum time difference between frames to create a new frame [seconds]
     min_time_difference_to_create_new_frame: 0.01
@@ -88,26 +89,36 @@ params:
     #fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
 )###";
 
+using Pose      = mrpt::poses::CPose3D;
+using Kinematic = mola::state_estimation_smoother::KinematicModel;
+
+struct TestCase
+{
+    bool      has_gnss = true;
+    Pose      pose;
+    Kinematic model = Kinematic::ConstantVelocity;
+};
+
 // Test: simulate a random trajectory on XY on a given latitude/longitude with arbitrary initial
 // heading, then generate noisy local odometry measurements, and noisy GNSS measurements and recover
 // the geo-referenced trajectory from them.
 //
-void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
+void run_test(const TestCase& testCase)
 {
-    std::cout
-        << "\n"
-           "================================================================================\n"
-           "=== Running test for initial pose: "
-        << actualInitialPoseWrtMap
-        << "...\n"
-           "================================================================================\n";
+    const auto actualInitialPoseWrtMap = testCase.pose;
+    const auto kinematicModel          = testCase.model;
 
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
 
     stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     stateEst.profiler_.enable();
 
-    stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
+    {
+        auto cfgYaml = mrpt::containers::yaml::FromText(navStateParams);
+
+        cfgYaml["params"]["kinematic_model"] = mrpt::typemeta::enum2str(kinematicModel);
+        stateEst.initialize(cfgYaml);
+    }
 
     mrpt::poses::CPose3D actualVehiclePose = actualInitialPoseWrtMap;  // wrt "map" frame
     mrpt::poses::CPose2D odometryPose      = mrpt::poses::CPose2D::Identity();  // wrt "odom" frame
@@ -126,7 +137,7 @@ void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
         stateEst.fuse_pose(
             mrpt::Clock::fromDouble(0),
             mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), map2odom_cov),
-            stateEst.params.reference_frame_name);
+            stateEst.parameters().reference_frame_name);
     }
 
     auto& rng = mrpt::random::getRandomGenerator();
@@ -166,63 +177,70 @@ void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
         obsOdo.odometry        = noisyOdoPose;
         obsOdo.hasEncodersInfo = false;
         obsOdo.hasVelocities   = false;
+        // Send to state estimator:
+        stateEst.fuse_odometry(obsOdo, ODOMETRY_NAME);
 
         // 3. Simulate noisy GNSS:
-        mrpt::obs::CObservationGPS obsGps;
-        obsGps.timestamp   = mrpt::Clock::fromDouble(t);
-        obsGps.sensorLabel = "gnss";
-
-        // Convert current Local ENU pose to Geodetic (Lat/Lon/Alt)
-        mrpt::topography::TGeocentricCoords currentGeocentricCoords;
-        mrpt::topography::ENUToGeocentric(
-            {actualVehiclePose.x(), actualVehiclePose.y(), actualVehiclePose.z()},
-            actualVehicleInitialGeoCoords, currentGeocentricCoords,
-            mrpt::topography::TEllipsoid::Ellipsoid_WGS84());
-
-        mrpt::topography::TGeodeticCoords currentGeoCoords;
-        mrpt::topography::geocentricToGeodetic(currentGeocentricCoords, currentGeoCoords);
-
-        // sanity/validation check for geodetic -> ENU conversion:
+        if (testCase.has_gnss)
         {
-            mrpt::math::TPoint3D out_ENU_point;
-            mrpt::topography::geodeticToENU_WGS84(
-                currentGeoCoords, out_ENU_point, actualVehicleInitialGeoCoords);
-            ASSERT_NEAR_(out_ENU_point.x, actualVehiclePose.x(), 1e-2);
-            ASSERT_NEAR_(out_ENU_point.y, actualVehiclePose.y(), 1e-2);
-            ASSERT_NEAR_(out_ENU_point.z, actualVehiclePose.z(), 1e-2);
+            mrpt::obs::CObservationGPS obsGps;
+            obsGps.timestamp   = mrpt::Clock::fromDouble(t);
+            obsGps.sensorLabel = "gnss";
+
+            // Convert current Local ENU pose to Geodetic (Lat/Lon/Alt)
+            mrpt::topography::TGeocentricCoords currentGeocentricCoords;
+            mrpt::topography::ENUToGeocentric(
+                {actualVehiclePose.x(), actualVehiclePose.y(), actualVehiclePose.z()},
+                actualVehicleInitialGeoCoords, currentGeocentricCoords,
+                mrpt::topography::TEllipsoid::Ellipsoid_WGS84());
+
+            mrpt::topography::TGeodeticCoords currentGeoCoords;
+            mrpt::topography::geocentricToGeodetic(currentGeocentricCoords, currentGeoCoords);
+
+            // sanity/validation check for geodetic -> ENU conversion:
+            {
+                mrpt::math::TPoint3D out_ENU_point;
+                mrpt::topography::geodeticToENU_WGS84(
+                    currentGeoCoords, out_ENU_point, actualVehicleInitialGeoCoords);
+                ASSERT_NEAR_(out_ENU_point.x, actualVehiclePose.x(), 1e-2);
+                ASSERT_NEAR_(out_ENU_point.y, actualVehiclePose.y(), 1e-2);
+                ASSERT_NEAR_(out_ENU_point.z, actualVehiclePose.z(), 1e-2);
+            }
+
+            // Add noise to GNSS:
+            constexpr double gnss_noise_deg = GNSS_NOISE_XY_M * mrpt::RAD2DEG(1.0 / 6300e3);
+
+            mrpt::obs::gnss::Message_NMEA_GGA gga_msg;
+            gga_msg.fields.latitude_degrees =
+                currentGeoCoords.lat + rng.drawGaussian1D(0, gnss_noise_deg);
+            gga_msg.fields.longitude_degrees =
+                currentGeoCoords.lon + rng.drawGaussian1D(0, gnss_noise_deg);
+            gga_msg.fields.altitude_meters =
+                currentGeoCoords.height + rng.drawGaussian1D(0, GNSS_NOISE_Z_M);
+            gga_msg.fields.fix_quality = 1;
+            obsGps.setMsg(gga_msg);
+
+            // Set GNSS Covariance (in meters)
+            auto& cov = obsGps.covariance_enu.emplace();
+            cov.setIdentity();
+            cov(0, 0) = cov(1, 1) = mrpt::square(GNSS_NOISE_XY_M);
+            cov(2, 2)             = mrpt::square(GNSS_NOISE_Z_M);
+
+            // Send to state estimator:
+            stateEst.fuse_gnss(obsGps);
         }
 
-        // Add noise to GNSS:
-        constexpr double gnss_noise_deg = GNSS_NOISE_XY_M * mrpt::RAD2DEG(1.0 / 6300e3);
-
-        mrpt::obs::gnss::Message_NMEA_GGA gga_msg;
-        gga_msg.fields.latitude_degrees =
-            currentGeoCoords.lat + rng.drawGaussian1D(0, gnss_noise_deg);
-        gga_msg.fields.longitude_degrees =
-            currentGeoCoords.lon + rng.drawGaussian1D(0, gnss_noise_deg);
-        gga_msg.fields.altitude_meters =
-            currentGeoCoords.height + rng.drawGaussian1D(0, GNSS_NOISE_Z_M);
-        gga_msg.fields.fix_quality = 1;
-        obsGps.setMsg(gga_msg);
-
-        // Set GNSS Covariance (in meters)
-        auto& cov = obsGps.covariance_enu.emplace();
-        cov.setIdentity();
-        cov(0, 0) = cov(1, 1) = mrpt::square(GNSS_NOISE_XY_M);
-        cov(2, 2)             = mrpt::square(GNSS_NOISE_Z_M);
-
-        // Send both to state estimator:
-        stateEst.fuse_odometry(obsOdo, ODOMETRY_NAME);
-        stateEst.fuse_gnss(obsGps);
-
+        // Enforce updating estimation from time to time:
         if (i % 5 == 0)
         {
-            // Enforce updating estimation:
             const auto stateOpt = stateEst.estimated_navstate(
-                mrpt::Clock::fromDouble(t), stateEst.params.reference_frame_name);
+                mrpt::Clock::fromDouble(t), stateEst.parameters().reference_frame_name);
             if (stateOpt)
             {
-                std::cout << stateOpt->asString() << "\nGT: " << actualVehiclePose << "\n\n";
+                std::cout << stateOpt->asString() << "\n"
+                          << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(
+                                 stateOpt->pose)
+                          << "\nGT: " << actualVehiclePose << "\n\n";
             }
         }
     }
@@ -231,7 +249,7 @@ void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
     const double last_t = T * static_cast<double>(numPoses);
     {
         const auto stateOpt = stateEst.estimated_navstate(
-            mrpt::Clock::fromDouble(last_t), stateEst.params.reference_frame_name);
+            mrpt::Clock::fromDouble(last_t), stateEst.parameters().reference_frame_name);
 
         ASSERT_(stateOpt.has_value());
         std::cout << "State (ref.frame): " << stateOpt->asString() << "\n";
@@ -265,13 +283,23 @@ void run_test(const mrpt::poses::CPose3D& actualInitialPoseWrtMap)
         ASSERT_LT_(final_se3_error, 0.30);
     }
 
-    std::cout
-        << "\n"
-           "================================================================================\n"
-           "✅ SUCCESSFULL test for initial pose: "
-        << actualInitialPoseWrtMap
-        << "\n"
-           "================================================================================\n\n";
+    // Request all estimated frames:
+    if (auto T_enu_to_map = stateEst.estimated_T_enu_to_map(); T_enu_to_map)
+    {
+        std::cout << "T_enu_to_map:\n"
+                  << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_enu_to_map)
+                  << "\n";
+    }
+    for (const auto& odom_frame : stateEst.known_odometry_frame_ids())
+    {
+        auto T_map_to_odom = stateEst.estimated_T_map_to_odometry_frame(odom_frame);
+        ASSERT_(T_map_to_odom.has_value());
+        std::cout << "T_map_to_odom[" << odom_frame << "]:\n"
+                  << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_map_to_odom)
+                  << "\n";
+    }
+
+    // done.
 }
 
 }  // namespace
@@ -280,16 +308,36 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
     {
-        // Run for different initial poses:
-        run_test(mrpt::poses::CPose3D::Identity());
-        run_test(mrpt::poses::CPose3D::FromTranslation(3.0, 2.0, 1.0));
-        run_test(
-            mrpt::poses::CPose3D::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg));
+        std::vector<TestCase> tests = {
+            {true, Pose::Identity(), Kinematic::ConstantVelocity},
+            {true, Pose::FromTranslation(3.0, 2.0, 1.0), Kinematic::ConstantVelocity},
+            {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg),
+             Kinematic::ConstantVelocity}};
+
+        for (const auto& t : tests)
+        {
+            std::cout
+                << "\n"
+                   "========================================================================\n"
+                   "=== Running test for initial pose: "
+                << t.pose << " Kinematic: " << mrpt::typemeta::enum2str(t.model)
+                << " has_gnss: " << t.has_gnss
+                << "...\n"
+                   "========================================================================\n";
+
+            run_test(t);
+
+            std::cout
+                << "\n"
+                   "========================================================================\n"
+                   "✅ SUCCESS\n"
+                   "========================================================================\n\n";
+        }
     }
-    catch (std::exception& e)
+    catch (const std::exception& e)
     {
         mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
-        std::cerr << " ERROR: " << std::endl << e.what() << std::endl;
+        std::cerr << " ERROR:\n" << e.what() << std::endl;
         mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::DEFAULT);
         return 1;
     }

@@ -178,7 +178,7 @@ void test_one_pose_extrapolate()
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 
-    ASSERT_GT_(std::sqrt(1.0 / ret->twist_inv_cov(0, 0)), nav.params.initial_twist_sigma_lin);
+    ASSERT_GT_(std::sqrt(1.0 / ret->twist_inv_cov(0, 0)), nav.parameters().initial_twist_sigma_lin);
 }
 
 // --------------------------------------
@@ -227,8 +227,10 @@ void test_2_poses_too_late()
     const auto t1 = mrpt::Clock::fromDouble(0.5);
 
     // too late/early to extrapolate!! must return nullopt:
-    const auto t2 = mrpt::Clock::fromDouble(nav.params.max_time_to_use_velocity_model + 0.5 + 0.1);
-    const auto t3 = mrpt::Clock::fromDouble(0.0 - 0.1 - nav.params.max_time_to_use_velocity_model);
+    const auto t2 =
+        mrpt::Clock::fromDouble(nav.parameters().max_time_to_use_velocity_model + 0.5 + 0.1);
+    const auto t3 =
+        mrpt::Clock::fromDouble(0.0 - 0.1 - nav.parameters().max_time_to_use_velocity_model);
 
     nav.fuse_pose(t0, _.pdf0, "odom");
     nav.fuse_pose(t1, _.pdf1, "odom");
