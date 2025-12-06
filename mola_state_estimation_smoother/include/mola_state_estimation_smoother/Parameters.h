@@ -104,7 +104,6 @@ class Parameters
     double sigma_twist_from_consecutive_poses_angular = 1.0;  // [rad/s]
 
     double robust_param = 0.0;  // 0: no robust
-    double max_rmse     = 2.0;
 
     mrpt::math::TTwist3D initial_twist;
     double               initial_twist_sigma_lin = 20.0;  // [m/s]

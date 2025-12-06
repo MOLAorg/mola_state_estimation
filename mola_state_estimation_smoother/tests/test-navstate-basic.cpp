@@ -153,7 +153,7 @@ void test_one_pose()
     const auto ret = nav.estimated_navstate(t0, "odom");
     ASSERT_(ret.has_value());
 
-    // std::cout << "Result:\n" << ret->asString() << std::endl;
+    std::cout << "Result:\n" << ret->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 }
@@ -195,8 +195,8 @@ void test_2_poses()
     const auto t2 = mrpt::Clock::fromDouble(0.6);
     const auto t3 = mrpt::Clock::fromDouble(0.25);
 
-    nav.fuse_pose(t0, _.pdf0, "odom");
-    nav.fuse_pose(t1, _.pdf1, "odom");
+    nav.fuse_pose(t0, _.pdf0, "odom");  // (0,0,0)
+    nav.fuse_pose(t1, _.pdf1, "odom");  // (0.5,0,0)
 
     const auto ret2 = nav.estimated_navstate(t2, "odom");
     ASSERT_(ret2.has_value());

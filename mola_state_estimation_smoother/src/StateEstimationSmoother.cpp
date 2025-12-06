@@ -460,6 +460,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     auto lck = mrpt::lockHelper(stateMutex_);
 
     std::optional<double>        closestFrameDt;
+    double                       closestFrameDtSigned = 0;
     std::optional<frame_index_t> closesFrameIdx;
 
     const auto closestPrior = find_before_after(timestamp, true);
@@ -471,15 +472,18 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         }
         const auto& [existing_t, frame_idx] = *it;
 
-        const double dt = std::abs(mrpt::system::timeDifference(existing_t, timestamp));
-        if (!closestFrameDt.has_value() || dt < *closestFrameDt)
+        const double dt    = mrpt::system::timeDifference(existing_t, timestamp);
+        const double dtAbs = std::abs(dt);
+        if (!closestFrameDt.has_value() || dtAbs < *closestFrameDt)
         {
-            closestFrameDt = dt;
-            closesFrameIdx = frame_idx;
+            closestFrameDt       = dtAbs;
+            closesFrameIdx       = frame_idx;
+            closestFrameDtSigned = dt;
         }
     }
 
-    if (!closesFrameIdx.has_value())
+    // Check maximum extrapolation time:
+    if (!closesFrameIdx.has_value() || closestFrameDt > params_.max_time_to_use_velocity_model)
     {
         MRPT_LOG_DEBUG_FMT(
             "[estimated_navstate] Could not find any nearby frame near requested t=%.03f",
@@ -487,18 +491,29 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         return {};
     }
 
-    // Recover the state *in the reference frame*:
-    const NavState ret = get_latest_state_and_covariance(*closesFrameIdx);
+    // Recover the closest state *in the reference frame*:
+    const NavState retKf = get_latest_state_and_covariance(*closesFrameIdx);
 
     MRPT_TODO("Implement probabilistic extrapolation");
+    // For now, approximate extrapolation only:
+    NavState ret = retKf;
 
-    // Check maximum extrapolation time:
-    // state_.last_estimated_states;
+    mrpt::math::CVectorFixed<double, 6> twistDt;
+    twistDt[0] = ret.twist.vx;
+    twistDt[1] = ret.twist.vy;
+    twistDt[2] = ret.twist.vz;
+    twistDt[3] = ret.twist.wx;
+    twistDt[4] = ret.twist.wy;
+    twistDt[5] = ret.twist.wz;
+    twistDt *= closestFrameDtSigned;
+    // SE(3) pose composition for extrapolating. TODO: Missing update cov!
+    ret.pose.mean = ret.pose.mean + mrpt::poses::Lie::SE<3>::exp(twistDt);
 
     // 3) Convert pose to the requested frame_id:
     if (frame_id != params_.reference_frame_name)
     {
         // Transform:
+        THROW_EXCEPTION("TO-DO");
     }
 
     return ret;
@@ -577,30 +592,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     mrpt::system::CTimeLoggerEntry tle(profiler_, "build_and_optimize_fg");
 
     auto lck = mrpt::lockHelper(stateMutex_);
-
-    // Return an empty answer if we don't have data, or we would need to
-    // extrapolate too much:
-    if (state_.data.empty() || state_.known_frames.empty())
-    {
-        return {};
-    }
-    {
-        const double tq_2_tfirst =
-            mrpt::system::timeDifference(queryTimestamp, state_.data.begin()->first);
-        const double tlast_2_tq =
-            mrpt::system::timeDifference(state_.data.rbegin()->first, queryTimestamp);
-        if (tq_2_tfirst > params_.max_time_to_use_velocity_model ||
-            tlast_2_tq > params_.max_time_to_use_velocity_model)
-        {
-            MRPT_LOG_DEBUG_STREAM(
-                "[build_and_optimize_fg] Skipping due to need to extrapolate "
-                "too much: tq_2_tfirst="
-                << tq_2_tfirst << " tlast_2_tq=" << tlast_2_tq
-                << " max_time_to_use_velocity_model=" << params_.max_time_to_use_velocity_model);
-
-            return {};
-        }
-    }
 
     // shortcuts:
     auto& fg     = state_.gtsam->fg;
@@ -823,17 +814,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
     if (NAVSTATE_PRINT_FG_ERRORS)
     {
         fg.printErrors(optimal, "Errors for optimized values:");
-    }
-
-    // final sanity check:
-    if (final_rmse > params_.max_rmse)
-    {
-        MRPT_LOG_WARN_STREAM(
-            "[build_and_optimize_fg] Discarding solution due to high "
-            "RMSE="
-            << final_rmse);
-
-        return {};
     }
 
     // Extract results from the factor graph:

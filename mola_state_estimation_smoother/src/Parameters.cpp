@@ -48,7 +48,6 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
     MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
 
-    MCP_LOAD_OPT(cfg, max_rmse);
     MCP_LOAD_OPT(cfg, robust_param);
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);

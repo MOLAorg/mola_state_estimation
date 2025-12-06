@@ -64,8 +64,6 @@ sigma_integrator_orientation: 0.10
 # Robust parameter for outlier rejection (0 = no robust kernel)
 robust_param: 0
 
-# Maximum RMSE threshold for optimization
-max_rmse: 2.0
 # ----------------------------------------------------------------------------
 # Initial State Estimation
 # ----------------------------------------------------------------------------
