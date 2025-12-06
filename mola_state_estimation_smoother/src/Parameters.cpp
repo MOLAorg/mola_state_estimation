@@ -80,7 +80,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
         auto&      tw  = initial_twist;
         const auto seq = cfg["initial_twist"].asSequenceRange();
-        for (size_t i = 0; i < 6; i++) tw[i] = seq.at(i).as<double>();
+        for (size_t i = 0; i < 6; i++)
+        {
+            tw[i] = seq.at(i).as<double>();
+        }
     }
 }
 

@@ -56,12 +56,11 @@ IMPLEMENTS_MRPT_OBJECT(
 
 namespace
 {
-constexpr double ENU2MAP_WEAK_SIGMA           = 1e4;
-constexpr double INIT_ODOM_FRAME_POSE_SIGMA   = 1e3;
-constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA  = 1e6;
-constexpr double FIRST_TWIST_WEAK_PRIOR_SIGMA = 1e3;
-constexpr double PLANAR_XY_SIGMA              = 1e10;
-constexpr double PLANAR_Z_SIGMA               = 1e-4;
+constexpr double ENU2MAP_WEAK_SIGMA          = 1e4;
+constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
+constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
+constexpr double PLANAR_XY_SIGMA             = 1e10;
+constexpr double PLANAR_Z_SIGMA              = 1e-4;
 
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
@@ -428,15 +427,44 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::math::CMatrixDouble66& twistCov)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
+
 #if 0
-    state_.update_last_input_stamp(timestamp);
+    const auto&          pd   = d.twist.value();
+    const gtsam::Vector3 v    = {pd.twist.vx, pd.twist.vy, pd.twist.vz};
+    const gtsam::Vector3 w    = {pd.twist.wx, pd.twist.wy, pd.twist.wz};
+    gtsam::Matrix3       vCov = pd.twistCov.asEigen().block<3, 3>(0, 0);
+    gtsam::Matrix3       wCov = pd.twistCov.asEigen().block<3, 3>(3, 3);
 
-    TwistData d;
-    d.twist    = twist;
-    d.twistCov = twistCov;
+    {
+        auto                                noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
+        gtsam::noiseModel::Base::shared_ptr robNoiseV;
+        if (params_.robust_param > 0)
+        {
+            robNoiseV = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseV);
+        }
+        else
+        {
+            robNoiseV = noiseV;
+        }
 
-    state_.data.insert({timestamp, d});
+        fg.addPrior(V(kfId), v, robNoiseV);
+    }
+    {
+        auto                                noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
+        gtsam::noiseModel::Base::shared_ptr robNoiseW;
+        if (params_.robust_param > 0)
+        {
+            robNoiseW = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseW);
+        }
+        else
+        {
+            robNoiseW = noiseW;
+        }
 
+        fg.addPrior(W(kfId), w, robNoiseW);
+    }
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_twist]: t=%f twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
@@ -509,11 +537,33 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // SE(3) pose composition for extrapolating. TODO: Missing update cov!
     ret.pose.mean = ret.pose.mean + mrpt::poses::Lie::SE<3>::exp(twistDt);
 
+    // Approximate uncertainty growth due to random walk:
+    {
+        auto twist_cov = ret.twist_inv_cov.inverse_LLt();
+        for (int i = 0; i < 3; i++)
+        {
+            twist_cov(0 + i, 0 + i) +=
+                mrpt::square(params_.sigma_random_walk_acceleration_linear * closestFrameDtSigned);
+
+            twist_cov(3 + i, 3 + i) +=
+                mrpt::square(params_.sigma_random_walk_acceleration_angular * closestFrameDtSigned);
+        }
+        ret.twist_inv_cov = twist_cov.inverse_LLt();
+    }
+
     // 3) Convert pose to the requested frame_id:
     if (frame_id != params_.reference_frame_name)
     {
         // Transform:
-        THROW_EXCEPTION("TO-DO");
+        const auto requestedFrameIdx    = state_.known_odom_frames.direct(frame_id);
+        const auto posePdfFrame_wrt_map = state_.last_estimated_frames.at(requestedFrameIdx);
+
+        mrpt::poses::CPose3DPDFGaussianInf posePdfFrame_wrt_map_inf;
+        posePdfFrame_wrt_map_inf.copyFrom(posePdfFrame_wrt_map);
+
+        // Probabilistic inverse pose composition:
+        // TO-DO: Is it worth including the cross-covariances...?
+        ret.pose = ret.pose - posePdfFrame_wrt_map_inf;
     }
 
     return ret;
@@ -733,44 +783,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         // ---------------------------------
         if (d.twist.has_value())
         {
-            const auto&          pd   = d.twist.value();
-            const gtsam::Vector3 v    = {pd.twist.vx, pd.twist.vy, pd.twist.vz};
-            const gtsam::Vector3 w    = {pd.twist.wx, pd.twist.wy, pd.twist.wz};
-            gtsam::Matrix3       vCov = pd.twistCov.asEigen().block<3, 3>(0, 0);
-            gtsam::Matrix3       wCov = pd.twistCov.asEigen().block<3, 3>(3, 3);
 
-            {
-                auto noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
-                gtsam::noiseModel::Base::shared_ptr robNoiseV;
-                if (params_.robust_param > 0)
-                {
-                    robNoiseV = gtsam::noiseModel::Robust::Create(
-                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param),
-                        noiseV);
-                }
-                else
-                {
-                    robNoiseV = noiseV;
-                }
-
-                fg.addPrior(V(kfId), v, robNoiseV);
-            }
-            {
-                auto noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
-                gtsam::noiseModel::Base::shared_ptr robNoiseW;
-                if (params_.robust_param > 0)
-                {
-                    robNoiseW = gtsam::noiseModel::Robust::Create(
-                        gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param),
-                        noiseW);
-                }
-                else
-                {
-                    robNoiseW = noiseW;
-                }
-
-                fg.addPrior(W(kfId), w, robNoiseW);
-            }
         }
 
     }  // end for each kfId
@@ -787,123 +800,6 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
 #endif
     }
 
-    gtsam::LevenbergMarquardtOptimizer lm(fg, state_.gtsam->values);
-
-    const auto& optimal = lm.optimize();
-
-    const double final_rmse = std::sqrt(fg.error(optimal) / fg.size());
-
-    MRPT_LOG_DEBUG_STREAM(
-        "[build_and_optimize_fg] LM ran for "
-        << lm.iterations() << " iterations, " << fg.size() << " factors, " << state_.data.size()
-        << " KFs, RMSE: " << std::sqrt(fg.error(state_.gtsam->values) / fg.size()) << " => "
-        << final_rmse);
-
-    if (NAVSTATE_PRINT_FG)
-    {
-        optimal.print("Optimized:");
-        std::cout << "\n query_KF_id: " << *query_KF_id << std::endl;
-
-        MRPT_LOG_INFO_STREAM("state_.data: ");
-        for (const auto& [k, v] : state_.data)
-        {
-            MRPT_LOG_INFO_FMT("t=%f: %s", mrpt::Clock::toDouble(k), v.asString().c_str());
-        }
-    }
-
-    if (NAVSTATE_PRINT_FG_ERRORS)
-    {
-        fg.printErrors(optimal, "Errors for optimized values:");
-    }
-
-    // Extract results from the factor graph:
-    // ----------------------------------------------
-    NavState out;
-
-    // SE(3) pose:
-    auto poseResult = gtsam::Pose3(
-        optimal.at<gtsam::Rot3>(R(*query_KF_id)), optimal.at<gtsam::Point3>(P(*query_KF_id)));
-    const auto outPose = mrpt::gtsam_wrappers::toTPose3D(poseResult);
-    out.pose.mean      = mrpt::poses::CPose3D(outPose);
-
-    gtsam::Marginals marginals(fg, optimal);
-
-    // Pose SE(3) cov: (in mrpt order is xyz, then yaw/pitch/roll):
-    gtsam::Matrix6 cov_inv    = gtsam::Matrix6::Zero();
-    cov_inv.block<3, 3>(0, 0) = marginals.marginalInformation(P(*query_KF_id));
-    cov_inv.block<3, 3>(3, 3) = marginals.marginalInformation(R(*query_KF_id));
-    out.pose.cov_inv          = cov_inv;
-
-    // Twist (already in body frame in the factor graph):
-    const auto linVel = optimal.at<gtsam::Vector3>(V(*query_KF_id));
-    const auto angVel = optimal.at<gtsam::Vector3>(W(*query_KF_id));
-
-    out.twist.vx = linVel.x();
-    out.twist.vy = linVel.y();
-    out.twist.vz = linVel.z();
-    out.twist.wx = angVel.x();
-    out.twist.wy = angVel.y();
-    out.twist.wz = angVel.z();
-
-    // Twist cov:
-    gtsam::Matrix6 tw_cov_inv    = gtsam::Matrix6::Zero();
-    tw_cov_inv.block<3, 3>(0, 0) = marginals.marginalInformation(V(*query_KF_id));
-    tw_cov_inv.block<3, 3>(3, 3) = marginals.marginalInformation(W(*query_KF_id));
-    out.twist_inv_cov            = tw_cov_inv;
-
-    // delete temporary entry:
-    dQuery.query.reset();
-    if (dQuery.empty()) state_.data.erase(queryTimestamp);
-
-    // Save optimized values into data entries to bootstrap optimization
-    // in next iterations:
-    // -------------------------------------------------------------------
-    for (size_t i = 0; i < entries.size(); i++)
-    {
-        auto& e = entries[i]->second;
-
-        const auto pose =
-            gtsam::Pose3(optimal.at<gtsam::Rot3>(R(i)), optimal.at<gtsam::Point3>(P(i)));
-
-        auto& ks = e.last_known_state;
-
-        ks.pose = mrpt::poses::CPose3D::FromRotationAndTranslation(
-            pose.rotation().matrix(), pose.translation());
-
-        const auto linV = optimal.at<gtsam::Vector3>(V(i));
-        const auto angV = optimal.at<gtsam::Vector3>(W(i));
-        ks.twist.vx     = linV.x();
-        ks.twist.vy     = linV.y();
-        ks.twist.vz     = linV.z();
-        ks.twist.wx     = angV.x();
-        ks.twist.wy     = angV.y();
-        ks.twist.wz     = angV.z();
-
-        if (params_.enforce_planar_motion)
-        {
-            enforce_planar_pose(ks.pose);
-            enforce_planar_twist(ks.twist);
-        }
-    }
-
-    // Honor requested frame_id:
-    // ----------------------------------
-    ASSERTMSG_(
-        state_.known_frames.hasKey(frame_id),
-        "Requested results in unknown frame_id: '"s + frame_id + "'"s);
-
-    // if this is the first frame_id, we are already done, otherwise,
-    // recover and apply the transformation:
-    if (const frameid_t frameId = state_.known_frames.direct(frame_id); frameId != 0)
-    {
-        // Apply F(frameId) transformation on the left:
-        const auto T = optimal.at<gtsam::Pose3>(F(frameId));
-
-        THROW_EXCEPTION("TODO");
-    }
-    NavState out;
-
-    return out;
 }
 #endif
 
@@ -1039,8 +935,6 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
     }
 
     // Create a new one:
-    const bool is_first_ever_frame = state_.next_frame_index == 0;
-
     const auto newFrameIdx = state_.next_frame_index++;
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
@@ -1076,19 +970,6 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
         // Add kinematic factors:
         add_kinematic_factor_between(newFrameIdx, idx_after);
-    }
-
-    // Was this the first ever pose? then add unary prior for initial twiste)
-    if (is_first_ever_frame)
-    {
-        const auto& tw = params_.initial_twist;
-        state_.gtsam->newFactors.addPrior(
-            V(newFrameIdx), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
-            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_lin));
-
-        state_.gtsam->newFactors.addPrior(
-            W(newFrameIdx), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
-            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
     }
 
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
@@ -1403,12 +1284,17 @@ void StateEstimationSmoother::initialize_new_frame(
         // Add weak prior factors for the system to be determinate.
         const auto priorNoise6 =
             gtsam::noiseModel::Isotropic::Sigma(6, FIRST_POSE_WEAK_PRIOR_SIGMA);
-        const auto priorNoise3 =
-            gtsam::noiseModel::Isotropic::Sigma(3, FIRST_TWIST_WEAK_PRIOR_SIGMA);
 
         state_.gtsam->newFactors.addPrior(T(id), pose, priorNoise6);
-        state_.gtsam->newFactors.addPrior(V(id), linVelocity, priorNoise3);
-        state_.gtsam->newFactors.addPrior(W(id), angVelocity, priorNoise3);
+
+        const auto& tw = params_.initial_twist;
+        state_.gtsam->newFactors.addPrior(
+            V(id), gtsam::Vector3(tw.vx, tw.vy, tw.vz),
+            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_lin));
+
+        state_.gtsam->newFactors.addPrior(
+            W(id), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
+            gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
     }
 
     // T: Pose
@@ -1516,7 +1402,7 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     twCov.block<3, 3>(3, 3) = wCov;
 
     ASSERT_(twCov.determinant() > 0);
-    ns.twist_inv_cov = twCov;
+    ns.twist_inv_cov = twCov.inverse();
 
     return ns;
 }
