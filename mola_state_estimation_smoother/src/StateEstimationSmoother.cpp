@@ -368,7 +368,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
         gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
 
-    state_.gtsam->newFactors.emplace_shared<mola::FactorGnssMapEnu>(
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
         symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
 }
 

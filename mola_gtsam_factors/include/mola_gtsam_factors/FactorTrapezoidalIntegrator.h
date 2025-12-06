@@ -13,7 +13,7 @@
 */
 
 /**
- * @file   FactorAngularVelocityIntegration.h
+ * @file   FactorTrapezoidalIntegrator.h
  * @brief  GTSAM factor
  * @author Jose Luis Blanco Claraco
  * @date   Jun 13, 2024
@@ -52,7 +52,7 @@ class FactorTrapezoidalIntegrator : public gtsam::ExpressionFactorN<
 
    public:
     /// default constructor
-    FactorTrapezoidalIntegrator() = default;
+    FactorTrapezoidalIntegrator();
 
     FactorTrapezoidalIntegrator(
         gtsam::Key kPi, gtsam::Key kVi, gtsam::Key kRi,  //

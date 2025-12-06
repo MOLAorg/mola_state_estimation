@@ -27,22 +27,22 @@
 #include <gtsam/slam/expressions.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 
-namespace mola
+namespace mola::factors
 {
-class FactorGNSS2ENU
+class FactorGnssEnu
     : public gtsam::ExpressionFactorN<gtsam::Point3 /*return*/, gtsam::Pose3 /*pose*/>
 {
    private:
-    using This = FactorGNSS2ENU;
+    using This = FactorGnssEnu;
     using Base = gtsam::ExpressionFactorN<gtsam::Point3 /*return*/, gtsam::Pose3 /*pose*/>;
 
     gtsam::Point3 sensorOnVehicle_ = {0, 0, 0};
 
    public:
     /// default constructor
-    FactorGNSS2ENU() = default;
+    FactorGnssEnu();
 
-    FactorGNSS2ENU(
+    FactorGnssEnu(
         gtsam::Key kPi, const gtsam::Point3& sensorOnVehicle,  // NOLINT
         const gtsam::Point3& observedENU, const gtsam::SharedNoiseModel& model)
         : Base({kPi}, model, observedENU), sensorOnVehicle_(sensorOnVehicle)
@@ -77,7 +77,7 @@ class FactorGNSS2ENU
         const std::string&         s,
         const gtsam::KeyFormatter& keyFormatter = gtsam::DefaultKeyFormatter) const override
     {
-        std::cout << s << "FactorGNSS2ENU(" << keyFormatter(Factor::keys_[0]) << ")\n";
+        std::cout << s << "FactorGnssEnu(" << keyFormatter(Factor::keys_[0]) << ")\n";
         gtsam::traits<gtsam::Point3>::Print(sensorOnVehicle_, "  sensorOnVehicle: ");
         gtsam::traits<gtsam::Point3>::Print(measured_, "  measured: ");
         this->noiseModel_->print("  noise model: ");
@@ -100,8 +100,8 @@ class FactorGNSS2ENU
         ar& BOOST_SERIALIZATION_NVP(measured_);  // params before base class
         ar& BOOST_SERIALIZATION_NVP(sensorOnVehicle_);
         ar& boost::serialization::make_nvp(
-            "FactorGNSS2ENU", boost::serialization::base_object<Base>(*this));
+            "FactorGnssEnu", boost::serialization::base_object<Base>(*this));
     }
 #endif
 };
-}  // namespace mola
+}  // namespace mola::factors

@@ -52,7 +52,7 @@ class FactorConstLocalVelocity
 
    public:
     /// default constructor
-    FactorConstLocalVelocity() = default;
+    FactorConstLocalVelocity();
 
     FactorConstLocalVelocity(
         gtsam::Key kRi, gtsam::Key kWi, gtsam::Key kRj, gtsam::Key kWj,

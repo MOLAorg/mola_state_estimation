@@ -54,7 +54,7 @@ class FactorAngularVelocityIntegration : public gtsam::ExpressionFactorN<
     double dt_ = .0;
 
    public:
-    FactorAngularVelocityIntegration() = default;
+    FactorAngularVelocityIntegration();
 
     FactorAngularVelocityIntegration(
         gtsam::Key kRi, gtsam::Key kbWi, gtsam::Key kRj, const double dt,

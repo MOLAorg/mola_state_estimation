@@ -34,7 +34,7 @@
 #include <gtsam/slam/expressions.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 
-namespace mola
+namespace mola::factors
 {
 class FactorGnssMapEnu
     : public gtsam::ExpressionFactorN<
@@ -49,7 +49,7 @@ class FactorGnssMapEnu
 
    public:
     /// default constructor
-    FactorGnssMapEnu() = default;
+    FactorGnssMapEnu();
 
     FactorGnssMapEnu(
         gtsam::Key kT_enu2map, gtsam::Key kT_map2i, const gtsam::Point3& sensorOnVehicle,  // NOLINT
@@ -115,4 +115,4 @@ class FactorGnssMapEnu
     }
 #endif
 };
-}  // namespace mola
+}  // namespace mola::factors

@@ -44,6 +44,12 @@ mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
     src/register.cpp
+    src/FactorConstLocalVelocity.cpp
+    src/FactorAngularVelocityIntegration.cpp
+    src/register.cpp
+    src/FactorGnssMapEnu.cpp
+    src/FactorGnssEnu.cpp
+    src/FactorTrapezoidalIntegrator.cpp
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
     include/mola_gtsam_factors/FactorConstLocalVelocity.h
@@ -51,7 +57,7 @@ mola_add_library(
     include/mola_gtsam_factors/FactorAngularVelocityIntegration.h
     include/mola_gtsam_factors/FactorTricycleKinematics.h
     include/mola_gtsam_factors/id.h
-    include/mola_gtsam_factors/FactorGNSS2ENU.h
+    include/mola_gtsam_factors/FactorGnssEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnu.h
   PUBLIC_LINK_LIBRARIES
     gtsam

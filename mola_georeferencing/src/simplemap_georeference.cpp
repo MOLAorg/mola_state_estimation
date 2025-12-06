@@ -18,7 +18,7 @@
 #include <mrpt/topography/conversions.h>
 
 // gtsam factors:
-#include <mola_gtsam_factors/FactorGNSS2ENU.h>
+#include <mola_gtsam_factors/FactorGnssEnu.h>
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -196,7 +196,8 @@ void mola::add_gnss_factors(
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        fg.emplace_shared<FactorGNSS2ENU>(P(i), sensorPointOnVeh, observedENU, robustNoise);
+        fg.emplace_shared<mola::factors::FactorGnssEnu>(
+            P(i), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
