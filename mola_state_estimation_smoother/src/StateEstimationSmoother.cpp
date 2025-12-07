@@ -633,178 +633,8 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
     }
 }
 
-#if 0
-std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
-    const mrpt::Clock::time_point queryTimestamp, const std::string& frame_id)
-{
-    using namespace std::string_literals;
-
-    mrpt::system::CTimeLoggerEntry tle(profiler_, "build_and_optimize_fg");
-
-    auto lck = mrpt::lockHelper(stateMutex_);
-
-    // shortcuts:
-    auto& fg     = state_.gtsam->fg;
-    auto& values = state_.gtsam->values;
-
-    values.clear();
-    fg.resize(0);
-
-    // Build the sequence of time points:
-    // FG variable indices will use the indices in this vector:
-    auto& dQuery = state_.data[queryTimestamp];
-    dQuery.query = QueryPointData();
-
-    using map_it_t = std::map<mrpt::Clock::time_point, PointData>::value_type;
-
-    std::vector<map_it_t*> entries;
-    std::optional<size_t>  query_KF_id;
-    for (auto& it : state_.data)
-    {
-        if (it.first == queryTimestamp)
-        {
-            query_KF_id = entries.size();
-        }
-
-        entries.push_back(&it);
-    }
-    ASSERT_(query_KF_id.has_value());
-
-    // add const vel kinematic factors between consecutive KFs:
-    ASSERT_(entries.size() >= 1);
-
-    for (size_t i = 1; i < entries.size(); i++)
-    {
-        mola::FactorConstVelKinematics f;
-        f.from_kf   = i - 1;
-        f.to_kf     = i;
-        f.deltaTime = mrpt::system::timeDifference(entries[i - 1]->first, entries[i]->first);
-
-        addFactor(f);
-    }
-
-    // Init values:
-    for (size_t i = 0; i < entries.size(); i++)
-    {
-        const auto& e = entries[i]->second;
-
-        const auto lastPose = mrpt::gtsam_wrappers::toPose3(e.last_known_state.pose);
-        state_.gtsam->values.insert<gtsam::Point3>(P(i), lastPose.translation());
-        state_.gtsam->values.insert<gtsam::Rot3>(R(i), lastPose.rotation());
-
-        const auto& tw = e.last_known_state.twist;
-        state_.gtsam->values.insert<gtsam::Point3>(V(i), gtsam::Vector3(tw.vx, tw.vy, tw.vz));
-        state_.gtsam->values.insert<gtsam::Point3>(W(i), gtsam::Vector3(tw.wx, tw.wy, tw.wz));
-    }
-    for (const auto& [frameName, frameId] : state_.known_frames.getDirectMap())
-    {
-        // F(0): this variable is not used.
-        // We only need to estimate F(i), the SE(3) pose of the frame_id "i" wrt
-        // "0" (see paper diagrams!)
-        if (frameId == 0)
-        {
-            continue;
-        }
-
-        // TODO: Save and reuse last optimized value!
-        state_.gtsam->values.insert<gtsam::Pose3>(F(frameId), gtsam::Pose3::Identity());
-    }
-
-
-    // Process pose observations:
-    // ------------------------------------------
-    for (size_t kfId = 0; kfId < entries.size(); kfId++)
-    {
-        // const auto  tim = entries.at(kfId)->first;
-        const auto& d = entries.at(kfId)->second;
-
-        // ---------------------------------
-        // Data point of type: Pose
-        // ---------------------------------
-        if (d.pose.has_value())
-        {
-            if (d.pose->frameId == 0)
-            {
-                // Pose observations in the first frame are just priors:
-                // (see paper!)
-
-                gtsam::Pose3   p;
-                gtsam::Matrix6 pCov;
-                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(d.pose->pose, p, pCov);
-
-                {
-                    auto noisePos = gtsam::noiseModel::Gaussian::Covariance(pCov.block<3, 3>(3, 3));
-
-                    gtsam::noiseModel::Base::shared_ptr robNoisePos;
-                    if (params_.robust_param > 0)
-                    {
-                        robNoisePos = gtsam::noiseModel::Robust::Create(
-                            gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params_.robust_param),
-                            noisePos);
-                    }
-                    else
-                    {
-                        robNoisePos = noisePos;
-                    }
-
-                    fg.addPrior(P(kfId), p.translation(), robNoisePos);
-                }
-
-                {
-                    auto noiseRot = gtsam::noiseModel::Gaussian::Covariance(pCov.block<3, 3>(0, 0));
-
-                    gtsam::noiseModel::Base::shared_ptr robNoiseRot;
-                    if (params_.robust_param > 0)
-                    {
-                        robNoiseRot = gtsam::noiseModel::Robust::Create(
-                            gtsam::noiseModel::mEstimator::GemanMcClure::Create(
-                                params_.robust_param),
-                            noiseRot);
-                    }
-                    else
-                    {
-                        robNoiseRot = noiseRot;
-                    }
-
-                    fg.addPrior(R(kfId), p.rotation(), robNoiseRot);
-                }
-            }
-            else
-            {
-                // Pose observations in subsequent frames are more complex:
-                // (see paper!)
-                THROW_EXCEPTION("todo");
-            }
-        }
-
-        // ---------------------------------
-        // Data point of type: Twist
-        // ---------------------------------
-        if (d.twist.has_value())
-        {
-
-        }
-
-    }  // end for each kfId
-
-    // FG is built: optimize it
-    // -------------------------------------
-    if (NAVSTATE_PRINT_FG)
-    {
-        fg.print();
-        state_.gtsam->values.print();
-
-#if 0
-        fg.saveGraph("fg.dot");
-#endif
-    }
-
-}
-#endif
-
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
+void StateEstimationSmoother::addFactor(const FactorConstVelKinematics& f)
 {
     MRPT_LOG_DEBUG_STREAM(
         "[addFactor] FactorConstVelKinematics: " << f.from_kf << " ==> " << f.to_kf
@@ -867,7 +697,7 @@ void StateEstimationSmoother::addFactor(const mola::FactorConstVelKinematics& f)
         kTi, kbWi, kTj, dt, noise_kinematicsOrientation);
 }
 
-void StateEstimationSmoother::addFactor(const mola::FactorTricycleKinematics& f)
+void StateEstimationSmoother::addFactor(const FactorTricycleKinematics& f)
 {
     THROW_EXCEPTION("Write me!");
     (void)f;
@@ -1357,7 +1187,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
     {
         case KinematicModel::ConstantVelocity:
         {
-            mola::FactorConstVelKinematics f;
+            FactorConstVelKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;
@@ -1367,7 +1197,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
         case KinematicModel::Tricycle:
         {
-            mola::FactorTricycleKinematics f;
+            FactorTricycleKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;

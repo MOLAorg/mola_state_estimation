@@ -21,8 +21,7 @@
 #pragma once
 
 // this package:
-#include <mola_gtsam_factors/FactorConstVelKinematics.h>
-#include <mola_gtsam_factors/FactorTricycleKinematics.h>
+#include <mola_gtsam_factors/id.h>
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
@@ -107,6 +106,9 @@ namespace mola::state_estimation_smoother
 class StateEstimationSmoother : public mola::NavStateFilter, public mola::LocalizationSourceBase
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
+   private:
+    class FactorConstVelKinematics;  // Forward decls.
+    class FactorTricycleKinematics;
 
    public:
     StateEstimationSmoother();
@@ -281,8 +283,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     void process_pending_gtsam_updates();
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-    void addFactor(const mola::FactorConstVelKinematics& f);
-    void addFactor(const mola::FactorTricycleKinematics& f);
+    void addFactor(const FactorConstVelKinematics& f);
+    void addFactor(const FactorTricycleKinematics& f);
 
     /// Delete out-of-window entries in stamp2frame_index and last_estimated_state
     void delete_too_old_entries();
@@ -311,6 +313,46 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian>
         get_estimated_T_map_to_odometry_frame(const frame_index_t idx) const;
+
+    /** Abstract representation of a constant-velocity kinematic motion model factor
+     * between two key frames.
+     */
+    class FactorConstVelKinematics
+    {
+       public:
+        FactorConstVelKinematics() = default;
+
+        /** Creates relative pose constraint of KF `to` as seem from `from`. */
+        FactorConstVelKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
+            : from_kf(kf_from), to_kf(kf_to), deltaTime(delta_time)
+        {
+        }
+
+        id_t from_kf = INVALID_ID, to_kf = INVALID_ID;
+
+        /** Elapsed time between "from_kf" and "to_kf" [seconds] */
+        double deltaTime = .0;
+    };
+
+    /** Abstract representation of a constant-velocity tricycle kinematic motion
+     * model factor between two key frames.
+     */
+    class FactorTricycleKinematics
+    {
+       public:
+        FactorTricycleKinematics() = default;
+
+        /** Creates relative pose constraint of KF `to` as seem from `from`. */
+        FactorTricycleKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
+            : from_kf(kf_from), to_kf(kf_to), deltaTime(delta_time)
+        {
+        }
+
+        id_t from_kf = INVALID_ID, to_kf = INVALID_ID;
+
+        /** Elapsed time between "from_kf" and "to_kf" [seconds] */
+        double deltaTime = .0;
+    };
 };
 
 }  // namespace mola::state_estimation_smoother

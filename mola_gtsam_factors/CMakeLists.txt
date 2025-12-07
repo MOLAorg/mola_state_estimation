@@ -53,9 +53,7 @@ mola_add_library(
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
     include/mola_gtsam_factors/FactorConstLocalVelocity.h
-    include/mola_gtsam_factors/FactorConstVelKinematics.h
     include/mola_gtsam_factors/FactorAngularVelocityIntegration.h
-    include/mola_gtsam_factors/FactorTricycleKinematics.h
     include/mola_gtsam_factors/id.h
     include/mola_gtsam_factors/FactorGnssEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnu.h
