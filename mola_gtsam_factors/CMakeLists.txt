@@ -1,13 +1,13 @@
 # ------------------------------------------------------------------------------
 #        A Modular Optimization framework for Localization and mApping
-#                               (MOLA)
+#                              (MOLA)
 #
-# Copyright (C) 2018-2025, Jose Luis Blanco-Claraco, contributors (AUTHORS.md)
+# Copyright (C) 2018-2025, Jose Luis Blanco-Claraco
 # All rights reserved.
 # Released under GNU GPL v3. See LICENSE file
 # ------------------------------------------------------------------------------
 
-# Minimum CMake vesion: limited by CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS
+# Minimum CMake version: limited by CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS
 cmake_minimum_required(VERSION 3.5)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -24,60 +24,61 @@ set(CMAKE_C_FLAGS_COVERAGE "-g -O0 --coverage -fprofile-update=atomic" CACHE STR
 set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Linker flags for coverage build")
 set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Linker flags for coverage build")
 
+
+if("$ENV{ROS_VERSION}" STREQUAL "2")
+  set(DETECTED_ROS2 TRUE)
+endif()
+
 # Tell CMake we'll use C++ for use in its tests/flags
-project(mola_state_estimation_smoother LANGUAGES CXX)
+project(mola_gtsam_factors LANGUAGES CXX)
 
 # MOLA CMake scripts: "mola_xxx()"
 find_package(mola_common REQUIRED)
-
-# find CMake dependencies:
-find_package(mrpt-obs)
 find_package(GTSAM REQUIRED)
-find_package(GTSAM_UNSTABLE REQUIRED)
-
-# Find MOLA packages:
-find_package(mola_kernel REQUIRED)
-find_package(mola_imu_preintegration REQUIRED)
-find_package(mola_gtsam_factors REQUIRED)
+find_package(mrpt-poses REQUIRED)
 
 # -----------------------
 # define lib:
+# -----------------------
 mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
-    src/Parameters.cpp
-    src/StateEstimationSmoother.cpp
-    src/pose_pdf_to_string_with_sigmas.cpp
+    include/mola_gtsam_factors/FactorAngularVelocityIntegration.h
+    include/mola_gtsam_factors/FactorConstLocalVelocity.h
+    include/mola_gtsam_factors/FactorGnssEnu.h
+    include/mola_gtsam_factors/FactorGnssMapEnu.h
+    include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
+    include/mola_gtsam_factors/gtsam_detect_version.h
+    include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/MeasuredGravityFactor.h
+    include/mola_gtsam_factors/Pose3RotationFactor.h
+    src/FactorAngularVelocityIntegration.cpp
+    src/FactorConstLocalVelocity.cpp
+    src/FactorGnssEnu.cpp
+    src/FactorGnssMapEnu.cpp
+    src/FactorTrapezoidalIntegrator.cpp
+    src/MeasuredGravityFactor.cpp
+    src/Pose3RotationFactor.cpp
     src/register.cpp
-    include/mola_state_estimation_smoother/Parameters.h
-    include/mola_state_estimation_smoother/StateEstimationSmoother.h
-    include/mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h
   PUBLIC_LINK_LIBRARIES
-    mrpt::obs
-    mola::mola_kernel
-    mola::mola_imu_preintegration
-    mola::mola_gtsam_factors
-  PRIVATE_LINK_LIBRARIES
     gtsam
-    gtsam_unstable
+    mrpt::poses
+  #PRIVATE_LINK_LIBRARIES
   CMAKE_DEPENDENCIES
-    mola_common
-    mola_imu_preintegration
-    mola_gtsam_factors
-    mola_kernel
-)
-target_include_directories(${PROJECT_NAME} PRIVATE ".")
-
-# -----------------------
-# define cli apps:
-mola_add_executable(
-  TARGET  mola-navstate-cli
-  SOURCES apps/mola-navstate-cli.cpp
-  LINK_LIBRARIES
-    ${PROJECT_NAME}
+    mrpt-poses
 )
 
 # -----------------------
 # define tests:
-enable_testing()
-add_subdirectory(tests)
+#enable_testing()
+#add_subdirectory(module/tests)
+
+# -----------------------------------------------------------------------------
+#  ROS2
+# -----------------------------------------------------------------------------
+if (DETECTED_ROS2)
+  # find dependencies
+  find_package(ament_cmake REQUIRED)
+
+  ament_package()
+endif()

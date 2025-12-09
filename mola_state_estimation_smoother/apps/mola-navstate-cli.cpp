@@ -41,27 +41,24 @@ void run_navstate(const std::string& paramsFile, const std::string& rawlogFile)
     for (size_t i = 0; i < dataset.size(); i++)
     {
         const auto o = dataset.getAsObservation(i);
-        if (!o) continue;
+        if (!o)
+        {
+            continue;
+        }
 
         if (auto oGPS = std::dynamic_pointer_cast<CObservationGPS>(o); oGPS)
         {
             nav.fuse_gnss(*oGPS);
         }
-        else if (auto oPose =
-                     std::dynamic_pointer_cast<CObservationRobotPose>(o);
-                 oPose)
+        else if (auto oPose = std::dynamic_pointer_cast<CObservationRobotPose>(o); oPose)
         {
             nav.fuse_pose(oPose->timestamp, oPose->pose, frame_id);
         }
-        else if (auto oImu = std::dynamic_pointer_cast<CObservationIMU>(o);
-                 oImu)
+        else if (auto oImu = std::dynamic_pointer_cast<CObservationIMU>(o); oImu)
         {
             nav.fuse_imu(*oImu);
         }
-        else if (auto oOdo =
-                     std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(
-                         o);
-                 oOdo)
+        else if (auto oOdo = std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(o); oOdo)
         {
             const std::string odoName =
                 oOdo->sensorLabel.empty() ? "odom_wheels" : oOdo->sensorLabel;
@@ -70,10 +67,8 @@ void run_navstate(const std::string& paramsFile, const std::string& rawlogFile)
         }
         else
         {
-            std::cout << "[Warning] Ignoring observation #" << i << ": '"
-                      << o->sensorLabel
-                      << "' of type: " << o->GetRuntimeClass()->className
-                      << "\n";
+            std::cout << "[Warning] Ignoring observation #" << i << ": '" << o->sensorLabel
+                      << "' of type: " << o->GetRuntimeClass()->className << "\n";
         }
 
     }  // for each entry
@@ -87,8 +82,7 @@ int main(int argc, char** argv)
     {
         if (argc != 3)
         {
-            std::cerr << "Usage: " << argv[0] << " params.yaml dataset.rawlog"
-                      << std::endl;
+            std::cerr << "Usage: " << argv[0] << " params.yaml dataset.rawlog" << std::endl;
             return 1;
         }
 

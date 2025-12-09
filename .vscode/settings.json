@@ -33,5 +33,16 @@
         "**/install": true,
         "**/log": true
     },
-    "ros.distro": "humble"
+    "ros.distro": "humble",  /* MOLA: Ignore this, we work on all distros */
+    "cSpell.ignoreWords": [
+        "CPose3DPDFGaussian"
+    ],
+    "cSpell.words": [
+        "bimap",
+        "Eigen",
+        "iSAM2",
+        "Marquardt",
+        "NMEA",
+        "relinearize"
+    ]
 }

@@ -46,15 +46,22 @@ jobs:
             ros_distribution: rolling
             use_ros_testing: true
 
+          - docker_image: ubuntu:noble
+            ros_distribution: rolling
+            use_ros2-testing: true
+            coverage_run: true
+
     container:
       image: ${{ matrix.docker_image }}
 
     steps:
       - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           apt-get -y update
           apt-get -y install git
-          git clone https://github.com/$GITHUB_REPOSITORY.git --recursive "$GITHUB_WORKSPACE"
+          git clone https://$TOKEN@github.com/$GITHUB_REPOSITORY.git --recursive "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git checkout $GITHUB_SHA
           git submodule update --init --recursive
@@ -71,8 +78,61 @@ jobs:
           rosdep update
           rosdep install --from-paths . --ignore-src -r -y
 
+      - name: Install lcov for coverage analysis
+        if: matrix.coverage_run == true
+        run: |
+          apt-get update
+          apt-get install -y lcov
+
       - name: Build with colcon
         run: |
           . /opt/ros/*/setup.sh
           env
-          MAKEFLAGS="-j2" colcon build --symlink-install --parallel-workers 2 --event-handlers console_direct+
+
+          # Inject Coverage Build Type
+          if [ "${{ matrix.coverage_run }}" = "true" ]; then
+            echo "Enabling Coverage build type..."
+            # This flag forces the use of the gcov flags defined in CMakeLists.txt
+            EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DCMAKE_BUILD_TYPE=Coverage"
+          fi
+
+          env
+          MAKEFLAGS="-j2" colcon build \
+            --symlink-install \
+            --parallel-workers 2 \
+            --event-handlers console_direct+ \
+            --cmake-args $EXTRA_CMAKE_ARGS
+
+      - name: Run unit tests
+        run: |
+          . /opt/ros/*/setup.sh
+          # Run tests regardless of coverage setting, as they are required to generate the .gcda files
+          colcon test --event-handlers console_direct+
+          colcon test-result --verbose
+
+      - name: Generate coverage report
+        if: matrix.coverage_run == true
+        run: |
+          # 1. Capture coverage data across the entire workspace.
+          #    --ignore-errors mismatch fixes geninfo parsing errors
+          #    --rc geninfo_unexecuted_blocks=1 fixes warnings about unexecuted blocks
+          lcov --capture --directory . --output-file coverage.info \
+            --ignore-errors mismatch --rc geninfo_unexecuted_blocks=1
+
+          # 2. Filter the report: Remove all files outside of your source code
+          lcov --remove coverage.info '/opt/ros/*' '/usr/*' \
+            --ignore-errors unused --output-file coverage_filtered.info
+
+          # 3. Print a summary to the log
+          echo "--- Coverage Summary for mola-state-estimation ---"
+          lcov --list coverage_filtered.info
+          echo "------------------------------------------"
+
+      - name: Upload coverage to Codecov
+        if: matrix.coverage_run == true
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage_filtered.info
+          slug: MOLAorg/mola_state_estimation
+          flags: colcon,rolling,gcc

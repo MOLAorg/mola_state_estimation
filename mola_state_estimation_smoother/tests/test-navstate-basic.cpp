@@ -36,15 +36,49 @@ namespace
 const char* navStateParams =
     R"###(# Config for Parameters
 params:
-    sliding_window_length: 5.0 # [s]
-    max_time_to_use_velocity_model: 2.0  # [s]
-    time_between_frames_to_warning: 2.0  # [s]
-    sigma_random_walk_acceleration_linear: 1.0 # [m/s²]
-    sigma_random_walk_acceleration_angular: 1.0 # [rad/s²]
-    sigma_integrator_position: 0.10 # [m]
-    sigma_integrator_orientation: 0.10 # [rad]
-    robust_param: 0
-    max_rmse: 2
+    # Frame name for the vehicle/robot base
+    vehicle_frame_name: "base_link"
+
+    # Reference frame for pose publication (typically 'map' or 'odom')
+    reference_frame_name: "map"
+
+    max_time_to_use_velocity_model: 2.0
+
+    # ----------------------------------------------------------------------------
+    # Kinematic Model & Motion Factors
+    # ----------------------------------------------------------------------------
+
+    # Kinematic model for internal motion model factors
+    # Options: KinematicModel::ConstantVelocity, KinematicModel::Tricycle
+    kinematic_model: KinematicModel::ConstantVelocity
+
+    # Time window to keep past observations in the filter [seconds]
+    sliding_window_length: 5.0
+    
+    # Minimum time difference between frames to create a new frame [seconds]
+    min_time_difference_to_create_new_frame: 0.01
+
+    # Random walk model for linear acceleration uncertainty [m/s²]
+    sigma_random_walk_acceleration_linear: 1.0
+
+    # Random walk model for angular acceleration uncertainty [rad/s²]
+    sigma_random_walk_acceleration_angular: 1.0
+
+    # Integrator uncertainty for position [m]
+    sigma_integrator_position: 0.10
+
+    # Integrator uncertainty for orientation [rad]
+    sigma_integrator_orientation: 0.10
+
+    initial_twist_sigma_lin: 20 # [m/s]
+    initial_twist_sigma_ang: 3 # [rad/s]
+
+    # Enable estimation of geo-referencing from GNSS and other sensors
+    # If false, geo-reference must be provided externally or via fixed_geo_reference
+    estimate_geo_reference: true
+
+    # Fixed geo-reference to use when estimate_geo_reference is false
+    #fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
 )###";
 
 using namespace mrpt::literals;  // _deg
@@ -84,15 +118,15 @@ class Data
     const double wc = 0.2, vc = 10.0, Rc = vc / wc;
 
     const mrpt::poses::CPose3D pc1 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.1), Rc*(1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.1), Rc * (1 - cos(wc * 0.1)), 0, wc * 0.1, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c1{pc1, I6_2cm};
 
     const mrpt::poses::CPose3D pc2 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.2), Rc*(1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.2), Rc * (1 - cos(wc * 0.2)), 0, wc * 0.2, 0.0_deg, 0.0_deg);
     const mrpt::poses::CPose3DPDFGaussian pdf_c2{pc2, I6_2cm};
 
     const mrpt::poses::CPose3D pc3 = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        Rc * sin(wc * 0.3), Rc*(1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg, 0.0_deg);
+        Rc * sin(wc * 0.3), Rc * (1 - cos(wc * 0.3)), 0, wc * 0.3, 0.0_deg, 0.0_deg);
 };
 
 // --------------------------------------
@@ -101,7 +135,7 @@ void test_init_state()
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
-    ASSERT_(nav.known_frame_ids().empty());
+    ASSERT_(nav.known_odometry_frame_ids().empty());
 
     const auto ret = nav.estimated_navstate(mrpt::Clock::now(), "odom");
     ASSERT_(!ret.has_value());
@@ -122,7 +156,7 @@ void test_one_pose()
     const auto ret = nav.estimated_navstate(t0, "odom");
     ASSERT_(ret.has_value());
 
-    // std::cout << "Result:\n" << ret->asString() << std::endl;
+    std::cout << "Result:\n" << ret->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 }
@@ -143,11 +177,11 @@ void test_one_pose_extrapolate()
     const auto ret = nav.estimated_navstate(t1, "odom");
     ASSERT_(ret.has_value());
 
-    // std::cout << "Result:\n" << ret->asString() << std::endl;
+    std::cout << "Result:\n" << ret->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret->pose.mean - _.pdf0.mean).norm(), 0.0, 1e-4);
 
-    ASSERT_GT_(std::sqrt(1.0 / ret->twist_inv_cov(0, 0)), nav.params.initial_twist_sigma_lin);
+    ASSERT_GT_(std::sqrt(1.0 / ret->twist_inv_cov(0, 0)), nav.parameters().initial_twist_sigma_lin);
 }
 
 // --------------------------------------
@@ -164,8 +198,8 @@ void test_2_poses()
     const auto t2 = mrpt::Clock::fromDouble(0.6);
     const auto t3 = mrpt::Clock::fromDouble(0.25);
 
-    nav.fuse_pose(t0, _.pdf0, "odom");
-    nav.fuse_pose(t1, _.pdf1, "odom");
+    nav.fuse_pose(t0, _.pdf0, "odom");  // (0,0,0)
+    nav.fuse_pose(t1, _.pdf1, "odom");  // (0.5,0,0)
 
     const auto ret2 = nav.estimated_navstate(t2, "odom");
     ASSERT_(ret2.has_value());
@@ -173,7 +207,7 @@ void test_2_poses()
     const auto ret3 = nav.estimated_navstate(t3, "odom");
     ASSERT_(ret3.has_value());
 
-    // std::cout << "Result:\n" << ret2->asString() << std::endl;
+    std::cout << "Result:\n" << ret2->asString() << std::endl;
 
     const auto expected2 =
         mrpt::poses::CPose3D::FromXYZYawPitchRoll(0.6, 0.0, 0.0, .0_deg, .0_deg, .0_deg);
@@ -196,8 +230,10 @@ void test_2_poses_too_late()
     const auto t1 = mrpt::Clock::fromDouble(0.5);
 
     // too late/early to extrapolate!! must return nullopt:
-    const auto t2 = mrpt::Clock::fromDouble(nav.params.max_time_to_use_velocity_model + 0.5 + 0.1);
-    const auto t3 = mrpt::Clock::fromDouble(0.0 - 0.1 - nav.params.max_time_to_use_velocity_model);
+    const auto t2 =
+        mrpt::Clock::fromDouble(nav.parameters().max_time_to_use_velocity_model + 0.5 + 0.1);
+    const auto t3 =
+        mrpt::Clock::fromDouble(0.0 - 0.1 - nav.parameters().max_time_to_use_velocity_model);
 
     nav.fuse_pose(t0, _.pdf0, "odom");
     nav.fuse_pose(t1, _.pdf1, "odom");
@@ -229,7 +265,7 @@ void test_3_poses()
     const auto ret2 = nav.estimated_navstate(t3, "odom");
     ASSERT_(ret2.has_value());
 
-    // std::cout << "Result:\n" << ret2->asString() << std::endl;
+    std::cout << "Result:\n" << ret2->asString() << std::endl;
 
     ASSERT_NEAR_(mrpt::poses::Lie::SE<3>::log(ret2->pose.mean - _.pc3).norm(), 0.0, 1e-1);
 
@@ -261,7 +297,7 @@ void test_noisy_straight()
 
     for (size_t i = 0; i < nSteps; i++)
     {
-        const double tt = T * i;
+        const double tt = T * static_cast<double>(i);
         const auto   t  = mrpt::Clock::fromDouble(tt);
 
         const mrpt::poses::CPose3D p = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
@@ -306,7 +342,10 @@ int main(int argc, char** argv)
     };
 
     int runOnlyIdx = -1;
-    if (argc == 2) runOnlyIdx = std::stoi(argv[1]);
+    if (argc == 2)
+    {
+        runOnlyIdx = std::stoi(argv[1]);
+    }
 
     bool anyFail = false;
 
@@ -315,7 +354,10 @@ int main(int argc, char** argv)
     {
         index++;
 
-        if (runOnlyIdx >= 0 && index != runOnlyIdx) continue;
+        if (runOnlyIdx >= 0 && index != runOnlyIdx)
+        {
+            continue;
+        }
 
         const auto sPrefix =
             mrpt::format("[ (%3i / %3zu) %20s ]", index, tests.size(), name.c_str());
