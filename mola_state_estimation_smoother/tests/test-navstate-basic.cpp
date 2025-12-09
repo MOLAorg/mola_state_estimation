@@ -70,6 +70,9 @@ params:
     # Integrator uncertainty for orientation [rad]
     sigma_integrator_orientation: 0.10
 
+    initial_twist_sigma_lin: 20 # [m/s]
+    initial_twist_sigma_ang: 3 # [rad/s]
+
     # Enable estimation of geo-referencing from GNSS and other sensors
     # If false, geo-reference must be provided externally or via fixed_geo_reference
     estimate_geo_reference: true
