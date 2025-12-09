@@ -245,9 +245,13 @@ void run_test(const TestCase& testCase)
 
             // Set gravity-aligned acceleration (static vehicle)
             // Note: These are in the IMU sensor frame, not vehicle frame
-            obsImu.set(mrpt::obs::IMU_X_ACC, rng.drawGaussian1D(0, 0.1));
-            obsImu.set(mrpt::obs::IMU_Y_ACC, rng.drawGaussian1D(0, 0.1));
-            obsImu.set(mrpt::obs::IMU_Z_ACC, 9.81 + rng.drawGaussian1D(0, 0.1));
+            {
+                const auto localUp = actualImuPoseGlobal.inverseRotateVector({0, 0, 9.81});
+
+                obsImu.set(mrpt::obs::IMU_X_ACC, localUp.x + rng.drawGaussian1D(0, 0.1));
+                obsImu.set(mrpt::obs::IMU_Y_ACC, localUp.y + rng.drawGaussian1D(0, 0.1));
+                obsImu.set(mrpt::obs::IMU_Z_ACC, localUp.z + +rng.drawGaussian1D(0, 0.1));
+            }
 
             // Set zero angular velocity (static vehicle)
             obsImu.set(mrpt::obs::IMU_WX, rng.drawGaussian1D(0, 0.01));
