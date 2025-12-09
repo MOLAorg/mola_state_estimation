@@ -113,8 +113,11 @@ class Parameters
     double sigma_twist_from_consecutive_poses_angular = 1.0;  // [rad/s]
 
     mrpt::math::TTwist3D initial_twist;
-    double               initial_twist_sigma_lin = 5;  // [m/s]
-    double               initial_twist_sigma_ang = 1;  // [rad/s]
+
+    // Defaults: somewhat confident that the vehicle is near rest.
+    // Change these if needed to start with the vehicle at high speed.
+    double initial_twist_sigma_lin = 0.1;  // [m/s]
+    double initial_twist_sigma_ang = 0.1;  // [rad/s]
 
     bool enforce_planar_motion = false;
 

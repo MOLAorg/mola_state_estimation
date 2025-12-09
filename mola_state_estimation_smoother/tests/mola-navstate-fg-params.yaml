@@ -67,11 +67,13 @@ sigma_integrator_orientation: 0.10
 # Initial velocity twist (linear: vx, vy, vz; angular: wx, wy, wz)
 #initial_twist: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
+# Defaults: somewhat confident that the vehicle is near rest.
+# Change these if needed to start with the vehicle at high speed.
 # Initial linear velocity uncertainty [m/s]
-#initial_twist_sigma_lin: 20.0
+#initial_twist_sigma_lin: 0.1
 
 # Initial angular velocity uncertainty [rad/s]
-#initial_twist_sigma_ang: 3.0
+#initial_twist_sigma_ang: 0.1
 
 # ----------------------------------------------------------------------------
 # Geo-referencing
