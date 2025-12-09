@@ -60,5 +60,5 @@ mola_add_library(
 
 # -----------------------
 # define tests:
-#enable_testing()
-#add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)
