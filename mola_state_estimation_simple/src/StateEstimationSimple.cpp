@@ -115,6 +115,7 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // Transform frames: IMU -> vehicle:
     imuReading.rotate(imu.sensorPose.asTPose());
 
+    state_.last_twist.emplace();
     state_.last_twist->wx = imuReading.wx;
     state_.last_twist->wy = imuReading.wy;
     state_.last_twist->wz = imuReading.wz;
@@ -149,7 +150,10 @@ void StateEstimationSimple::fuse_pose(
     mrpt::poses::CPose3D incrPose;
 
     // numerical sanity: variances>=0 (==0 allowed for some components only)
-    for (int i = 0; i < 6; i++) { ASSERT_GE_(pose.cov(i, i), .0); }
+    for (int i = 0; i < 6; i++)
+    {
+        ASSERT_GE_(pose.cov(i, i), .0);
+    }
     // and the sum of all strictly >0
     ASSERT_GT_(pose.cov.trace(), .0);
 
@@ -196,6 +200,7 @@ void StateEstimationSimple::fuse_pose(
     }
     else
     {
+        MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
     }
@@ -298,8 +303,14 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
     const double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
 
-    for (int i = 0; i < 3; i++) { cov(i, i) += varXYZ; }
-    for (int i = 3; i < 6; i++) { cov(i, i) += varRot; }
+    for (int i = 0; i < 3; i++)
+    {
+        cov(i, i) += varXYZ;
+    }
+    for (int i = 3; i < 6; i++)
+    {
+        cov(i, i) += varRot;
+    }
 
     if (state_.last_twist_cov.has_value())
     {
@@ -307,8 +318,14 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
         twistCov *= dt * dt;
         cov += twistCov;
 
-        for (int i = 0; i < 3; i++) { (*state_.last_twist_cov)(i, i) += varXYZ; }
-        for (int i = 3; i < 6; i++) { (*state_.last_twist_cov)(i, i) += varRot; }
+        for (int i = 0; i < 3; i++)
+        {
+            (*state_.last_twist_cov)(i, i) += varXYZ;
+        }
+        for (int i = 3; i < 6; i++)
+        {
+            (*state_.last_twist_cov)(i, i) += varRot;
+        }
     }
 
     ret.pose.cov_inv = cov.inverse_LLt();
