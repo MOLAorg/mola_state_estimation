@@ -43,20 +43,22 @@ find_package(mrpt-poses REQUIRED)
 mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
-    src/register.cpp
-    src/FactorConstLocalVelocity.cpp
-    src/FactorAngularVelocityIntegration.cpp
-    src/register.cpp
-    src/FactorGnssMapEnu.cpp
-    src/FactorGnssEnu.cpp
-    src/FactorTrapezoidalIntegrator.cpp
-    include/mola_gtsam_factors/gtsam_detect_version.h
-    include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
-    include/mola_gtsam_factors/FactorConstLocalVelocity.h
     include/mola_gtsam_factors/FactorAngularVelocityIntegration.h
-    include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/FactorConstLocalVelocity.h
     include/mola_gtsam_factors/FactorGnssEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnu.h
+    include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
+    include/mola_gtsam_factors/gtsam_detect_version.h
+    include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/Pose3RotationFactor.h
+    src/FactorAngularVelocityIntegration.cpp
+    src/FactorConstLocalVelocity.cpp
+    src/FactorGnssEnu.cpp
+    src/FactorGnssMapEnu.cpp
+    src/FactorTrapezoidalIntegrator.cpp
+    src/Pose3RotationFactor.cpp
+    src/register.cpp
+    src/register.cpp
   PUBLIC_LINK_LIBRARIES
     gtsam
     mrpt::poses

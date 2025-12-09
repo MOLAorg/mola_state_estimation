@@ -65,7 +65,7 @@ class Parameters
 
     /** @}  */
 
-    /** @name Kinematic factors (motion model)
+    /** @name Kinematic factors and keyframe creation (motion model)
      * @{ */
 
     /** Kinematic model to be used in the internal motion model factors.
@@ -93,7 +93,16 @@ class Parameters
      * datum and the associated existing keyframe. This parameter is the extended, alternative value
      * to use instead of "min_time_difference_to_create_new_frame". [seconds]
      */
-    double gnss_nearby_keyframe_stamp_tolerance = 1.0;
+    double gnss_nearby_keyframe_stamp_tolerance = 1.0;  // [s]
+
+    /** When adding IMU observations, this is the temporal distance between the IMU reading
+     * and the associated existing keyframe. This applies to gravity-oriented (IMU attitude) and
+     * gravity-estimation (accelerometer) only factors, not to high-frequency IMU preintegration.
+     *
+     * This parameter is the extended, alternative value
+     * to use instead of "min_time_difference_to_create_new_frame". [seconds]
+     */
+    double imu_nearby_keyframe_stamp_tolerance = 0.10;  // [s]
 
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
@@ -103,24 +112,35 @@ class Parameters
     double sigma_twist_from_consecutive_poses_linear  = 1.0;  // [m/s]
     double sigma_twist_from_consecutive_poses_angular = 1.0;  // [rad/s]
 
-    double robust_param = 0.0;  // 0: no robust
-
     mrpt::math::TTwist3D initial_twist;
-    double               initial_twist_sigma_lin = 20.0;  // [m/s]
-    double               initial_twist_sigma_ang = 3.0;  // [rad/s]
+    double               initial_twist_sigma_lin = 0.1;  // [m/s]
+    double               initial_twist_sigma_ang = 0.1;  // [rad/s]
 
     bool enforce_planar_motion = false;
+
+    /** @} */
+
+    /** @name IMU related
+     * @{  */
+
+    /** When an IMU provides global attitude measurements (azimuth and gravity aligned), this is the
+     * uncertainty or noise sigma [degrees]. */
+    double imu_attitude_sigma_deg = 2.0;
+
+    /** When an IMU provides global attitude measurements (azimuth and gravity aligned), this must
+     * define the angle (in degrees) to add to IMU yaw orientation to obtain azimuth so 0 deg is
+     * North. Note that ENU axes are such vehicle yaw is 0 when pointing East instead. */
+    double imu_attitude_azimuth_offset_deg = 0.0;
 
     /** @} */
 
     /** @name Geo-referencing
      * @{  */
 
-    /** If `true`, this estimator will try to estimate the best geo-referencing for {enu} -> {map}
-     * from incoming GNSS readings and other sensors.
-     * If `false`, geo-referencing is assumed to be given from either these initial parameters
-     * or, if not set, from an external source (e.g. a geo-referenced `.mm` map loaded in
-     * mola_lidar_odometry).
+    /** If `true`, this estimator will try to estimate the best geo-referencing for {enu} ->
+     * {map} from incoming GNSS readings and other sensors. If `false`, geo-referencing is
+     * assumed to be given from either these initial parameters or, if not set, from an external
+     * source (e.g. a geo-referenced `.mm` map loaded in mola_lidar_odometry).
      */
     bool estimate_geo_reference = false;
 

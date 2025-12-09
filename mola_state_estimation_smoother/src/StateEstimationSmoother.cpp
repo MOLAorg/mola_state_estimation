@@ -49,6 +49,7 @@
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
+#include <mola_gtsam_factors/Pose3RotationFactor.h>
 
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
@@ -167,6 +168,9 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
         mrpt::gtsam_wrappers::to_gtsam_se3_cov6(
             state_.geo_reference->T_enu_to_map, enu2map, enu2map_cov);
+
+        // Update into last_estimated_frames too, so estimated_T_enu_to_map() returns it:
+        state_.last_estimated_frames[REFERENCE_FRAME_ID] = state_.geo_reference->T_enu_to_map;
     }
 
     // Initial value:
@@ -283,14 +287,54 @@ void StateEstimationSmoother::fuse_odometry(
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-#if 0
-    state_.update_last_input_stamp(imu.timestamp);
 
-    THROW_EXCEPTION("TODO");
-    (void)imu;
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp(
+        imu.timestamp, params_.imu_nearby_keyframe_stamp_tolerance);
 
-#endif
-    MRPT_LOG_DEBUG_FMT("[fuse_imu]: t=%f", mrpt::Clock::toDouble(imu.timestamp));
+    MRPT_LOG_DEBUG_FMT(
+        "[fuse_imu]: t=%f  this_kf_id=%zu ", mrpt::Clock::toDouble(imu.timestamp),
+        static_cast<size_t>(this_kf_id));
+
+    // Direct azimuth observation?
+    // -------------------------------------------------
+    if (imu.has(mrpt::obs::IMU_ORI_QUAT_W))
+    {
+        mrpt::math::CQuaternionDouble q;
+        q.w(imu.get(mrpt::obs::IMU_ORI_QUAT_W));
+        q.x(imu.get(mrpt::obs::IMU_ORI_QUAT_X));
+        q.y(imu.get(mrpt::obs::IMU_ORI_QUAT_Y));
+        q.z(imu.get(mrpt::obs::IMU_ORI_QUAT_Z));
+        if (std::abs(q.norm() - 1.0) > 0.02)
+        {
+            MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring non-normalized IMU orientation quaternion");
+        }
+        else
+        {
+            // correct heading:
+
+            // Convert MRPT quaternion to GTSAM Rot3. (GTSAM uses w,x,y,z order)
+            auto measuredRotation = gtsam::Rot3::Quaternion(q.x(), q.x(), q.y(), q.z());
+
+            measuredRotation =
+                gtsam::Rot3::Rz(mrpt::DEG2RAD(params_.imu_attitude_azimuth_offset_deg)) *
+                measuredRotation;
+
+            const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
+
+            // Create noise model for rotation (3 DOF: roll, pitch, yaw)
+            auto rotationNoise = gtsam::noiseModel::Isotropic::Sigma(
+                3, mrpt::DEG2RAD(params_.imu_attitude_sigma_deg));
+
+            state_.gtsam->newFactors.emplace_shared<mola::factors::Pose3RotationFactor>(
+                symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredRotation,
+                rotationNoise);
+        }
+    }
+
+    // Gravity-aligned acceleration observation?
+    // -------------------------------------------------
+    // TODO!
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)

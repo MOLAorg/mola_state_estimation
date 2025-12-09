@@ -51,7 +51,6 @@ sigma_integrator_position: 0.10
 
 # Integrator uncertainty for orientation [rad]
 sigma_integrator_orientation: 0.10
-
 # Uncertainty for linear velocity estimated from consecutive poses [m/s]
 #sigma_twist_from_consecutive_poses_linear: 1.0
 
@@ -60,9 +59,6 @@ sigma_integrator_orientation: 0.10
 
 # Enforce planar (2D) motion constraint
 #enforce_planar_motion: false
-
-# Robust parameter for outlier rejection (0 = no robust kernel)
-robust_param: 0
 
 # ----------------------------------------------------------------------------
 # Initial State Estimation
