@@ -50,14 +50,15 @@ mola_add_library(
     include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/MeasuredGravityFactor.h
     include/mola_gtsam_factors/Pose3RotationFactor.h
     src/FactorAngularVelocityIntegration.cpp
     src/FactorConstLocalVelocity.cpp
     src/FactorGnssEnu.cpp
     src/FactorGnssMapEnu.cpp
     src/FactorTrapezoidalIntegrator.cpp
+    src/MeasuredGravityFactor.cpp
     src/Pose3RotationFactor.cpp
-    src/register.cpp
     src/register.cpp
   PUBLIC_LINK_LIBRARIES
     gtsam

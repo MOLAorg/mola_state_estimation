@@ -49,6 +49,7 @@
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
+#include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 
 // arguments: class_name, parent_class, class namespace
@@ -335,7 +336,31 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
     // Gravity-aligned acceleration observation?
     // -------------------------------------------------
-    // TODO!
+    if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
+    {
+        // TODO: Use ImuTransformer, etc.
+
+        const gtsam::Vector3 measuredGravity = {
+            imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
+            imu.get(mrpt::obs::IMU_Z_ACC)};
+
+        // Some IMU drivers publishes normalized acc:
+        if (std::abs(measuredGravity.norm() - 9.8) < 2.0 ||
+            std::abs(measuredGravity.norm() - 1.0) < 0.2)
+        {
+            const gtsam::Vector3 measuredGravityNormalized = measuredGravity.normalized();
+
+            const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
+
+            // Create noise model for gravity alignment:
+            auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
+                3, mrpt::DEG2RAD(params_.imu_normalized_gravity_alignment_sigma));
+
+            state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
+                symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
+                accNoise);
+        }
+    }
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)

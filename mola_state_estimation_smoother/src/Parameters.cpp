@@ -70,6 +70,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, imu_attitude_sigma_deg);
     MCP_LOAD_OPT(cfg, imu_attitude_azimuth_offset_deg);
+    MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
 
     // Geo-referencing
     // -----------------------------------------------------

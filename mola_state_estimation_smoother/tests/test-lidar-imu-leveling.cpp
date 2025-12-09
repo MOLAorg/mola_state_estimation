@@ -21,6 +21,7 @@
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
+#include <mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/random/RandomGenerators.h>
@@ -46,7 +47,6 @@ params:
 
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 5.0
-    
 
     max_time_to_use_velocity_model: 2.0
     
@@ -54,6 +54,11 @@ params:
     sigma_random_walk_acceleration_angular: 1.0
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.5  # Allow quick adaptation
+
+    imu_normalized_gravity_alignment_sigma: 0.1
+
+    # Weak link between "map" frame origin and "odom"
+    link_first_pose_to_reference_origin_sigma: 1.0
 
 )###";
 
@@ -64,21 +69,12 @@ void run_test()
 
     // 1. Initialize State with a huge Pitch/Roll Error
     // Real robot is flat (Roll=0, Pitch=0), but we tell the filter it's tilted.
-    // Or conversely: The filter starts at Identity, but we can verify it converges
-    // to Identity if we feed it data.
-    // To explicitly test correction: We will inject an initial pose prior with error.
 
     const auto initialBadPose = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
         0, 0, 0, 0.0_deg,
         20.0_deg,  // Bad Pitch
         15.0_deg  // Bad Roll
     );
-
-    auto initCov = mrpt::math::CMatrixDouble66::Identity();
-    initCov *= 0.5;
-
-    mrpt::poses::CPose3DPDFGaussian initialPDF(initialBadPose, initCov);
-    stateEst.fuse_pose(mrpt::Clock::fromDouble(0.0), initialPDF, "map");
 
     // Accumulated Odometry (Simulate typical LiDAR drift)
     mrpt::poses::CPose3D currentOdom = mrpt::poses::CPose3D::Identity();
@@ -115,8 +111,6 @@ void run_test()
         // Pure gravity + noise. No linear acceleration (constant velocity).
         // If the robot were actually tilted 20 deg, the IMU would read gravity components in X/Y.
         // Since the robot IS flat, IMU reads ~0 in X/Y.
-        // The filter thinks we are tilted 20 deg, sees (0,0,g), and must correct its state to 0
-        // deg.
         obsImu.set(mrpt::obs::IMU_X_ACC, rng.drawGaussian1D(0.0, 0.1));
         obsImu.set(mrpt::obs::IMU_Y_ACC, rng.drawGaussian1D(0.0, 0.1));
         obsImu.set(mrpt::obs::IMU_Z_ACC, 9.81 + rng.drawGaussian1D(0.0, 0.1));
@@ -143,6 +137,16 @@ void run_test()
     // Tolerances depend on IMU noise and filter tuning, but should be close to 0
     ASSERT_NEAR_(p, 0.0, mrpt::DEG2RAD(2.0));  // Converged within 2 degrees
     ASSERT_NEAR_(r, 0.0, mrpt::DEG2RAD(2.0));
+
+    ASSERT_(stateEst.known_odometry_frame_ids().size() == 1);
+    for (const auto& odom_frame : stateEst.known_odometry_frame_ids())
+    {
+        auto T_map_to_odom = stateEst.estimated_T_map_to_odometry_frame(odom_frame);
+        ASSERT_(T_map_to_odom.has_value());
+        std::cout << "T_map_to_odom[" << odom_frame << "]:\n"
+                  << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_map_to_odom)
+                  << "\n";
+    }
 }
 
 }  // namespace

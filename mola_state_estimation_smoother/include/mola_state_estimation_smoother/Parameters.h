@@ -143,6 +143,12 @@ class Parameters
      */
     double imu_attitude_azimuth_offset_deg = 0.0;
 
+    /** When using an IMU with acceleration, use this sigma to estimate the up-vector, hence
+     * gravity-align the map.
+     * Set to 0 to disable.
+     */
+    double imu_normalized_gravity_alignment_sigma = 0.4;
+
     /** @} */
 
     /** @name Geo-referencing
