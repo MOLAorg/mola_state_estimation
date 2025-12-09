@@ -1170,6 +1170,14 @@ void StateEstimationSmoother::initialize_new_frame(
         state_.gtsam->newFactors.addPrior(
             W(id), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
             gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
+
+        if (params_.link_first_pose_to_reference_origin_sigma.has_value())
+        {
+            state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                T(id), gtsam::Pose3::Identity(),
+                gtsam::noiseModel::Isotropic::Sigma(
+                    6, *params_.link_first_pose_to_reference_origin_sigma));
+        }
     }
 
     // T: Pose

@@ -95,6 +95,11 @@ params:
 
     # Fixed geo-reference to use when estimate_geo_reference is false
     #fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
+
+    # Link the "map" frame origin with "odom" for this toy example.
+    # Otherwise, "odom" would "float" around without any particular XYZ known displacement.
+    link_first_pose_to_reference_origin_sigma: 1e-6
+
 )###";
 
 using Pose      = mrpt::poses::CPose3D;
@@ -138,18 +143,6 @@ void run_test(const TestCase& testCase)
     actualVehicleInitialGeoCoords.lat    = 4.0;
     actualVehicleInitialGeoCoords.lon    = 3.0;
     actualVehicleInitialGeoCoords.height = 50.0;
-
-    // Link the "map" frame origin with "odom" for this toy example.
-    // Otherwise, "odom" would "float" around without any particular XYZ known displacement.
-    {
-        auto map2odom_cov = mrpt::math::CMatrixDouble66::Identity();
-        map2odom_cov *= 1e-6;
-
-        stateEst.fuse_pose(
-            mrpt::Clock::fromDouble(0),
-            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), map2odom_cov),
-            stateEst.parameters().reference_frame_name);
-    }
 
     for (size_t i = 0; i <= numPoses; i++)
     {

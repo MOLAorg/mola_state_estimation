@@ -55,6 +55,17 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
+    if (cfg.has("link_first_pose_to_reference_origin_sigma"))
+    {
+        const auto strSigma = cfg["link_first_pose_to_reference_origin_sigma"].as<std::string>();
+        double     sigma    = 0;
+        if (1 == ::sscanf(strSigma.c_str(), "%lf", &sigma))
+        {
+            ASSERT_GT_(sigma, .0);
+            link_first_pose_to_reference_origin_sigma = sigma;
+        }
+    }
+
     // IMU-related
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, imu_attitude_sigma_deg);
