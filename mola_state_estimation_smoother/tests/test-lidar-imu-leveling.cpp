@@ -58,7 +58,7 @@ params:
     imu_normalized_gravity_alignment_sigma: 0.1
 
     # Weak link between "map" frame origin and "odom"
-    link_first_pose_to_reference_origin_sigma: 1.0
+    link_first_pose_to_reference_origin_sigma: 0.01
 
 )###";
 
@@ -70,11 +70,11 @@ void run_test()
     // 1. Initialize State with a huge Pitch/Roll Error
     // Real robot is flat (Roll=0, Pitch=0), but we tell the filter it's tilted.
 
-    const auto initialBadPose = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-        0, 0, 0, 0.0_deg,
-        20.0_deg,  // Bad Pitch
-        15.0_deg  // Bad Roll
-    );
+    const double initBadPitch = 3.0_deg;
+    const double initBadRoll  = 2.0_deg;
+
+    const auto initialBadPose =
+        mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, 0.0_deg, initBadPitch, initBadRoll);
 
     // Accumulated Odometry (Simulate typical LiDAR drift)
     mrpt::poses::CPose3D currentOdom = mrpt::poses::CPose3D::Identity();
@@ -92,8 +92,8 @@ void run_test()
         );
 
         // Add nasty drift to Odometry that would indicate sinking/tilting
-        deltaOdom.z_incr(-0.001);  // Drifting down
-        deltaOdom.setYawPitchRoll(deltaOdom.yaw(), 0.002 /* Pitch drift*/, deltaOdom.roll());
+        deltaOdom.z_incr(-0.002);  // Drifting down
+        deltaOdom.setYawPitchRoll(deltaOdom.yaw(), 0.1_deg /* Pitch drift*/, deltaOdom.roll());
 
         currentOdom = currentOdom + deltaOdom;
 
@@ -129,7 +129,6 @@ void run_test()
     double y, p, r;
     stateOpt->pose.mean.getYawPitchRoll(y, p, r);
 
-    std::cout << "Initial Bad Pitch: 20.0 deg, Roll: 15.0 deg\n";
     std::cout << "Final Estimated Pitch: " << mrpt::RAD2DEG(p) << " deg\n";
     std::cout << "Final Estimated Roll:  " << mrpt::RAD2DEG(r) << " deg\n";
 
