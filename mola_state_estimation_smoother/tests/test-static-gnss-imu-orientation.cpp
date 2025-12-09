@@ -38,10 +38,10 @@ namespace
 
 constexpr double GNSS_NOISE_XY_M = 0.10;  // 10 cm horizontal noise
 constexpr double GNSS_NOISE_Z_M  = 0.15;  // 15 cm vertical noise
-constexpr double IMU_NOISE_QUAT  = 0.02;  // Small quaternion noise
+constexpr double IMU_NOISE_QUAT  = 0.01;  // Small quaternion noise
 
-constexpr double MAXIMUM_POSITION_ERROR = 0.50;  // meters
-constexpr double MAXIMUM_HEADING_ERROR  = 5.0_deg;  // radians
+constexpr double MAXIMUM_POSITION_ERROR = 0.25;  // meters
+constexpr double MAXIMUM_HEADING_ERROR  = 3.0_deg;  // radians
 
 const bool VERBOSE = mrpt::get_env<bool>("VERBOSE", false);
 
@@ -75,22 +75,19 @@ params:
     min_time_difference_to_create_new_frame: 0.05
 
     # Random walk model for linear acceleration uncertainty [m/s²]
-    sigma_random_walk_acceleration_linear: 0.5
+    sigma_random_walk_acceleration_linear: 0.1
 
     # Random walk model for angular acceleration uncertainty [rad/s²]
-    sigma_random_walk_acceleration_angular: 0.5
+    sigma_random_walk_acceleration_angular: 0.1
 
     # Integrator uncertainty for position [m]
-    sigma_integrator_position: 0.10
+    sigma_integrator_position: 0.02
 
     # Integrator uncertainty for orientation [rad]
-    sigma_integrator_orientation: 0.10
+    sigma_integrator_orientation: 0.02
 
     # Fixed geo-reference (vehicle is static, so we provide external reference)
     estimate_geo_reference: false
-
-    gnss_nearby_keyframe_stamp_tolerance: 1.0
-    imu_nearby_keyframe_stamp_tolerance: 1.0
 )###";
 
 using Pose = mrpt::poses::CPose3D;
@@ -101,6 +98,7 @@ struct TestCase
     double      latitude_deg;  // Fixed geo-reference latitude
     double      longitude_deg;  // Fixed geo-reference longitude
     double      altitude_m;  // Fixed geo-reference altitude
+    double      imu_attitude_azimuth_offset_deg;  // IMU zero to Azimuth offset
     Pose        imu_sensor_pose;  // IMU mounting pose wrt vehicle base_link
     std::string description;  // Test case description
 };
@@ -129,6 +127,9 @@ void run_test(const TestCase& testCase)
         cfgYaml["params"]["fixed_geo_reference"]["longitude_deg"] = testCase.longitude_deg;
         cfgYaml["params"]["fixed_geo_reference"]["altitude"]      = testCase.altitude_m;
 
+        cfgYaml["params"]["imu_attitude_azimuth_offset_deg"] =
+            testCase.imu_attitude_azimuth_offset_deg;
+
         stateEst.initialize(cfgYaml);
     }
 
@@ -151,8 +152,13 @@ void run_test(const TestCase& testCase)
     mrpt::topography::TGeodeticCoords vehicleGeodetic;
     mrpt::topography::geocentricToGeodetic(vehicleGeocentric, vehicleGeodetic);
 
+    // Include Azimuth reference, such as IMU yaw=0 means Azimuth=0 (North),
+    // which for ENU means -90 deg yaw:
+    const auto vehicleToAzimuth = mrpt::poses::CPose3D::FromYawPitchRoll(
+        mrpt::DEG2RAD(-90.0 - testCase.imu_attitude_azimuth_offset_deg), 0.0_deg, 0.0_deg);
+
     // Compute IMU pose in global frame: vehicle_pose (+) imu_sensor_pose
-    const auto actualImuPoseGlobal = actualVehiclePose + imuSensorPose;
+    const auto actualImuPoseGlobal = actualVehiclePose + vehicleToAzimuth + imuSensorPose;
 
     if (VERBOSE)
     {
@@ -232,7 +238,7 @@ void run_test(const TestCase& testCase)
             noisyQuat.normalize();
 
             // Set the orientation in the IMU observation
-            obsImu.set(mrpt::obs::IMU_ORI_QUAT_W, noisyQuat.r());
+            obsImu.set(mrpt::obs::IMU_ORI_QUAT_W, noisyQuat.w());
             obsImu.set(mrpt::obs::IMU_ORI_QUAT_X, noisyQuat.x());
             obsImu.set(mrpt::obs::IMU_ORI_QUAT_Y, noisyQuat.y());
             obsImu.set(mrpt::obs::IMU_ORI_QUAT_Z, noisyQuat.z());
@@ -355,48 +361,53 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     // Define test cases with different vehicle poses, geo-references, and IMU mounting poses
     std::vector<TestCase> tests = {
         // Test 1: Vehicle at origin, IMU aligned with vehicle
-        {Pose::Identity(), 36.8407, -2.4093, 100.0, Pose::Identity(),
+        {Pose::Identity(), 36.8407, -2.4093, 100.0, 0.0, Pose::Identity(),
          "Vehicle at origin, IMU aligned with vehicle"},
 
         // Test 2: Vehicle displaced, IMU with small rotation (typical mounting)
-        {Pose::FromTranslation(10.0, 20.0, 0.5), 36.8407, -2.4093, 100.0,
+        {Pose::FromTranslation(10.0, 20.0, 0.5), 36.8407, -2.4093, 100.0, 0.0,
          Pose::FromXYZYawPitchRoll(0.1, 0.0, 0.05, 5.0_deg, 2.0_deg, 1.0_deg),
          "Vehicle displaced, IMU with small rotation"},
 
         // Test 3: Vehicle with heading, IMU rotated 90° around Z (left-facing)
         {Pose::FromXYZYawPitchRoll(5.0, 15.0, 1.0, 30.0_deg, 0.0_deg, 0.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 90.0_deg, 0.0_deg, 0.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 90.0_deg, 0.0_deg, 0.0_deg),
          "Vehicle with 30° heading, IMU rotated 90° left (Y-axis forward)"},
 
         // Test 4: Vehicle with pitch/roll, IMU rotated 180° around Z (rear-facing)
         {Pose::FromXYZYawPitchRoll(8.0, 12.0, 2.0, 45.0_deg, 5.0_deg, 3.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.1, 180.0_deg, 0.0_deg, 0.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.1, 180.0_deg, 0.0_deg, 0.0_deg),
          "Vehicle with pitch/roll, IMU rotated 180° (rear-facing)"},
 
         // Test 5: Vehicle with heading, IMU rotated -90° around Z (right-facing)
         {Pose::FromXYZYawPitchRoll(3.0, 7.0, 0.8, -20.0_deg, 0.0_deg, 0.0_deg), 40.4168, -3.7038,
-         650.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, -90.0_deg, 0.0_deg, 0.0_deg),
+         650.0, 0.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, -90.0_deg, 0.0_deg, 0.0_deg),
          "Different geo-ref (Madrid), IMU rotated 90° right"},
 
         // Test 6: IMU mounted upside-down (180° roll)
         {Pose::FromXYZYawPitchRoll(2.0, 3.0, 0.5, 15.0_deg, 0.0_deg, 0.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0_deg, 0.0_deg, 180.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0_deg, 0.0_deg, 180.0_deg),
          "IMU mounted upside-down (180° roll)"},
 
         // Test 7: IMU with 90° pitch (vertical mounting, looking down)
         {Pose::FromXYZYawPitchRoll(6.0, 9.0, 1.5, 60.0_deg, 0.0_deg, 0.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0_deg, 90.0_deg, 0.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0_deg, 90.0_deg, 0.0_deg),
          "IMU with 90° pitch (vertical, looking down)"},
 
         // Test 8: IMU with complex rotation (45° yaw, 30° pitch, 15° roll)
         {Pose::FromXYZYawPitchRoll(4.0, 8.0, 1.2, -45.0_deg, 2.0_deg, -1.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.05, -0.02, 0.08, 45.0_deg, 30.0_deg, 15.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.05, -0.02, 0.08, 45.0_deg, 30.0_deg, 15.0_deg),
          "IMU with complex rotation (45° yaw, 30° pitch, 15° roll)"},
 
         // Test 9: IMU with large displacement and rotation
         {Pose::FromXYZYawPitchRoll(12.0, 18.0, 2.5, 75.0_deg, -3.0_deg, 2.0_deg), 36.8407, -2.4093,
-         100.0, Pose::FromXYZYawPitchRoll(0.5, 0.3, 0.2, 135.0_deg, -20.0_deg, 10.0_deg),
+         100.0, 0.0, Pose::FromXYZYawPitchRoll(0.5, 0.3, 0.2, 135.0_deg, -20.0_deg, 10.0_deg),
          "IMU with large displacement and complex rotation"},
+
+        // Test 10: IMU with different azimuth reference
+        {Pose::FromXYZYawPitchRoll(12.0, 18.0, 2.5, 75.0_deg, -3.0_deg, 2.0_deg), 36.8407, -2.4093,
+         100.0, -90.0, Pose::FromXYZYawPitchRoll(0.5, 0.3, 0.2, 135.0_deg, -20.0_deg, 10.0_deg),
+         "IMU with different azimuth reference"},
     };
 
     std::set<std::string> setSuccess;

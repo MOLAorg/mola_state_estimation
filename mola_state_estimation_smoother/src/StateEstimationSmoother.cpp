@@ -314,10 +314,11 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
             // correct heading:
 
             // Convert MRPT quaternion to GTSAM Rot3. (GTSAM uses w,x,y,z order)
-            auto measuredRotation = gtsam::Rot3::Quaternion(q.x(), q.x(), q.y(), q.z());
+            auto measuredRotation = gtsam::Rot3::Quaternion(q.w(), q.x(), q.y(), q.z());
 
+            // ENU is such yaw=0 ==> East. Correct this wrt Azimuth wrt true North:
             measuredRotation =
-                gtsam::Rot3::Rz(mrpt::DEG2RAD(params_.imu_attitude_azimuth_offset_deg)) *
+                gtsam::Rot3::Rz(mrpt::DEG2RAD(90.0 + params_.imu_attitude_azimuth_offset_deg)) *
                 measuredRotation;
 
             const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);

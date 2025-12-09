@@ -129,7 +129,11 @@ class Parameters
 
     /** When an IMU provides global attitude measurements (azimuth and gravity aligned), this must
      * define the angle (in degrees) to add to IMU yaw orientation to obtain azimuth so 0 deg is
-     * North. Note that ENU axes are such vehicle yaw is 0 when pointing East instead. */
+     * North. Note that ENU axes are such vehicle yaw is 0 when pointing East instead.
+     * Example cases:
+     * - IMU absolute yaw=0 points True North ==> offset=0
+     * - IMU absolute yaw=0 points East ==> offset=-90
+     */
     double imu_attitude_azimuth_offset_deg = 0.0;
 
     /** @} */
