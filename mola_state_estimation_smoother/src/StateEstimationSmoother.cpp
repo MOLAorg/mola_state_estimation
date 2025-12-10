@@ -532,52 +532,56 @@ void StateEstimationSmoother::fuse_twist(
 {
     auto lck = mrpt::lockHelper(stateMutex_);
 
-#if 0
-    const auto&          pd   = d.twist.value();
-    const gtsam::Vector3 v    = {pd.twist.vx, pd.twist.vy, pd.twist.vz};
-    const gtsam::Vector3 w    = {pd.twist.wx, pd.twist.wy, pd.twist.wz};
-    gtsam::Matrix3       vCov = pd.twistCov.asEigen().block<3, 3>(0, 0);
-    gtsam::Matrix3       wCov = pd.twistCov.asEigen().block<3, 3>(3, 3);
+    const gtsam::Vector3 v    = {twist.vx, twist.vy, twist.vz};
+    const gtsam::Vector3 w    = {twist.wx, twist.wy, twist.wz};
+    gtsam::Matrix3       vCov = twistCov.asEigen().block<3, 3>(0, 0);
+    gtsam::Matrix3       wCov = twistCov.asEigen().block<3, 3>(3, 3);
+
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp(timestamp);
 
     {
         auto                                noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
         gtsam::noiseModel::Base::shared_ptr robNoiseV;
+#if 0
         if (params_.robust_param > 0)
         {
             robNoiseV = gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseV);
         }
         else
+#endif
         {
             robNoiseV = noiseV;
         }
 
-        fg.addPrior(V(kfId), v, robNoiseV);
+        state_.gtsam->newFactors.addPrior(V(this_kf_id), v, robNoiseV);
     }
     {
         auto                                noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
         gtsam::noiseModel::Base::shared_ptr robNoiseW;
+#if 0
         if (params_.robust_param > 0)
         {
             robNoiseW = gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseW);
         }
         else
+#endif
         {
             robNoiseW = noiseW;
         }
 
-        fg.addPrior(W(kfId), w, robNoiseW);
+        state_.gtsam->newFactors.addPrior(W(this_kf_id), w, robNoiseW);
     }
 
     MRPT_LOG_DEBUG_FMT(
-        "[fuse_twist]: t=%f twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
+        "[fuse_twist]: t=%f this_kf_id=%zu twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
         "%.02e (deg)",
-        mrpt::Clock::toDouble(timestamp), twist.asString().c_str(), std::sqrt(twistCov(0, 0)),
-        std::sqrt(twistCov(1, 1)), std::sqrt(twistCov(2, 2)),
-        mrpt::RAD2DEG(std::sqrt(twistCov(3, 3))), mrpt::RAD2DEG(std::sqrt(twistCov(4, 4))),
-        mrpt::RAD2DEG(std::sqrt(twistCov(5, 5))));
-#endif
+        mrpt::Clock::toDouble(timestamp), static_cast<std::size_t>(this_kf_id),
+        twist.asString().c_str(), std::sqrt(twistCov(0, 0)), std::sqrt(twistCov(1, 1)),
+        std::sqrt(twistCov(2, 2)), mrpt::RAD2DEG(std::sqrt(twistCov(3, 3))),
+        mrpt::RAD2DEG(std::sqrt(twistCov(4, 4))), mrpt::RAD2DEG(std::sqrt(twistCov(5, 5))));
 }
 
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
