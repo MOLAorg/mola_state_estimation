@@ -88,8 +88,8 @@ mola_add_executable(
 
 # -----------------------
 # define tests:
-#enable_testing()
-#add_subdirectory(module/tests)
+enable_testing()
+add_subdirectory(tests)
 
 # -----------------------------------------------------------------------------
 #  ROS2
