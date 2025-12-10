@@ -37,8 +37,8 @@ namespace
 constexpr double TWIST_NOISE_LINEAR  = 0.05;  // m/s
 constexpr double TWIST_NOISE_ANGULAR = 0.02;  // rad/s
 
-constexpr double MAXIMUM_POSITION_ERROR = 0.80;  // meters
-constexpr double MAXIMUM_VELOCITY_ERROR = 0.30;  // m/s
+constexpr double MAXIMUM_POSITION_ERROR = 0.30;  // meters
+constexpr double MAXIMUM_VELOCITY_ERROR = 0.20;  // m/s
 
 constexpr const char* ODOMETRY_NAME = "odom";
 
@@ -148,6 +148,20 @@ void run_test(const TestCase& testCase)
                   << " wz=" << gtTwist.wz << "\n\n";
     }
 
+    // Apply rotation (exponential map for angular velocity)
+    const auto deltaPose = [&]()
+    {
+        mrpt::math::CVectorFixedDouble<6> delta;
+        delta[0] = gtTwist.vx * T;
+        delta[1] = gtTwist.vy * T;
+        delta[2] = gtTwist.vz * T;
+        delta[3] = gtTwist.wx * T;
+        delta[4] = gtTwist.wy * T;
+        delta[5] = gtTwist.wz * T;
+
+        return mrpt::poses::Lie::SE<3>::exp(delta);
+    }();
+
     for (size_t i = 0; i <= numSteps; i++)
     {
         const double t = T * static_cast<double>(i);
@@ -156,15 +170,8 @@ void run_test(const TestCase& testCase)
         if (i > 0)
         {
             // Simple Euler integration: pose = pose + twist * dt
-            // This is approximate but sufficient for testing
-            const auto deltaPose = mrpt::poses::CPose3D::FromTranslation(
-                gtTwist.vx * T, gtTwist.vy * T, gtTwist.vz * T);
 
-            // Apply rotation (exponential map for angular velocity)
-            const auto deltaRot =
-                mrpt::poses::CPose3D(0, 0, 0, gtTwist.wz * T, gtTwist.wy * T, gtTwist.wx * T);
-
-            currentGtPose = currentGtPose + deltaPose + deltaRot;
+            currentGtPose = currentGtPose + deltaPose;
         }
 
         // 2. Simulate noisy twist observation
@@ -197,21 +204,17 @@ void run_test(const TestCase& testCase)
         // (twist alone doesn't provide absolute position)
         if (i % 5 == 0)
         {
-            mrpt::obs::CObservationOdometry obsOdo;
-            obsOdo.timestamp   = mrpt::Clock::fromDouble(t);
-            obsOdo.sensorLabel = ODOMETRY_NAME;
-
             // Add noise to odometry
             auto noisyPose = currentGtPose;
             noisyPose.x_incr(rng.drawGaussian1D(0, 0.05));
             noisyPose.y_incr(rng.drawGaussian1D(0, 0.05));
             noisyPose.z_incr(rng.drawGaussian1D(0, 0.05));
 
-            obsOdo.odometry        = mrpt::poses::CPose2D(noisyPose);
-            obsOdo.hasEncodersInfo = false;
-            obsOdo.hasVelocities   = false;
+            mrpt::poses::CPose3DPDFGaussian odoPose;
+            odoPose.mean = noisyPose;
+            odoPose.cov.setDiagonal(mrpt::square(0.05));
 
-            stateEst.fuse_odometry(obsOdo, ODOMETRY_NAME);
+            stateEst.fuse_pose(mrpt::Clock::fromDouble(t), odoPose, ODOMETRY_NAME);
         }
 
         // Check estimation periodically
@@ -228,12 +231,14 @@ void run_test(const TestCase& testCase)
                 std::cout << "\n--- Estimation at t=" << t << " ---\n";
                 std::cout << "Estimated pose: " << estimatedPose << "\n";
                 std::cout << "Ground truth pose: " << currentGtPose << "\n";
+                std::cout << "Relative GT pose: " << currentGtPose - gtInitialPose << "\n";
                 std::cout << "Estimated twist: vx=" << estimatedTwist.vx
                           << " vy=" << estimatedTwist.vy << " wz=" << estimatedTwist.wz << "\n";
                 std::cout << "Ground truth twist: vx=" << gtTwist.vx << " vy=" << gtTwist.vy
                           << " wz=" << gtTwist.wz << "\n";
 
-                const auto posError = (estimatedPose.asTPose() - currentGtPose.asTPose()).norm();
+                const auto posError =
+                    (estimatedPose.asTPose() - (currentGtPose - gtInitialPose).asTPose()).norm();
                 const auto velError = std::sqrt(
                     mrpt::square(estimatedTwist.vx - gtTwist.vx) +
                     mrpt::square(estimatedTwist.vy - gtTwist.vy) +
@@ -243,6 +248,15 @@ void run_test(const TestCase& testCase)
                 std::cout << "Velocity error: " << velError << " m/s\n\n";
             }
         }
+    }
+
+    for (const auto& odom_frame : stateEst.known_odometry_frame_ids())
+    {
+        auto T_map_to_odom = stateEst.estimated_T_map_to_odometry_frame(odom_frame);
+        ASSERT_(T_map_to_odom.has_value());
+        std::cout << "T_map_to_odom[" << odom_frame << "]:\n"
+                  << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_map_to_odom)
+                  << "\n";
     }
 
     // Final verification
@@ -259,11 +273,13 @@ void run_test(const TestCase& testCase)
         std::cout << "\n=== FINAL RESULTS ===\n";
         std::cout << "Estimated pose: " << estimatedPose << "\n";
         std::cout << "Ground truth pose: " << currentGtPose << "\n";
+        std::cout << "Relative GT pose: " << currentGtPose - gtInitialPose << "\n";
         std::cout << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(stateOpt->pose)
                   << "\n";
 
         // Check position error
-        const auto positionError = (estimatedPose.asTPose() - currentGtPose.asTPose()).norm();
+        const auto positionError =
+            (estimatedPose.asTPose() - (currentGtPose - gtInitialPose).asTPose()).norm();
         std::cout << "Position error: " << positionError << " m\n";
         ASSERT_LT_(positionError, MAXIMUM_POSITION_ERROR);
 
@@ -281,6 +297,7 @@ void run_test(const TestCase& testCase)
             mrpt::square(estimatedTwist.wy - gtTwist.wy) +
             mrpt::square(estimatedTwist.wz - gtTwist.wz));
         std::cout << "Angular velocity error: " << angVelError << " rad/s\n";
+        ASSERT_LT_(angVelError, MAXIMUM_VELOCITY_ERROR);
 
         std::cout << "Estimated twist: vx=" << estimatedTwist.vx << " vy=" << estimatedTwist.vy
                   << " vz=" << estimatedTwist.vz << " wx=" << estimatedTwist.wx
@@ -356,6 +373,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         {Pose::FromXYZYawPitchRoll(2.0, 2.0, 3.0, 0.0, 10.0_deg, 5.0_deg),
          Twist(0.5, 0.0, 0.0, 0.2, 0.1, 0.0),  // Forward with pitch/roll rotation
          "3D rotation with forward motion (wx=0.2, wy=0.1)"},
+
+        // Test 14: Vertical motion
+        {Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0, 0.0_deg, .0_deg),
+         Twist(0, 0.0, 0.1, 0.0, 0.0, 0.0), "Pure vertical motion"},
     };
 
     for (size_t testIdx = 0; testIdx < tests.size(); testIdx++)
