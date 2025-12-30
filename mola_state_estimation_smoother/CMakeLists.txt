@@ -68,6 +68,16 @@ mola_add_library(
 )
 target_include_directories(${PROJECT_NAME} PRIVATE ".")
 
+# Install files:
+install(
+  DIRECTORY
+    mola-cli-launchs
+    ros2-launchs
+    params
+  DESTINATION
+    share/${PROJECT_NAME}
+)
+
 # -----------------------
 # define cli apps:
 mola_add_executable(
