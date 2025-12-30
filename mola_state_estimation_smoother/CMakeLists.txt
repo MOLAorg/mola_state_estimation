@@ -10,6 +10,10 @@
 # Minimum CMake vesion: limited by CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS
 cmake_minimum_required(VERSION 3.5)
 
+if("$ENV{ROS_VERSION}" STREQUAL "2")
+    set(DETECTED_ROS2 TRUE)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(default_build_type "Release")
   message(STATUS "Setting build type to '${default_build_type}' as none was specified.")
@@ -87,7 +91,25 @@ mola_add_executable(
     ${PROJECT_NAME}
 )
 
-# -----------------------
-# define tests:
-enable_testing()
-add_subdirectory(tests)
+if(DETECTED_ROS2)
+  # -----------------------------------------------------------------------------
+  #  ROS2
+  # -----------------------------------------------------------------------------
+  # find dependencies
+  find_package(ament_cmake REQUIRED)
+
+  if(BUILD_TESTING)
+    find_package(ament_lint_auto REQUIRED)
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_lint_auto_find_test_dependencies()
+
+    add_subdirectory(tests)
+  endif()
+
+  ament_package()
+else()
+  # define tests (w/o ROS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
