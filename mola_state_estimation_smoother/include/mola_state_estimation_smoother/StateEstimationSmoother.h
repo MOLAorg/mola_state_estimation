@@ -25,6 +25,7 @@
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
+#include <mola_kernel/interfaces/VizInterface.h>
 #include <mola_kernel/version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
@@ -353,6 +354,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
         /** Elapsed time between "from_kf" and "to_kf" [seconds] */
         double deltaTime = .0;
     };
+
+    VizInterface::Ptr visualizer_;
 };
 
 }  // namespace mola::state_estimation_smoother

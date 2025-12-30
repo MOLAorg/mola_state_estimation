@@ -147,6 +147,40 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     // Load params:
     params_.loadFrom(cfg["params"]);
 
+    if (auto vizMods = ExecutableBase::findService<mola::VizInterface>(); !vizMods.empty())
+    {
+        visualizer_ = std::dynamic_pointer_cast<mola::VizInterface>(*vizMods.begin());
+        if (visualizer_)
+        {
+            MRPT_LOG_DEBUG_STREAM("Connected to visualizer module");
+        }
+    }
+
+    if (visualizer_)
+    {
+        this->mrpt::system::COutputLogger::logRegisterCallback(
+            [&](std::string_view msg, const mrpt::system::VerbosityLevel level,
+                std::string_view loggerName, const mrpt::Clock::time_point timestamp)
+            {
+                using namespace std::string_literals;
+
+                if (!params_.visualization.show_console_messages)
+                {
+                    return;
+                }
+
+                if (level < this->getMinLoggingLevel())
+                {
+                    return;
+                }
+
+                visualizer_->output_console_message(
+                    "["s + mrpt::system::timeLocalToString(timestamp) + "|"s +
+                    mrpt::typemeta::enum2str(level) + " |"s + std::string(loggerName) + "]"s +
+                    std::string(msg));
+            });
+    }
+
     // Forward parameters to GTSAM smoother & iSAM2:
     gtsam::ISAM2Params isam2Params;
     isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother

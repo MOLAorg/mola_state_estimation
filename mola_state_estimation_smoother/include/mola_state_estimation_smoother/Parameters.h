@@ -195,6 +195,15 @@ class Parameters
     std::regex do_process_gnss_labels_re{".*"};
 
     /** @} */
+
+    struct Visualization
+    {
+        bool show_console_messages = true;
+
+        // this is automatically called by parent's loadFrom()
+        void loadFrom(const mrpt::containers::yaml& cfg);
+    };
+    Visualization visualization;
 };
 
 }  // namespace mola::state_estimation_smoother

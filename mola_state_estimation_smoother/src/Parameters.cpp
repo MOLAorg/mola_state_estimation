@@ -131,6 +131,16 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
             tw[i] = seq.at(i).as<double>();
         }
     }
+
+    if (cfg.has("visualization"))
+    {
+        visualization.loadFrom(cfg["visualization"]);
+    }
+}
+
+void Parameters::Visualization::loadFrom(const mrpt::containers::yaml& cfg)
+{
+    MCP_LOAD_OPT(cfg, show_console_messages);
 }
 
 }  // namespace mola::state_estimation_smoother
