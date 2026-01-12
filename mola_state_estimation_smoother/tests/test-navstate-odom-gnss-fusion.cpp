@@ -340,8 +340,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     constexpr int RANDOM_REPETITIONS = 5;
 
-    rng.randomize(1234);
-
     // shortcuts:
     for (const auto& kinModel : {Kinematic::ConstantVelocity, Kinematic::Tricycle})
     {
@@ -359,6 +357,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         {
             for (int rep = 0; rep < RANDOM_REPETITIONS; rep++)
             {
+                rng.randomize(1234 + rep);  // for comparable results against diff kin models
+
                 std::cout
                     << "\n"
                        "========================================================================\n"
