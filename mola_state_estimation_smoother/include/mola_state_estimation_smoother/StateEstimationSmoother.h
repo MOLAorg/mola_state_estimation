@@ -108,8 +108,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
    private:
-    class FactorConstVelKinematics;  // Forward decls.
-    class FactorTricycleKinematics;
+    class AbsFactorConstVelKinematics;  // Forward decls.
+    class AbsFactorTricycleKinematics;
 
    public:
     StateEstimationSmoother();
@@ -284,8 +284,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     void process_pending_gtsam_updates();
 
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-    void addFactor(const FactorConstVelKinematics& f);
-    void addFactor(const FactorTricycleKinematics& f);
+    void addFactor(const AbsFactorConstVelKinematics& f);
+    void addFactor(const AbsFactorTricycleKinematics& f);
 
     /// Delete out-of-window entries in stamp2frame_index and last_estimated_state
     void delete_too_old_entries();
@@ -318,13 +318,13 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /** Abstract representation of a constant-velocity kinematic motion model factor
      * between two key frames.
      */
-    class FactorConstVelKinematics
+    class AbsFactorConstVelKinematics
     {
        public:
-        FactorConstVelKinematics() = default;
+        AbsFactorConstVelKinematics() = default;
 
         /** Creates relative pose constraint of KF `to` as seem from `from`. */
-        FactorConstVelKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
+        AbsFactorConstVelKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
             : from_kf(kf_from), to_kf(kf_to), deltaTime(delta_time)
         {
         }
@@ -338,13 +338,13 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /** Abstract representation of a constant-velocity tricycle kinematic motion
      * model factor between two key frames.
      */
-    class FactorTricycleKinematics
+    class AbsFactorTricycleKinematics
     {
        public:
-        FactorTricycleKinematics() = default;
+        AbsFactorTricycleKinematics() = default;
 
         /** Creates relative pose constraint of KF `to` as seem from `from`. */
-        FactorTricycleKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
+        AbsFactorTricycleKinematics(id_t kf_from, id_t kf_to, double delta_time)  // NOLINT
             : from_kf(kf_from), to_kf(kf_to), deltaTime(delta_time)
         {
         }

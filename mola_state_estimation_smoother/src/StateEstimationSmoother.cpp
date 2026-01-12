@@ -49,6 +49,7 @@
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
+#include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 
@@ -63,6 +64,7 @@ constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
 constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
 constexpr double PLANAR_XY_SIGMA             = 1e10;
 constexpr double PLANAR_Z_SIGMA              = 1e-4;
+constexpr double TRICYCLE_LARGE_SIGMAS       = 1e6;
 
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
@@ -742,7 +744,7 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
 }
 
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-void StateEstimationSmoother::addFactor(const FactorConstVelKinematics& f)
+void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
 {
     MRPT_LOG_DEBUG_STREAM(
         "[addFactor] FactorConstVelKinematics: " << f.from_kf << " ==> " << f.to_kf
@@ -805,10 +807,80 @@ void StateEstimationSmoother::addFactor(const FactorConstVelKinematics& f)
         kTi, kbWi, kTj, dt, noise_kinematicsOrientation);
 }
 
-void StateEstimationSmoother::addFactor(const FactorTricycleKinematics& f)
+void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
 {
-    THROW_EXCEPTION("Write me!");
-    (void)f;
+    MRPT_LOG_DEBUG_STREAM(
+        "[addFactor] FactorTricycleKinematics: " << f.from_kf << " ==> " << f.to_kf
+                                                 << " dt=" << f.deltaTime);
+
+    // Add const-vel factor to gtsam itself:
+    double dt = f.deltaTime;
+
+    // trick to easily handle queries on exactly an existing keyframe:
+    if (dt == 0)
+    {
+        dt = 1e-5;
+    }
+
+    ASSERT_GT_(dt, 0.);
+
+    // errors in constant vel:
+    const double std_lin_vel = params_.sigma_random_walk_acceleration_linear;
+    const double std_ang_vel = params_.sigma_random_walk_acceleration_angular;
+
+    if (dt > params_.time_between_frames_to_warning)
+    {
+        MRPT_LOG_WARN_FMT("Tricycle kinematics factor added for large dT=%.03f s.", dt);
+    }
+
+    // 1) Add GTSAM factors for constant velocity model
+    // -------------------------------------------------
+    const auto kTi  = T(f.from_kf);
+    const auto kTj  = T(f.to_kf);
+    const auto kbVi = V(f.from_kf);
+    const auto kbVj = V(f.to_kf);
+    const auto kbWi = W(f.from_kf);
+    const auto kbWj = W(f.to_kf);
+
+    // See line 3 of eq (4) in the MOLA RSS2019 paper
+    // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
+    // here too:
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbVi, kTj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_lin_vel * dt));
+
+    // \omega is in the body frame, we need a special factor to rotate it:
+    // See line 4 of eq (4) in the MOLA RSS2019 paper.
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
+
+    // In the tricycle model, body v_y must be zero:
+    {
+        const Eigen::Vector3d sigmas = {
+            TRICYCLE_LARGE_SIGMAS, std_lin_vel * dt, TRICYCLE_LARGE_SIGMAS};
+
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+            kbVj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
+    // In the tricycle model, body w_x,w_y must be zero:
+    {
+        const Eigen::Vector3d sigmas = {std_lin_vel * dt, std_lin_vel * dt, TRICYCLE_LARGE_SIGMAS};
+
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+            kbWj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
+
+    // 2) Add kinematics / numerical integration factor
+    // ---------------------------------------------------
+    gtsam::Vector6 sigmas;
+    const auto     sigmaPos   = params_.sigma_integrator_position;
+    const auto     sigmaAngle = params_.sigma_integrator_orientation;
+    sigmas << sigmaPos, sigmaPos, sigmaPos, sigmaAngle, sigmaAngle, sigmaAngle;
+
+    auto noise_kinematics = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+    // (To be written in a report/paper!)
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTricycleKinematic>(
+        kTi, kbVi, kbWi, kTj, dt, noise_kinematics);
 }
 
 void StateEstimationSmoother::delete_too_old_entries()
@@ -1303,7 +1375,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
     {
         case KinematicModel::ConstantVelocity:
         {
-            FactorConstVelKinematics f;
+            AbsFactorConstVelKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;
@@ -1313,7 +1385,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
         case KinematicModel::Tricycle:
         {
-            FactorTricycleKinematics f;
+            AbsFactorTricycleKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;
