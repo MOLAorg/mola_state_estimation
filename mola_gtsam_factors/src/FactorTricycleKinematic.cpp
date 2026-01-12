@@ -31,12 +31,8 @@ FactorTricycleKinematic::FactorTricycleKinematic()
 
 FactorTricycleKinematic::FactorTricycleKinematic(
     gtsam::Key kTi, gtsam::Key kVi, gtsam::Key kWi, gtsam::Key kTj, const double dt,
-    const gtsam::SharedNoiseModel& model, const double w_threshold,
-    const bool approximateDerivatives)
-    : Base(model, kTi, kVi, kWi, kTj),
-      dt_(dt),
-      w_threshold_(w_threshold),
-      approximateDerivatives_(approximateDerivatives)
+    const gtsam::SharedNoiseModel& model, const double w_threshold)
+    : Base(model, kTi, kVi, kWi, kTj), dt_(dt), w_threshold_(w_threshold)
 {
 }
 

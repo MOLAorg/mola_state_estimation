@@ -60,9 +60,8 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
         gtsam::Pose3, gtsam::Point3, gtsam::Point3,  // Ti, bVi, bWi
         gtsam::Pose3>;  // Tj
 
-    double dt_                     = 0.0;
-    double w_threshold_            = 1e-4;  // Threshold for considering w ≈ 0
-    bool   approximateDerivatives_ = true;
+    double dt_          = 0.0;
+    double w_threshold_ = 1e-4;  // Threshold for considering w ≈ 0
 
    public:
     /// default constructor for serialization
@@ -77,12 +76,10 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
      * @param dt Time interval
      * @param model Noise model (should be 6D for Pose3)
      * @param w_threshold Threshold below which angular velocity is considered zero
-     * @param approximateDerivatives If true, skip numerical derivative computation
      */
     FactorTricycleKinematic(
         gtsam::Key kTi, gtsam::Key kVi, gtsam::Key kWi, gtsam::Key kTj, const double dt,
-        const gtsam::SharedNoiseModel& model, const double w_threshold = 1e-4,
-        const bool approximateDerivatives = true);
+        const gtsam::SharedNoiseModel& model, const double w_threshold = 1e-4);
 
     /// @return a deep copy of this factor
     gtsam::NonlinearFactor::shared_ptr clone() const override
@@ -171,8 +168,7 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
         const This* e = dynamic_cast<const This*>(&expected);
         return e != nullptr && Base::equals(*e, tol) &&
                gtsam::traits<double>::Equals(e->dt_, dt_, tol) &&
-               gtsam::traits<double>::Equals(e->w_threshold_, w_threshold_, tol) &&
-               e->approximateDerivatives_ == approximateDerivatives_;
+               gtsam::traits<double>::Equals(e->w_threshold_, w_threshold_, tol);
     }
 
    private:
@@ -186,7 +182,6 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
             "FactorTricycleKinematic", boost::serialization::base_object<Base>(*this));
         ar& BOOST_SERIALIZATION_NVP(dt_);
         ar& BOOST_SERIALIZATION_NVP(w_threshold_);
-        ar& BOOST_SERIALIZATION_NVP(approximateDerivatives_);
     }
 #endif
 };
