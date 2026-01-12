@@ -33,3 +33,11 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_state_estimation_smoother
 )
+
+mola_add_test(
+  TARGET  test-twist-fusion
+  SOURCES test-twist-fusion.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+

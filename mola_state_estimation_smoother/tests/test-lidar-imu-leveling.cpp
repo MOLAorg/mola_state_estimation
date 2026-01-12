@@ -4,7 +4,7 @@
 | | | | | | (_) | | (_| | Localization and mApping (MOLA)
 |_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
 
- Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+ Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria,
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
@@ -33,7 +33,6 @@ using namespace mrpt::literals;
 
 namespace
 {
-const bool   VERBOSE  = mrpt::get_env<bool>("VERBOSE", false);
 const size_t numSteps = 100;
 const double T        = 0.05;  // 20 Hz
 
@@ -77,7 +76,7 @@ void run_test()
         mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, 0.0_deg, initBadPitch, initBadRoll);
 
     // Accumulated Odometry (Simulate typical LiDAR drift)
-    mrpt::poses::CPose3D currentOdom = mrpt::poses::CPose3D::Identity();
+    mrpt::poses::CPose3D currentOdom = initialBadPose;
 
     for (size_t i = 1; i <= numSteps; i++)
     {

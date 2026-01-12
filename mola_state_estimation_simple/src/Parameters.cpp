@@ -4,7 +4,7 @@
 | | | | | | (_) | | (_| | Localization and mApping (MOLA)
 |_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
 
- Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+ Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria,
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
@@ -61,7 +61,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
         auto&      tw  = initial_twist;
         const auto seq = cfg["initial_twist"].asSequenceRange();
-        for (size_t i = 0; i < 6; i++) tw[i] = seq.at(i).as<double>();
+        for (size_t i = 0; i < 6; i++)
+        {
+            tw[i] = seq.at(i).as<double>();
+        }
     }
 }
 

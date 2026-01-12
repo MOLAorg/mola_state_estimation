@@ -4,7 +4,7 @@
 | | | | | | (_) | | (_| | Localization and mApping (MOLA)
 |_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
 
- Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+ Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria,
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
@@ -195,6 +195,15 @@ class Parameters
     std::regex do_process_gnss_labels_re{".*"};
 
     /** @} */
+
+    struct Visualization
+    {
+        bool show_console_messages = true;
+
+        // this is automatically called by parent's loadFrom()
+        void loadFrom(const mrpt::containers::yaml& cfg);
+    };
+    Visualization visualization;
 };
 
 }  // namespace mola::state_estimation_smoother

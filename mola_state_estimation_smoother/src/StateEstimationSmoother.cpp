@@ -4,7 +4,7 @@
 | | | | | | (_) | | (_| | Localization and mApping (MOLA)
 |_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
 
- Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+ Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria,
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
@@ -49,6 +49,7 @@
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
+#include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 
@@ -63,6 +64,7 @@ constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
 constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
 constexpr double PLANAR_XY_SIGMA             = 1e10;
 constexpr double PLANAR_Z_SIGMA              = 1e-4;
+constexpr double TRICYCLE_LARGE_SIGMAS       = 1e6;
 
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
@@ -146,6 +148,40 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params_.loadFrom(cfg["params"]);
+
+    if (auto vizMods = ExecutableBase::findService<mola::VizInterface>(); !vizMods.empty())
+    {
+        visualizer_ = std::dynamic_pointer_cast<mola::VizInterface>(*vizMods.begin());
+        if (visualizer_)
+        {
+            MRPT_LOG_DEBUG_STREAM("Connected to visualizer module");
+        }
+    }
+
+    if (visualizer_)
+    {
+        this->mrpt::system::COutputLogger::logRegisterCallback(
+            [&](std::string_view msg, const mrpt::system::VerbosityLevel level,
+                std::string_view loggerName, const mrpt::Clock::time_point timestamp)
+            {
+                using namespace std::string_literals;
+
+                if (!params_.visualization.show_console_messages)
+                {
+                    return;
+                }
+
+                if (level < this->getMinLoggingLevel())
+                {
+                    return;
+                }
+
+                visualizer_->output_console_message(
+                    "["s + mrpt::system::timeLocalToString(timestamp) + "|"s +
+                    mrpt::typemeta::enum2str(level) + " |"s + std::string(loggerName) + "]"s +
+                    std::string(msg));
+            });
+    }
 
     // Forward parameters to GTSAM smoother & iSAM2:
     gtsam::ISAM2Params isam2Params;
@@ -498,52 +534,56 @@ void StateEstimationSmoother::fuse_twist(
 {
     auto lck = mrpt::lockHelper(stateMutex_);
 
-#if 0
-    const auto&          pd   = d.twist.value();
-    const gtsam::Vector3 v    = {pd.twist.vx, pd.twist.vy, pd.twist.vz};
-    const gtsam::Vector3 w    = {pd.twist.wx, pd.twist.wy, pd.twist.wz};
-    gtsam::Matrix3       vCov = pd.twistCov.asEigen().block<3, 3>(0, 0);
-    gtsam::Matrix3       wCov = pd.twistCov.asEigen().block<3, 3>(3, 3);
+    const gtsam::Vector3 v    = {twist.vx, twist.vy, twist.vz};
+    const gtsam::Vector3 w    = {twist.wx, twist.wy, twist.wz};
+    gtsam::Matrix3       vCov = twistCov.asEigen().block<3, 3>(0, 0);
+    gtsam::Matrix3       wCov = twistCov.asEigen().block<3, 3>(3, 3);
+
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp(timestamp);
 
     {
         auto                                noiseV = gtsam::noiseModel::Gaussian::Covariance(vCov);
         gtsam::noiseModel::Base::shared_ptr robNoiseV;
+#if 0
         if (params_.robust_param > 0)
         {
             robNoiseV = gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseV);
         }
         else
+#endif
         {
             robNoiseV = noiseV;
         }
 
-        fg.addPrior(V(kfId), v, robNoiseV);
+        state_.gtsam->newFactors.addPrior(V(this_kf_id), v, robNoiseV);
     }
     {
         auto                                noiseW = gtsam::noiseModel::Gaussian::Covariance(wCov);
         gtsam::noiseModel::Base::shared_ptr robNoiseW;
+#if 0
         if (params_.robust_param > 0)
         {
             robNoiseW = gtsam::noiseModel::Robust::Create(
                 gtsam::noiseModel::mEstimator::GemanMcClure::Create(params_.robust_param), noiseW);
         }
         else
+#endif
         {
             robNoiseW = noiseW;
         }
 
-        fg.addPrior(W(kfId), w, robNoiseW);
+        state_.gtsam->newFactors.addPrior(W(this_kf_id), w, robNoiseW);
     }
 
     MRPT_LOG_DEBUG_FMT(
-        "[fuse_twist]: t=%f twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
+        "[fuse_twist]: t=%f this_kf_id=%zu twist=%s sigmas=%.02e %.02e %.02e (m) %.02e %.02e "
         "%.02e (deg)",
-        mrpt::Clock::toDouble(timestamp), twist.asString().c_str(), std::sqrt(twistCov(0, 0)),
-        std::sqrt(twistCov(1, 1)), std::sqrt(twistCov(2, 2)),
-        mrpt::RAD2DEG(std::sqrt(twistCov(3, 3))), mrpt::RAD2DEG(std::sqrt(twistCov(4, 4))),
-        mrpt::RAD2DEG(std::sqrt(twistCov(5, 5))));
-#endif
+        mrpt::Clock::toDouble(timestamp), static_cast<std::size_t>(this_kf_id),
+        twist.asString().c_str(), std::sqrt(twistCov(0, 0)), std::sqrt(twistCov(1, 1)),
+        std::sqrt(twistCov(2, 2)), mrpt::RAD2DEG(std::sqrt(twistCov(3, 3))),
+        mrpt::RAD2DEG(std::sqrt(twistCov(4, 4))), mrpt::RAD2DEG(std::sqrt(twistCov(5, 5))));
 }
 
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
@@ -704,7 +744,7 @@ void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
 }
 
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
-void StateEstimationSmoother::addFactor(const FactorConstVelKinematics& f)
+void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
 {
     MRPT_LOG_DEBUG_STREAM(
         "[addFactor] FactorConstVelKinematics: " << f.from_kf << " ==> " << f.to_kf
@@ -767,10 +807,80 @@ void StateEstimationSmoother::addFactor(const FactorConstVelKinematics& f)
         kTi, kbWi, kTj, dt, noise_kinematicsOrientation);
 }
 
-void StateEstimationSmoother::addFactor(const FactorTricycleKinematics& f)
+void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
 {
-    THROW_EXCEPTION("Write me!");
-    (void)f;
+    MRPT_LOG_DEBUG_STREAM(
+        "[addFactor] FactorTricycleKinematics: " << f.from_kf << " ==> " << f.to_kf
+                                                 << " dt=" << f.deltaTime);
+
+    // Add const-vel factor to gtsam itself:
+    double dt = f.deltaTime;
+
+    // trick to easily handle queries on exactly an existing keyframe:
+    if (dt == 0)
+    {
+        dt = 1e-5;
+    }
+
+    ASSERT_GT_(dt, 0.);
+
+    // errors in constant vel:
+    const double std_lin_vel = params_.sigma_random_walk_acceleration_linear;
+    const double std_ang_vel = params_.sigma_random_walk_acceleration_angular;
+
+    if (dt > params_.time_between_frames_to_warning)
+    {
+        MRPT_LOG_WARN_FMT("Tricycle kinematics factor added for large dT=%.03f s.", dt);
+    }
+
+    // 1) Add GTSAM factors for constant velocity model
+    // -------------------------------------------------
+    const auto kTi  = T(f.from_kf);
+    const auto kTj  = T(f.to_kf);
+    const auto kbVi = V(f.from_kf);
+    const auto kbVj = V(f.to_kf);
+    const auto kbWi = W(f.from_kf);
+    const auto kbWj = W(f.to_kf);
+
+    // See line 3 of eq (4) in the MOLA RSS2019 paper
+    // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
+    // here too:
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbVi, kTj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_lin_vel * dt));
+
+    // \omega is in the body frame, we need a special factor to rotate it:
+    // See line 4 of eq (4) in the MOLA RSS2019 paper.
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
+
+    // In the tricycle model, body v_y must be zero:
+    {
+        const Eigen::Vector3d sigmas = {
+            TRICYCLE_LARGE_SIGMAS, std_lin_vel * dt, TRICYCLE_LARGE_SIGMAS};
+
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+            kbVj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
+    // In the tricycle model, body w_x,w_y must be zero:
+    {
+        const Eigen::Vector3d sigmas = {std_ang_vel * dt, std_ang_vel * dt, TRICYCLE_LARGE_SIGMAS};
+
+        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+            kbWj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
+
+    // 2) Add kinematics / numerical integration factor
+    // ---------------------------------------------------
+    gtsam::Vector6 sigmas;
+    const auto     sigmaPos   = params_.sigma_integrator_position;
+    const auto     sigmaAngle = params_.sigma_integrator_orientation;
+    sigmas << sigmaAngle, sigmaAngle, sigmaAngle, sigmaPos, sigmaPos, sigmaPos;
+
+    auto noise_kinematics = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+
+    // (To be written in a report/paper!)
+    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTricycleKinematic>(
+        kTi, kbVi, kbWi, kTj, dt, noise_kinematics);
 }
 
 void StateEstimationSmoother::delete_too_old_entries()
@@ -1265,7 +1375,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
     {
         case KinematicModel::ConstantVelocity:
         {
-            FactorConstVelKinematics f;
+            AbsFactorConstVelKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;
@@ -1275,7 +1385,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
         case KinematicModel::Tricycle:
         {
-            FactorTricycleKinematics f;
+            AbsFactorTricycleKinematics f;
             f.from_kf   = from;
             f.to_kf     = to;
             f.deltaTime = dt;

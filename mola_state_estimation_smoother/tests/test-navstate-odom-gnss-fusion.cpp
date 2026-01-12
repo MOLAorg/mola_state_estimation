@@ -4,7 +4,7 @@
 | | | | | | (_) | | (_| | Localization and mApping (MOLA)
 |_| |_| |_|\___/|_|\__,_| https://github.com/MOLAorg/mola
 
- Copyright (C) 2018-2025 Jose Luis Blanco, University of Almeria,
+ Copyright (C) 2018-2026 Jose Luis Blanco, University of Almeria,
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
@@ -335,70 +335,75 @@ void run_test(const TestCase& testCase)
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
-    int           numErrors          = 0;
+    int numErrors  = 0;
+    int numSuccess = 0;
+
     constexpr int RANDOM_REPETITIONS = 5;
 
-    rng.randomize(1234);
-
     // shortcuts:
-    const auto modelCV = Kinematic::ConstantVelocity;
-
-    std::vector<TestCase> tests = {
-        {false, Pose::Identity(), modelCV},
-        {false, Pose::FromTranslation(3.0, 2.0, 1.0), modelCV},
-        {false, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), modelCV},
-        {true, Pose::Identity(), modelCV},
-        {true, Pose::FromTranslation(3.0, 2.0, 1.0), modelCV},
-        {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), modelCV},
-    };
-
-    for (const auto& t : tests)
+    for (const auto& kinModel : {Kinematic::ConstantVelocity, Kinematic::Tricycle})
     {
-        for (int rep = 0; rep < RANDOM_REPETITIONS; rep++)
+        std::vector<TestCase> tests = {
+            {false, Pose::Identity(), kinModel},
+            {false, Pose::FromTranslation(3.0, 2.0, 1.0), kinModel},
+            {false, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), kinModel},
+            {true, Pose::Identity(), kinModel},
+            {true, Pose::FromTranslation(3.0, 2.0, 1.0), kinModel},
+            {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), kinModel},
+            {true, Pose::FromXYZYawPitchRoll(1.0, 3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg), kinModel},
+        };
+
+        for (const auto& t : tests)
         {
-            std::cout
-                << "\n"
-                   "========================================================================\n"
-                   "=== Running "
-                << rep << "/" << RANDOM_REPETITIONS << " test for initial pose: " << t.pose
-                << " Kinematic: " << mrpt::typemeta::enum2str(t.model)
-                << " has_gnss: " << t.has_gnss
-                << "\n"
-                   "========================================================================\n";
+            for (int rep = 0; rep < RANDOM_REPETITIONS; rep++)
+            {
+                rng.randomize(1234 + rep);  // for comparable results against diff kin models
 
-            bool failed = true;
-            try
-            {
-                run_test(t);
+                std::cout
+                    << "\n"
+                       "========================================================================\n"
+                       "=== Running "
+                    << rep << "/" << RANDOM_REPETITIONS << " test for initial pose: " << t.pose
+                    << " Kinematic: " << mrpt::typemeta::enum2str(t.model)
+                    << " has_gnss: " << t.has_gnss
+                    << "\n"
+                       "========================================================================\n";
 
-                failed = false;
-            }
-            catch (const std::exception& e)
-            {
-                mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
-                std::cerr << " ERROR:\n" << e.what() << std::endl;
-                mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::DEFAULT);
-            }
+                bool failed = true;
+                try
+                {
+                    run_test(t);
 
-            std::cout
-                << "\n"
-                   "========================================================================\n";
-            if (failed)
-            {
-                numErrors++;
-                std::cout << "❌ FAILED\n";
+                    failed = false;
+                }
+                catch (const std::exception& e)
+                {
+                    mrpt::system::consoleColorAndStyle(mrpt::system::ConsoleForegroundColor::RED);
+                    std::cerr << " ERROR:\n" << e.what() << std::endl;
+                    mrpt::system::consoleColorAndStyle(
+                        mrpt::system::ConsoleForegroundColor::DEFAULT);
+                }
+
+                std::cout
+                    << "\n"
+                       "========================================================================\n";
+                if (failed)
+                {
+                    numErrors++;
+                    std::cout << "❌ FAILED\n";
+                }
+                else
+                {
+                    numSuccess++;
+                    std::cout << "✅ SUCCESS\n";
+                }
+                std::cout << "====================================================================="
+                             "===\n\n";
             }
-            else
-            {
-                std::cout << "✅ SUCCESS\n";
-            }
-            std::cout
-                << "========================================================================\n\n";
         }
     }
 
-    std::cout << "\n\n RESULT: ✅ " << (tests.size() * RANDOM_REPETITIONS - numErrors)
-              << " SUCCESS, ❌ " << numErrors << " FAILURES.\n";
+    std::cout << "\n\n RESULT: ✅ " << numSuccess << " SUCCESS, ❌ " << numErrors << " FAILURES.\n";
 
     return numErrors == 0 ? 0 : 1;
 }
