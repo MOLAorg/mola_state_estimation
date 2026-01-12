@@ -47,8 +47,7 @@ gtsam::Vector FactorTricycleKinematic::evaluateError(
     boost::optional<gtsam::Matrix&> H1, boost::optional<gtsam::Matrix&> H2,
     boost::optional<gtsam::Matrix&> H3, boost::optional<gtsam::Matrix&> H4
 #else
-    boost::optional<gtsam::Matrix&> H1, boost::optional<gtsam::Matrix&> H2,
-    boost::optional<gtsam::Matrix&> H3, boost::optional<gtsam::Matrix&> H4
+    gtsam::Matrix* H1, gtsam::Matrix* H2, gtsam::Matrix* H3, gtsam::Matrix* H4
 #endif
 ) const
 {
