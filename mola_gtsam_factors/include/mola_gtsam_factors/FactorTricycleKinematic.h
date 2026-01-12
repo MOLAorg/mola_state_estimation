@@ -97,40 +97,7 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
      */
     static gtsam::Pose3 tricycleKinematicModel(
         const gtsam::Pose3& Ti, const gtsam::Point3& bVi, const gtsam::Point3& bWi, double dt,
-        double w_threshold)
-    {
-        // Extract scalar values (assuming planar motion for tricycle)
-        const double v = bVi.x();  // Forward velocity
-        const double w = bWi.z();  // Yaw rate (angular velocity around z-axis)
-
-        gtsam::Pose3 delta_pose;
-
-        if (std::abs(w) < w_threshold)
-        {
-            // Straight line motion
-            const gtsam::Point3 translation(v * dt, 0.0, 0.0);
-            delta_pose = gtsam::Pose3(gtsam::Rot3::Identity(), translation);
-        }
-        else
-        {
-            // Circular arc motion
-            const double R     = v / w;  // Radius of curvature
-            const double theta = w * dt;  // Total rotation angle
-
-            // Position change in body frame
-            const double        dx = R * std::sin(theta);
-            const double        dy = R * (1.0 - std::cos(theta));
-            const gtsam::Point3 translation(dx, dy, 0.0);
-
-            // Rotation around z-axis
-            const gtsam::Rot3 rotation = gtsam::Rot3::Rz(theta);
-
-            delta_pose = gtsam::Pose3(rotation, translation);
-        }
-
-        // Apply delta in body frame: T_j_pred = T_i * delta_T
-        return Ti.compose(delta_pose);
-    }
+        double w_threshold);
 
     /**
      * Error function

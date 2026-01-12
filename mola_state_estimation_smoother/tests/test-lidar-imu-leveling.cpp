@@ -33,7 +33,6 @@ using namespace mrpt::literals;
 
 namespace
 {
-const bool   VERBOSE  = mrpt::get_env<bool>("VERBOSE", false);
 const size_t numSteps = 100;
 const double T        = 0.05;  // 20 Hz
 
