@@ -863,7 +863,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     }
     // In the tricycle model, body w_x,w_y must be zero:
     {
-        const Eigen::Vector3d sigmas = {std_lin_vel * dt, std_lin_vel * dt, TRICYCLE_LARGE_SIGMAS};
+        const Eigen::Vector3d sigmas = {std_ang_vel * dt, std_ang_vel * dt, TRICYCLE_LARGE_SIGMAS};
 
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
             kbWj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
@@ -874,7 +874,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     gtsam::Vector6 sigmas;
     const auto     sigmaPos   = params_.sigma_integrator_position;
     const auto     sigmaAngle = params_.sigma_integrator_orientation;
-    sigmas << sigmaPos, sigmaPos, sigmaPos, sigmaAngle, sigmaAngle, sigmaAngle;
+    sigmas << sigmaAngle, sigmaAngle, sigmaAngle, sigmaPos, sigmaPos, sigmaPos;
 
     auto noise_kinematics = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 

@@ -158,15 +158,6 @@ params:
   additional_isam2_update_steps: 3
 
   # --------------------------------------------------------------------------
-  # Legacy Parameters (kept for backward compatibility)
-  # --------------------------------------------------------------------------
-
-  # NOTE: These parameters are deprecated but kept for compatibility
-  robust_param: 3.0 # 0=no robust disabled
-  max_rmse: 2 # max inconsistencies to discard solution
-
-
-  # --------------------------------------------------------------------------
   # Sensor Input Filtering (Regex Patterns)
   # --------------------------------------------------------------------------
 

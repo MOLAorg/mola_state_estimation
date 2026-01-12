@@ -374,7 +374,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
          Twist(0.5, 0.0, 0.0, 0.2, 0.1, 0.0),  // Forward with pitch/roll rotation
          "3D rotation with forward motion (wx=0.2, wy=0.1)"},
 
-        // Test 14: Vertical motion
+        // Test 13: Vertical motion
         {Pose::FromXYZYawPitchRoll(0.0, 0.0, 0.0, 0.0, 0.0_deg, .0_deg),
          Twist(0, 0.0, 0.1, 0.0, 0.0, 0.0), "Pure vertical motion"},
     };

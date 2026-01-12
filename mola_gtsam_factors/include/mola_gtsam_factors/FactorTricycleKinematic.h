@@ -147,8 +147,8 @@ class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
         boost::optional<gtsam::Matrix&> H1, boost::optional<gtsam::Matrix&> H2,
         boost::optional<gtsam::Matrix&> H3, boost::optional<gtsam::Matrix&> H4
 #else
-        boost::optional<gtsam::Matrix&> H1, boost::optional<gtsam::Matrix&> H2,
-        boost::optional<gtsam::Matrix&> H3, boost::optional<gtsam::Matrix&> H4
+        gtsam::Matrix* H1 = nullptr, gtsam::Matrix* H2 = nullptr, gtsam::Matrix* H3 = nullptr,
+        gtsam::Matrix* H4 = nullptr
 #endif
     ) const override;
 

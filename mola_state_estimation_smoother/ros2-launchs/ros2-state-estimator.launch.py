@@ -147,13 +147,8 @@ def generate_launch_description():
         ])
     )
     state_estimator_config_yaml_arg = DeclareLaunchArgument(
-        "state_estimator_config_yaml", default_value=PythonExpression(
-            ["'../state-estimator-params/state-estimation-smoother.yaml' if ",
-             LaunchConfiguration(
-                 'use_state_estimator'),
-             " else '../state-estimator-params/state-estimation-simple.yaml'"
-             ]),
-        description="A YAML file with settings for the state estimator. Absolute path or relative to 'mola-cli-launchs/lidar_odometry_ros2.yaml'")
+        "state_estimator_config_yaml", default_value='../params/state-estimation-smoother.yaml',
+        description="A YAML file with settings for the state estimator. Absolute path or relative to this launch file")
     state_estimator_config_yaml_env_var = SetEnvironmentVariable(
         name='MOLA_STATE_ESTIMATOR_YAML', value=LaunchConfiguration('state_estimator_config_yaml'))
     # ~~~~~~~~~~~~
