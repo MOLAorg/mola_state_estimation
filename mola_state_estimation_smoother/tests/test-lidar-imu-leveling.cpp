@@ -77,7 +77,7 @@ void run_test()
         mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, 0.0_deg, initBadPitch, initBadRoll);
 
     // Accumulated Odometry (Simulate typical LiDAR drift)
-    mrpt::poses::CPose3D currentOdom = mrpt::poses::CPose3D::Identity();
+    mrpt::poses::CPose3D currentOdom = initialBadPose;
 
     for (size_t i = 1; i <= numSteps; i++)
     {
