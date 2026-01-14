@@ -2,6 +2,22 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#7 <https://github.com/MOLAorg/mola_state_estimation/issues/7>`_ from MOLAorg/feature/tricycle-kinematic
+  Add tricycle kinematics
+* lint clean ups
+* Copyright year bump
+* Merge pull request `#8 <https://github.com/MOLAorg/mola_state_estimation/issues/8>`_ from MOLAorg/fix/add-simple-estimator-unit-tests
+  Add tests for simple estimator
+* Add tests for simple estimator
+* Merge pull request `#5 <https://github.com/MOLAorg/mola_state_estimation/issues/5>`_ from MOLAorg/feature/fuse-gnss-imu-odom
+  Refactor: new packages mola_georeferencing, mola_gtsam_factors, functional smoother state estimator
+* One further fix for cmake
+* integrate code coverage in cmake
+* Refactor to expose all gtsam factors into a new library 'mola_gtsam_factors'
+* Contributors: Jose Luis Blanco-Claraco
+
 1.11.1 (2025-10-20)
 -------------------
 * Update to build against MOLA>=2.1.0 with ConstPtr API

@@ -2,6 +2,18 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#5 <https://github.com/MOLAorg/mola_state_estimation/issues/5>`_ from MOLAorg/feature/fuse-gnss-imu-odom
+  Refactor: new packages mola_georeferencing, mola_gtsam_factors, functional smoother state estimator
+* Refactor to expose all gtsam factors into a new library 'mola_gtsam_factors'
+* Contributors: Jose Luis Blanco-Claraco
+
+* Merge pull request `#5 <https://github.com/MOLAorg/mola_state_estimation/issues/5>`_ from MOLAorg/feature/fuse-gnss-imu-odom
+  Refactor: new packages mola_georeferencing, mola_gtsam_factors, functional smoother state estimator
+* Refactor to expose all gtsam factors into a new library 'mola_gtsam_factors'
+* Contributors: Jose Luis Blanco-Claraco
+
 1.11.1 (2025-10-20)
 -------------------
 

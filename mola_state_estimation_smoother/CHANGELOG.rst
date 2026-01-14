@@ -2,6 +2,51 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#7 <https://github.com/MOLAorg/mola_state_estimation/issues/7>`_ from MOLAorg/feature/tricycle-kinematic
+  Add tricycle kinematics
+* Use bad initial pose for unit test
+* unit test: same conditions for different kinematic models
+* Copyright year bump
+* Add FactorTricycleKinematic
+* Implement twist fusion
+* Add twist unit test
+* Unit test: include tricycle tests too
+* Enable connection to MolaViz for console messages
+* converted into ament_cmake; update template yaml params file
+* Add templates to launch the estimator as a standalone ROS 2 node
+* Merge pull request `#5 <https://github.com/MOLAorg/mola_state_estimation/issues/5>`_ from MOLAorg/feature/fuse-gnss-imu-odom
+  Refactor: new packages mola_georeferencing, mola_gtsam_factors, functional smoother state estimator
+* More realistic drift case: IMU helps LO
+* fix test: correct IMU acc simulation
+* Default params: more common case of starting near static
+* fixed imu acc gravity alignment
+* Add two-odometry unit test
+* fix error, and add support for azimuth offset
+* add IMU+GPS  based azimuth estimation
+* Refactor: symbolic factor classes moved as internal smoother classes
+* Make mola_gtsam_factors non headers-only and rename GNSS2ENU as GnssEnu for consistency
+* fixed missing extrapolation steps
+* implement basic pose extrapolation
+* honor initial twist
+* Fixed odom+gnss fusion
+* implement correct auto geo-referenciation
+* Support fusing poses wrt map frame too
+* marginals for uncertainty
+* refactor to use Pose3 instead of P+R
+* initialize georef gtsam variables
+* Make important parameters mandatory in yaml config files
+* New unit test for fusing GPS+odometry
+* process CObservationRobotPose
+* One further fix for cmake
+* integrate code coverage in cmake
+* Update .h docs to match the new design
+* Enable code coverage
+* Update parameters to hold new geo-ref fields
+* Refactor to expose all gtsam factors into a new library 'mola_gtsam_factors'
+* Contributors: Jose Luis Blanco-Claraco
+
 1.11.1 (2025-10-20)
 -------------------
 * Update to build against MOLA>=2.1.0 with ConstPtr API
