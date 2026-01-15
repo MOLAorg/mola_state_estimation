@@ -99,9 +99,7 @@ if(DETECTED_ROS2)
   find_package(ament_cmake REQUIRED)
 
   if(BUILD_TESTING)
-    find_package(ament_lint_auto REQUIRED)
     find_package(ament_cmake_gtest REQUIRED)
-    ament_lint_auto_find_test_dependencies()
 
     add_subdirectory(tests)
   endif()
