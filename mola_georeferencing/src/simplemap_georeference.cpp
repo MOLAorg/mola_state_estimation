@@ -18,6 +18,10 @@
 #include <mrpt/topography/conversions.h>
 
 // gtsam factors:
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/nonlinear/Marginals.h>
+#include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
