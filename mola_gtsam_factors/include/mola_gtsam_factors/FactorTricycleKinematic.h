@@ -99,7 +99,7 @@ namespace mola::factors
  * **Notes:**
  * - For 2D motion (ground vehicles), vz and ωx, ωy should typically be zero
  * - The threshold parameter controls when ω is considered "close to zero"
- * - Jacobians are computed numerically by GTSAM
+ * - Analytical Jacobians are provided
  *
  * @see FactorAngularVelocityIntegration for rotation-only integration
  * @see FactorTrapezoidalIntegrator for trapezoidal integration (uses both v_i and v_j)

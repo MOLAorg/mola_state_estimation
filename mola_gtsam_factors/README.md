@@ -138,7 +138,7 @@ graph.add(FactorTricycleKinematic(kT0, kV0, kW0, kT1, dt, noise));
 
 | Factor | Description | Variables | Use Case |
 |--------|-------------|-----------|----------|
-| `FactorAngularVelocityIntegration` | ω integration: R₁ = R₀ ⊕ Exp(ω·dt) | 2 rotations, 1 angular vel | IMU gyroscope integration |
+| `FactorAngularVelocityIntegration` | ω integration: R₁ = R₀ ⊕ Exp(ω·dt) | 2 Rot3 (rotations), 1 Vector3 (angular vel) | IMU gyroscope integration |
 | `FactorTrapezoidalIntegrator` | Trapezoidal velocity integration | 2 poses, 2 velocities | Smooth velocity-based motion |
 | `FactorTricycleKinematic` | Ackermann/car kinematic model | 1 pose, 2 velocities, 1 pose | Wheeled vehicle motion |
 | `FactorConstLocalVelocity` | Constant body-frame velocity | 2 rotations, 2 velocities | Velocity smoothing prior |
@@ -147,10 +147,10 @@ graph.add(FactorTricycleKinematic(kT0, kV0, kW0, kT1, dt, noise));
 
 | Factor | Description | Variables | Use Case |
 |--------|-------------|-----------|----------|
-| `FactorGnssEnu` | GNSS position in ENU | 1 pose | GPS/GNSS measurements |
-| `FactorGnssMapEnu` | GNSS with ENU↔map transform | 1 transform, 1 pose | Map georeferencing |
-| `MeasuredGravityFactor` | Gravity direction constraint | 1 transform, 1 pose | IMU accelerometer |
-| `Pose3RotationFactor` | Rotation-only measurement | 1 transform, 1 pose | Compass, orientation sensors |
+| `FactorGnssEnu` | GNSS position in ENU | 1 Pose3 | GPS/GNSS measurements |
+| `FactorGnssMapEnu` | GNSS with ENU↔map transform | 2 Pose3 (transform, pose) | Map georeferencing |
+| `MeasuredGravityFactor` | Gravity direction constraint | 2 Pose3 (transform, pose) | IMU accelerometer |
+| `Pose3RotationFactor` | Rotation-only measurement | 2 Pose3 (transform, pose) | Compass, orientation sensors |
 
 ## Documentation
 
