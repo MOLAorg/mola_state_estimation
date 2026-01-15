@@ -472,7 +472,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
     const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
     auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
-        gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
+              gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
 
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
         symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
@@ -1330,10 +1330,9 @@ void StateEstimationSmoother::initialize_new_frame(
     // Add planar constraints:
     if (params_.enforce_planar_motion)
     {
-        const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector6(
-                PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA,
-                PLANAR_Z_SIGMA));
+        const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6(
+            PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA,
+            PLANAR_Z_SIGMA));
 
         state_.gtsam->newFactors.addPrior(T(id), gtsam::Pose3::Identity(), planar_z_noise);
     }
