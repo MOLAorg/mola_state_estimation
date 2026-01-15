@@ -2,6 +2,14 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* test: less strict limits to avoid random failures
+* cmake: Remove non-used find_package() for ament_lint_auto
+* Merge pull request `#11 <https://github.com/MOLAorg/mola_state_estimation/issues/11>`_ from MOLAorg/feat/improve-docs
+  Improve docs for mola_gtsam_factors
+* Contributors: Jose Luis Blanco-Claraco
+
 2.0.0 (2026-01-14)
 ------------------
 * Merge pull request `#7 <https://github.com/MOLAorg/mola_state_estimation/issues/7>`_ from MOLAorg/feature/tricycle-kinematic

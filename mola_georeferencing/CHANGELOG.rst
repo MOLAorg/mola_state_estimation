@@ -2,6 +2,14 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Fix potential bug in sm_georeferencing
+* Merge pull request `#11 <https://github.com/MOLAorg/mola_state_estimation/issues/11>`_ from MOLAorg/feat/improve-docs
+  Improve docs for mola_gtsam_factors
+* Add missing #include for gtsam
+* Contributors: Jose Luis Blanco-Claraco
+
 2.0.0 (2026-01-14)
 ------------------
 * Merge pull request `#7 <https://github.com/MOLAorg/mola_state_estimation/issues/7>`_ from MOLAorg/feature/tricycle-kinematic
