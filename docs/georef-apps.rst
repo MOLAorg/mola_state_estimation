@@ -128,3 +128,108 @@ for example in KML format suitable for visualization in Google Earth.
 
 |
 
+2.3. ``mola-mm-add-geodetic``: add geodetic coordinates to point clouds
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once you have a **georeferenced metric map** (``*.mm`` file), you can use the CLI tool 
+``mola-mm-add-geodetic`` to enrich point cloud layers with geodetic coordinates 
+(latitude, longitude, altitude in WGS84). This adds three new double-precision fields 
+to each point in ``CGenericPointsMap``-based layers, enabling direct use of geographic 
+coordinates in subsequent analysis or export to GIS applications.
+
+The tool automatically handles the coordinate transformation from the map's local frame 
+to geodetic coordinates using either embedded georeferencing metadata or an external 
+georeferencing file.
+
+The output metric map will contain the same structure as the input, but point cloud 
+layers (CGenericPointsMap-based) will have three additional double-precision fields:
+
+- ``latitude``: WGS84 latitude in decimal degrees
+- ``longitude``: WGS84 longitude in decimal degrees
+- ``altitude``: WGS84 ellipsoidal height in meters
+
+These fields can then be exported to text or PLY format using ``mm2txt`` or ``mm2ply``
+respectively, with the ``--export-fields`` option to include the geodetic coordinates.
+
+For example, to export only coordinates and geodetic information:
+
+.. code-block:: bash
+
+   mm2txt output.mm --export-fields "x,y,z,latitude,longitude,altitude"
+
+|
+
+.. dropdown:: Full CLI reference
+   :icon: code-review
+
+   .. code-block:: bash
+
+      USAGE:
+
+         mola-mm-add-geodetic  -i <input.mm> -o <output.mm> [-g <map.georef>]
+                               [-l <layerName>] ... [-p <foobar.so>] [-v] [--]
+                               [--version] [-h]
+
+
+      Where: 
+
+         -i <input.mm>,  --input <input.mm>
+         (required)  Input metric map file (*.mm)
+
+         -o <output.mm>,  --output <output.mm>
+         (required)  Output metric map file (*.mm) with geodetic coordinates
+         added
+
+         -g <map.georef>,  --georef <map.georef>
+         Optional geo-referencing file (*.georef or *.yaml) to use if the
+         input map does not have embedded georeferencing information
+
+         -l <layerName>,  --layer <layerName>  (accepted multiple times)
+         Layer(s) to process. If not provided, all CGenericPointsMap layers
+         will be processed. This argument can appear multiple times.
+
+         -p <foobar.so>,  --load-plugins <foobar.so>
+         One or more (comma separated) *.so files to load as plugins
+
+         -v,  --verbose
+         Enable verbose output with progress information
+
+         --,  --ignore_rest
+         Ignores the rest of the labeled arguments following this flag.
+
+         --version
+         Displays version information and exits.
+
+         -h,  --help
+         Displays usage information and exits.
+
+
+.. dropdown:: Examples
+   :icon: code-review
+
+      Basic usage with embedded georeferencing:
+
+      .. code-block:: bash
+
+         mola-mm-add-geodetic -i input.mm -o output.mm
+
+      Using an external georeferencing file:
+
+      .. code-block:: bash
+
+         mola-mm-add-geodetic -i input.mm -o output.mm -g map.georef
+
+      Process specific layers only:
+
+      .. code-block:: bash
+
+         mola-mm-add-geodetic -i input.mm -o output.mm -l raw -l filtered
+
+      Verbose mode for large datasets:
+
+      .. code-block:: bash
+
+         mola-mm-add-geodetic -i input.mm -o output.mm -v
+
+
+|
