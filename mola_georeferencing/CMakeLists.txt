@@ -86,6 +86,16 @@ mola_add_executable(
     #CLI11::CLI11
 )
 
+mola_add_executable(
+  TARGET  mola-mm-add-geodetic
+  SOURCES apps/mola-mm-add-geodetic-cli.cpp
+  LINK_LIBRARIES
+    ${PROJECT_NAME}
+    mrpt::maps
+    mrpt::tclap
+    #CLI11::CLI11
+)
+
 # -----------------------
 # define tests:
 enable_testing()
