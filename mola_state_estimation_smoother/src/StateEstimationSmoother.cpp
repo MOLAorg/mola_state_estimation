@@ -472,7 +472,7 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
     const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
     auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
-              gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
+        gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
 
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
         symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
@@ -1110,6 +1110,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
 
         pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
         pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
+
+        if (state_.tentative_geo_coord_reference.has_value())
+        {
+            state_.geo_reference.emplace();
+            state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();
+            state_.geo_reference->T_enu_to_map = pdf;
+            state_.estimated_georef_published  = false;  // so it's re-published
+        }
     }
 
     // retrieve odometry frames:
@@ -1330,9 +1338,10 @@ void StateEstimationSmoother::initialize_new_frame(
     // Add planar constraints:
     if (params_.enforce_planar_motion)
     {
-        const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector6(
-            PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA,
-            PLANAR_Z_SIGMA));
+        const auto planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector6(
+                PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA, PLANAR_XY_SIGMA,
+                PLANAR_Z_SIGMA));
 
         state_.gtsam->newFactors.addPrior(T(id), gtsam::Pose3::Identity(), planar_z_noise);
     }
@@ -1464,6 +1473,138 @@ std::optional<mrpt::poses::CPose3DPDFGaussian>
 
     // frame not known or not estimated yet
     return {};
+}
+
+bool StateEstimationSmoother::has_converged_localization(
+    mrpt::poses::CPose3DPDFGaussian& pose) const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    // We need at least some frames to have an estimate
+    if (state_.last_estimated_states.empty())
+    {
+        return false;
+    }
+
+    // Get the latest timestamp from the state
+    auto tNowOpt = state_.get_current_extrapolated_stamp();
+    if (!tNowOpt)
+    {
+        return false;
+    }
+
+    // Get latest navstate (this internally calls process_pending_gtsam_updates)
+    const_cast<StateEstimationSmoother*>(this)->process_pending_gtsam_updates();
+
+    // Find the most recent frame
+    if (state_.stamp2frame_index.empty())
+    {
+        return false;
+    }
+
+    const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
+    const auto  latestFrameIdx = latestIt->second;
+
+    MRPT_TODO("Refactor to run this in the update estimate loop");
+
+    try
+    {
+        const NavState ns = get_latest_state_and_covariance(latestFrameIdx);
+
+        // Convert info matrix to covariance
+        mrpt::math::CMatrixDouble66 cov = ns.pose.cov_inv.inverse_LLt();
+
+        // Check position uncertainty (diagonal elements 0,1,2 are x,y,z)
+        const double pos_sigma_x   = std::sqrt(cov(0, 0));
+        const double pos_sigma_y   = std::sqrt(cov(1, 1));
+        const double pos_sigma_z   = std::sqrt(cov(2, 2));
+        const double max_pos_sigma = std::max({pos_sigma_x, pos_sigma_y, pos_sigma_z});
+
+        // Check orientation uncertainty (diagonal elements 3,4,5 are yaw,pitch,roll)
+        const double ori_sigma_yaw     = std::sqrt(cov(3, 3));
+        const double ori_sigma_pitch   = std::sqrt(cov(4, 4));
+        const double ori_sigma_roll    = std::sqrt(cov(5, 5));
+        const double max_ori_sigma_rad = std::max({ori_sigma_yaw, ori_sigma_pitch, ori_sigma_roll});
+        const double max_ori_sigma_deg = mrpt::RAD2DEG(max_ori_sigma_rad);
+
+        MRPT_LOG_DEBUG_FMT(
+            "[has_converged_localization] pos_sigmas=(%.3f,%.3f,%.3f) m, "
+            "ori_sigmas=(%.2f,%.2f,%.2f) deg, thresholds=(%.3f m, %.2f deg)",
+            pos_sigma_x, pos_sigma_y, pos_sigma_z, mrpt::RAD2DEG(ori_sigma_yaw),
+            mrpt::RAD2DEG(ori_sigma_pitch), mrpt::RAD2DEG(ori_sigma_roll),
+            params_.convergence_max_position_sigma, params_.convergence_max_orientation_sigma_deg);
+
+        // Check against thresholds
+        const bool converged = (max_pos_sigma <= params_.convergence_max_position_sigma) &&
+                               (max_ori_sigma_deg <= params_.convergence_max_orientation_sigma_deg);
+
+        if (converged)
+        {
+            // Fill output pose
+            pose.mean = ns.pose.mean;
+            pose.cov  = cov;
+
+            // If we just converged and should publish geo-ref, do it now
+            if (params_.estimate_geo_reference && params_.publish_estimated_georef_on_convergence &&
+                !state_.estimated_georef_published)
+            {
+                // Publish the estimated georeferencing
+                const_cast<StateEstimationSmoother*>(this)->publishEstimatedGeoreferencing();
+            }
+        }
+
+        return converged;
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_DEBUG_FMT(
+            "[has_converged_localization] Exception getting covariance: %s", e.what());
+        return false;
+    }
+}
+
+std::optional<mola::Georeferencing> StateEstimationSmoother::current_georeferencing() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+    return state_.geo_reference;
+}
+
+void StateEstimationSmoother::publishEstimatedGeoreferencing()
+{
+    // Must be called with lock held
+    if (!state_.tentative_geo_coord_reference.has_value())
+    {
+        return;
+    }
+
+    auto T_enu_map_opt = estimated_T_enu_to_map();
+    if (!T_enu_map_opt.has_value())
+    {
+        return;
+    }
+
+    // Store as our now-fixed geo-reference
+    state_.geo_reference.emplace();
+    state_.geo_reference->geo_coord    = *state_.tentative_geo_coord_reference;
+    state_.geo_reference->T_enu_to_map = *T_enu_map_opt;
+
+    // Publish via MapSourceBase
+    MapUpdate mu;
+    mu.method          = "state_estimator";
+    mu.reference_frame = params_.reference_frame_name;
+    mu.timestamp       = mrpt::Clock::now();
+    mu.map_name        = "georef";
+    mu.georeferencing  = state_.geo_reference;
+
+    advertiseUpdatedMap(mu);
+
+    state_.estimated_georef_published = true;
+
+    MRPT_LOG_INFO_STREAM(
+        "Published estimated geo-referencing: "
+        << "lat=" << state_.geo_reference->geo_coord.lat.getAsString()
+        << ", lon=" << state_.geo_reference->geo_coord.lon.getAsString()
+        << ", T_enu_to_map=" << state_.geo_reference->T_enu_to_map.mean.asString());
 }
 
 }  // namespace mola::state_estimation_smoother

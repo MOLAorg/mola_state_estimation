@@ -171,6 +171,21 @@ class Parameters
      */
     std::optional<mola::Georeferencing> fixed_geo_reference;
 
+    /** Maximum position sigma (in meters) to consider state estimation converged.
+     *  Used when other modules query `has_converged_localization()`.
+     */
+    double convergence_max_position_sigma = 1.0;  // [m]
+
+    /** Maximum orientation sigma (in degrees) to consider state estimation converged.
+     *  Used when other modules query `has_converged_localization()`.
+     */
+    double convergence_max_orientation_sigma_deg = 5.0;  // [deg]
+
+    /** If true and estimate_geo_reference is true, once converged, this module
+     *  will publish the estimated geo-referencing via MapSourceBase.
+     */
+    bool publish_estimated_georef_on_convergence = true;
+
     /** @} */
 
     /** @name Nonlinear optimization

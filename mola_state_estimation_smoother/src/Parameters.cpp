@@ -96,6 +96,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         gr.T_enu_to_map.cov *= 1e-6;
     }
 
+    MCP_LOAD_OPT(cfg, convergence_max_position_sigma);
+    MCP_LOAD_OPT(cfg, convergence_max_orientation_sigma_deg);
+    MCP_LOAD_OPT(cfg, publish_estimated_georef_on_convergence);
+
     MCP_LOAD_REQ(cfg, kinematic_model);
 
     // Nonlinear optimization
