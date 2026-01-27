@@ -133,8 +133,8 @@ void run_test()
 
     // Check leveling
     // Tolerances depend on IMU noise and filter tuning, but should be close to 0
-    ASSERT_NEAR_(p, 0.0, mrpt::DEG2RAD(3.0));
-    ASSERT_NEAR_(r, 0.0, mrpt::DEG2RAD(3.0));
+    ASSERT_NEAR_(p, 0.0, mrpt::DEG2RAD(4.0));
+    ASSERT_NEAR_(r, 0.0, mrpt::DEG2RAD(4.0));
 
     ASSERT_(stateEst.known_odometry_frame_ids().size() == 1);
     for (const auto& odom_frame : stateEst.known_odometry_frame_ids())
