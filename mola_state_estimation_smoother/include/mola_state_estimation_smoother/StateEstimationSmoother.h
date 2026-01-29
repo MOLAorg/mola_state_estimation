@@ -29,6 +29,7 @@
 #include <mola_kernel/interfaces/VizInterface.h>
 #include <mola_kernel/version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
+#include <mola_state_estimation_smoother/RegexCache.h>
 
 // MOLA:
 #include <mola_imu_preintegration/ImuIntegrator.h>
@@ -187,8 +188,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const std::string& frame_id) const;
 
     /// Implements NavStateFilter::has_converged_localization
-    [[nodiscard]] bool has_converged_localization(
-        mrpt::poses::CPose3DPDFGaussian& pose) const override;
+    [[nodiscard]] bool has_converged_localization(mrpt::poses::CPose3DPDFGaussian& pose) const
+#if MOLA_VERSION_CHECK(2, 5, 0)
+        override
+#endif
+        ;
 
     /// Returns the current georeferencing, if available
     [[nodiscard]] std::optional<mola::Georeferencing> current_georeferencing() const;
@@ -274,6 +278,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         /// Flag to track if we've already published the estimated geo-ref
         bool estimated_georef_published = false;
+
+        // To be built from parameters strings when changed.
+        RegexCache do_process_imu_labels_re;
+        RegexCache do_process_odometry_labels_re;
+        RegexCache do_process_gnss_labels_re;
     };
 
     State                state_;

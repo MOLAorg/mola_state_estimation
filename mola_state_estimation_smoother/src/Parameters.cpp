@@ -108,22 +108,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     // name Sensor input names
     // -----------------------------------------------------
-    {
-        std::string do_process_imu_labels;
-        MCP_LOAD_OPT(cfg, do_process_imu_labels);
-        do_process_imu_labels_re = do_process_imu_labels;
-    }
+    MCP_LOAD_OPT(cfg, do_process_imu_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
-    {
-        std::string do_process_odometry_labels;
-        MCP_LOAD_OPT(cfg, do_process_odometry_labels);
-        do_process_odometry_labels_re = do_process_odometry_labels;
-    }
-    {
-        std::string do_process_gnss_labels;
-        MCP_LOAD_OPT(cfg, do_process_gnss_labels);
-        do_process_gnss_labels_re = do_process_gnss_labels;
-    }
     if (cfg.has("initial_twist"))
     {
         ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);

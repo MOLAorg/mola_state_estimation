@@ -420,10 +420,15 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 
     std::optional<mrpt::topography::TGeodeticCoords> refGeoCoords;
 
-    // First, are we using geo-referencing at all?
-    if (params_.estimate_geo_reference && !state_.geo_reference.has_value())
+    // Determine the reference to use
+    if (state_.geo_reference.has_value())
     {
-        // We are still starting to estimating the geo-reference T_enu2map.
+        // We have a finalized reference (either fixed or already estimated)
+        refGeoCoords = state_.geo_reference->geo_coord;
+    }
+    else if (params_.estimate_geo_reference)
+    {
+        // We are still in the "tentative" phase
         if (!state_.tentative_geo_coord_reference)
         {
             state_.tentative_geo_coord_reference = geoCoords;
@@ -433,19 +438,13 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
                 << geoCoords.lat.getAsString() << ", lon=" << geoCoords.lon.getAsString()
                 << ", h=" << geoCoords.height);
         }
-
         refGeoCoords = state_.tentative_geo_coord_reference;
     }
-    // Use fixed reference coming from an external source:
-    if (!params_.estimate_geo_reference && state_.geo_reference.has_value())
-    {
-        refGeoCoords = state_.geo_reference->geo_coord;
-    }
 
-    // Can we use geo-referencing now:
     if (!refGeoCoords.has_value())
     {
-        MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since there is no geo-reference data (yet?)");
+        MRPT_LOG_DEBUG(
+            "[fuse_gnss]: Ignoring reading; no fixed or tentative geo-reference available.");
         return;
     }
 
@@ -699,16 +698,36 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
     ASSERT_(o);
 
     // IMU:
-    if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o);
-        obsIMU && std::regex_match(o->sensorLabel, params_.do_process_imu_labels_re))
+    if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o); obsIMU)
     {
-        this->fuse_imu(*obsIMU);
+        if (std::regex_match(
+                o->sensorLabel,
+                state_.do_process_imu_labels_re.get_regex(params_.do_process_imu_labels_re)))
+        {
+            this->fuse_imu(*obsIMU);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping IMU reading labeled '%s' for not passing regex", o->sensorLabel.c_str());
+        }
     }
     // Odometry source:
     else if (auto obsOdom = std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(o);
-             obsOdom && std::regex_match(o->sensorLabel, params_.do_process_odometry_labels_re))
+             obsOdom)
     {
-        this->fuse_odometry(*obsOdom, o->sensorLabel);
+        if (std::regex_match(
+                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                    params_.do_process_odometry_labels_re)))
+        {
+            this->fuse_odometry(*obsOdom, o->sensorLabel);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping odometry reading labeled '%s' for not passing regex",
+                o->sensorLabel.c_str());
+        }
     }
     // Robot pose wrt "map":
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
@@ -724,10 +743,19 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
         this->fuse_pose(obsPose->timestamp, sensedSensorPose, params_.reference_frame_name);
     }
     // GNSS source:
-    else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);
-             obsGPS && std::regex_match(o->sensorLabel, params_.do_process_odometry_labels_re))
+    else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o); obsGPS)
     {
-        this->fuse_gnss(*obsGPS);
+        if (std::regex_match(
+                o->sensorLabel,
+                state_.do_process_gnss_labels_re.get_regex(params_.do_process_gnss_labels_re)))
+        {
+            this->fuse_gnss(*obsGPS);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping GNSS reading labeled '%s' for not passing regex", o->sensorLabel.c_str());
+        }
     }
     else
     {
@@ -1107,12 +1135,73 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
         pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
         pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
 
-        if (state_.tentative_geo_coord_reference.has_value())
+        // Convert info matrix to covariance
+        if (!state_.stamp2frame_index.empty())
         {
-            state_.geo_reference.emplace();
-            state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();
-            state_.geo_reference->T_enu_to_map = pdf;
-            state_.estimated_georef_published  = false;  // so it's re-published
+            const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
+            const auto  latestFrameIdx = latestIt->second;
+
+            const auto poseCov =
+                gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(latestFrameIdx)));
+            mrpt::math::CMatrixDouble66 cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov);
+
+            // Check MAP->BASE_LINK position uncertainty (diagonal elements 0,1,2 are x,y,z)
+            const double pos_sigma_x   = std::sqrt(cov(0, 0));
+            const double pos_sigma_y   = std::sqrt(cov(1, 1));
+            const double pos_sigma_z   = std::sqrt(cov(2, 2));
+            const double max_pos_sigma = std::max({pos_sigma_x, pos_sigma_y, pos_sigma_z});
+
+            // Check MAP->BASE_LINK orientation uncertainty (diagonal elements 3,4,5 are
+            // yaw,pitch,roll)
+            const double ori_sigma_yaw   = std::sqrt(cov(3, 3));
+            const double ori_sigma_pitch = std::sqrt(cov(4, 4));
+            const double ori_sigma_roll  = std::sqrt(cov(5, 5));
+            const double max_ori_sigma_rad =
+                std::max({ori_sigma_yaw, ori_sigma_pitch, ori_sigma_roll});
+            const double max_ori_sigma_deg = mrpt::RAD2DEG(max_ori_sigma_rad);
+
+            // Check ENU->MAP position uncertainty (diagonal elements 0,1,2 are x,y,z)
+            const double em_pos_sigma_x = std::sqrt(pdf.cov(0, 0));
+            const double em_pos_sigma_y = std::sqrt(pdf.cov(1, 1));
+            const double em_pos_sigma_z = std::sqrt(pdf.cov(2, 2));
+            const double em_max_pos_sigma =
+                std::max({em_pos_sigma_x, em_pos_sigma_y, em_pos_sigma_z});
+
+            // Check ENU->MAP orientation uncertainty (diagonal elements 3,4,5 are yaw,pitch,roll)
+            const double em_ori_sigma_yaw   = std::sqrt(pdf.cov(3, 3));
+            const double em_ori_sigma_pitch = std::sqrt(pdf.cov(4, 4));
+            const double em_ori_sigma_roll  = std::sqrt(pdf.cov(5, 5));
+            const double em_max_ori_sigma_rad =
+                std::max({em_ori_sigma_yaw, em_ori_sigma_pitch, em_ori_sigma_roll});
+            const double em_max_ori_sigma_deg = mrpt::RAD2DEG(em_max_ori_sigma_rad);
+
+            // Check against thresholds
+            const bool converged = (std::max(max_pos_sigma, em_max_pos_sigma) <=
+                                    params_.convergence_max_position_sigma) &&
+                                   (std::max(max_ori_sigma_deg, em_max_ori_sigma_deg) <=
+                                    params_.convergence_max_orientation_sigma_deg);
+
+            MRPT_LOG_DEBUG_FMT(
+                "[process_pending_gtsam_updates] Has converged georeferencing? %s: "
+                "pos_sigmas=(%.3f,%.3f,%.3f) m, "
+                "enu_pos_sigmas=(%.3f,%.3f,%.3f) m, "
+                "ori_sigmas=(%.2f,%.2f,%.2f) deg, "
+                "enu_ori_sigmas=(%.2f,%.2f,%.2f) deg, "
+                "thresholds=(%.3f m, %.2f deg)",
+                converged ? "YES" : "NO", pos_sigma_x, pos_sigma_y, pos_sigma_z, em_pos_sigma_x,
+                em_pos_sigma_y, em_pos_sigma_z, mrpt::RAD2DEG(ori_sigma_yaw),
+                mrpt::RAD2DEG(ori_sigma_pitch), mrpt::RAD2DEG(ori_sigma_roll),
+                mrpt::RAD2DEG(em_ori_sigma_yaw), mrpt::RAD2DEG(em_ori_sigma_pitch),
+                mrpt::RAD2DEG(em_ori_sigma_roll), params_.convergence_max_position_sigma,
+                params_.convergence_max_orientation_sigma_deg);
+
+            if (converged && state_.tentative_geo_coord_reference.has_value())
+            {
+                state_.geo_reference.emplace();
+                state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();
+                state_.geo_reference->T_enu_to_map = pdf;
+                state_.estimated_georef_published  = false;  // so it's re-published
+            }
         }
     }
 
@@ -1156,6 +1245,15 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
     state_.gtsam->newFactors.resize(0);
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
+
+    // Check convergence for initialization from GNSS / georeferencing.
+    // If we just converged and should publish geo-ref, do it now:
+    if (params_.estimate_geo_reference && params_.publish_estimated_georef_on_convergence &&
+        !state_.estimated_georef_published)
+    {
+        // Publish the estimated georeferencing
+        publishEstimatedGeoreferencing();
+    }
 }
 
 StateEstimationSmoother::pair_nearby_frame_iterators_t StateEstimationSmoother::find_before_after(
@@ -1489,74 +1587,25 @@ bool StateEstimationSmoother::has_converged_localization(
         return false;
     }
 
-    // Get latest navstate (this internally calls process_pending_gtsam_updates)
-    const_cast<StateEstimationSmoother*>(this)->process_pending_gtsam_updates();
-
     // Find the most recent frame
     if (state_.stamp2frame_index.empty())
     {
         return false;
     }
 
-    const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
-    const auto  latestFrameIdx = latestIt->second;
+    // Converged if we were told to estimate, and already have it:
+    const bool converged = params_.estimate_geo_reference && state_.geo_reference.has_value();
 
-    MRPT_TODO("Refactor to run this in the update estimate loop");
-
-    try
+    if (converged)
     {
+        const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
+        const auto  latestFrameIdx = latestIt->second;
+
         const NavState ns = get_latest_state_and_covariance(latestFrameIdx);
-
-        // Convert info matrix to covariance
-        mrpt::math::CMatrixDouble66 cov = ns.pose.cov_inv.inverse_LLt();
-
-        // Check position uncertainty (diagonal elements 0,1,2 are x,y,z)
-        const double pos_sigma_x   = std::sqrt(cov(0, 0));
-        const double pos_sigma_y   = std::sqrt(cov(1, 1));
-        const double pos_sigma_z   = std::sqrt(cov(2, 2));
-        const double max_pos_sigma = std::max({pos_sigma_x, pos_sigma_y, pos_sigma_z});
-
-        // Check orientation uncertainty (diagonal elements 3,4,5 are yaw,pitch,roll)
-        const double ori_sigma_yaw     = std::sqrt(cov(3, 3));
-        const double ori_sigma_pitch   = std::sqrt(cov(4, 4));
-        const double ori_sigma_roll    = std::sqrt(cov(5, 5));
-        const double max_ori_sigma_rad = std::max({ori_sigma_yaw, ori_sigma_pitch, ori_sigma_roll});
-        const double max_ori_sigma_deg = mrpt::RAD2DEG(max_ori_sigma_rad);
-
-        MRPT_LOG_DEBUG_FMT(
-            "[has_converged_localization] pos_sigmas=(%.3f,%.3f,%.3f) m, "
-            "ori_sigmas=(%.2f,%.2f,%.2f) deg, thresholds=(%.3f m, %.2f deg)",
-            pos_sigma_x, pos_sigma_y, pos_sigma_z, mrpt::RAD2DEG(ori_sigma_yaw),
-            mrpt::RAD2DEG(ori_sigma_pitch), mrpt::RAD2DEG(ori_sigma_roll),
-            params_.convergence_max_position_sigma, params_.convergence_max_orientation_sigma_deg);
-
-        // Check against thresholds
-        const bool converged = (max_pos_sigma <= params_.convergence_max_position_sigma) &&
-                               (max_ori_sigma_deg <= params_.convergence_max_orientation_sigma_deg);
-
-        if (converged)
-        {
-            // Fill output pose
-            pose.mean = ns.pose.mean;
-            pose.cov  = cov;
-
-            // If we just converged and should publish geo-ref, do it now
-            if (params_.estimate_geo_reference && params_.publish_estimated_georef_on_convergence &&
-                !state_.estimated_georef_published)
-            {
-                // Publish the estimated georeferencing
-                const_cast<StateEstimationSmoother*>(this)->publishEstimatedGeoreferencing();
-            }
-        }
-
-        return converged;
+        pose.copyFrom(ns.pose);
     }
-    catch (const std::exception& e)
-    {
-        MRPT_LOG_DEBUG_FMT(
-            "[has_converged_localization] Exception getting covariance: %s", e.what());
-        return false;
-    }
+
+    return converged;
 }
 
 std::optional<mola::Georeferencing> StateEstimationSmoother::current_georeferencing() const
@@ -1596,11 +1645,11 @@ void StateEstimationSmoother::publishEstimatedGeoreferencing()
 
     state_.estimated_georef_published = true;
 
-    MRPT_LOG_INFO_STREAM(
-        "Published estimated geo-referencing: "
-        << "lat=" << state_.geo_reference->geo_coord.lat.getAsString()
-        << ", lon=" << state_.geo_reference->geo_coord.lon.getAsString()
-        << ", T_enu_to_map=" << state_.geo_reference->T_enu_to_map.mean.asString());
+    MRPT_LOG_THROTTLE_INFO_STREAM(
+        5.0, "Published estimated geo-reference: "
+                 << "lat=" << state_.geo_reference->geo_coord.lat.getAsString()
+                 << ", lon=" << state_.geo_reference->geo_coord.lon.getAsString()
+                 << ", T_enu_to_map=" << state_.geo_reference->T_enu_to_map.mean.asString());
 }
 
 }  // namespace mola::state_estimation_smoother

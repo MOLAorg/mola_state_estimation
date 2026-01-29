@@ -27,8 +27,6 @@
 #include <mrpt/math/TTwist3D.h>
 #include <mrpt/typemeta/TEnumType.h>
 
-#include <regex>
-
 namespace mola::state_estimation_smoother
 {
 
@@ -173,11 +171,13 @@ class Parameters
 
     /** Maximum position sigma (in meters) to consider state estimation converged.
      *  Used when other modules query `has_converged_localization()`.
+     *  This applies to both, the `map->base_link` and `enu->map` poses.
      */
     double convergence_max_position_sigma = 1.0;  // [m]
 
     /** Maximum orientation sigma (in degrees) to consider state estimation converged.
      *  Used when other modules query `has_converged_localization()`.
+     *  This applies to both, the `map->base_link` and `enu->map` poses.
      */
     double convergence_max_orientation_sigma_deg = 5.0;  // [deg]
 
@@ -200,14 +200,14 @@ class Parameters
     /** @name Sensor input names
      * @{  */
 
-    //!< regex for IMU sensor labels (ROS topics) to accept as IMU readings.
-    std::regex do_process_imu_labels_re{".*"};
+    /// regex for IMU sensor labels (ROS topics) to accept as IMU readings.
+    std::string do_process_imu_labels_re = ".*";
 
-    //!< regex for odometry inputs labels (ROS topics) to be accepted as inputs
-    std::regex do_process_odometry_labels_re{".*"};
+    /// regex for odometry inputs labels (ROS topics) to be accepted as inputs
+    std::string do_process_odometry_labels_re = ".*";
 
-    //!< regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
-    std::regex do_process_gnss_labels_re{".*"};
+    /// regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
+    std::string do_process_gnss_labels_re = ".*";
 
     /** @} */
 

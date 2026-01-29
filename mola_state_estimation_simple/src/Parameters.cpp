@@ -38,22 +38,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
-    {
-        std::string do_process_imu_labels;
-        MCP_LOAD_OPT(cfg, do_process_imu_labels);
-        do_process_imu_labels_re = do_process_imu_labels;
-    }
-
-    {
-        std::string do_process_odometry_labels;
-        MCP_LOAD_OPT(cfg, do_process_odometry_labels);
-        do_process_odometry_labels_re = do_process_odometry_labels;
-    }
-    {
-        std::string do_process_gnss_labels;
-        MCP_LOAD_OPT(cfg, do_process_gnss_labels);
-        do_process_gnss_labels_re = do_process_gnss_labels;
-    }
+    MCP_LOAD_OPT(cfg, do_process_imu_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     if (cfg.has("initial_twist"))
     {

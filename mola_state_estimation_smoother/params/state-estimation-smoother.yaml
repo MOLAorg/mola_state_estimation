@@ -173,15 +173,15 @@ params:
 
   # Regular expression to filter IMU sensor labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_imu_labels_re: ".*"
+  do_process_imu_labels_re: ".*"
 
   # Regular expression to filter odometry input labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_odometry_labels_re: ".*"
+  do_process_odometry_labels_re: ".*"
 
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_gnss_labels_re: ".*"
+  do_process_gnss_labels_re: ".*"
 # ============================================================================
 # End of Configuration
 # ============================================================================
