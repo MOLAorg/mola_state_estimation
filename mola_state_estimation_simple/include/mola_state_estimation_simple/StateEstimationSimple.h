@@ -122,11 +122,7 @@ class StateEstimationSimple : public mola::NavStateFilter
 
    protected:
     // Implementation of RawDataConsumer
-#if MOLA_VERSION_CHECK(2, 1, 0)
     void onNewObservation(const CObservation::ConstPtr& o) override;
-#else
-    void onNewObservation(const CObservation::Ptr& o) override;
-#endif
 
    private:
     struct State

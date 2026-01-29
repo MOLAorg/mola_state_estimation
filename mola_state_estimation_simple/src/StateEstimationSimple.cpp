@@ -341,11 +341,7 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     return ret;
 }
 
-#if MOLA_VERSION_CHECK(2, 1, 0)
 void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
-#else
-void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
-#endif
 {
     auto lck = std::scoped_lock(state_mtx_);
 

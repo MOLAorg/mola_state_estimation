@@ -692,11 +692,7 @@ std::set<std::string> StateEstimationSmoother::known_odometry_frame_ids()
     return ret;
 }
 
-#if MOLA_VERSION_CHECK(2, 1, 0)
 void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
-#else
-void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
-#endif
 {
     const ProfilerEntry tle(profiler_, "onNewObservation");
 
