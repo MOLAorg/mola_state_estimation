@@ -29,8 +29,10 @@ struct SMGeoReferencingOutput
 {
     SMGeoReferencingOutput() = default;
 
-    mp2p_icp::metric_map_t::Georeferencing geo_ref;
-    double                                 final_rmse = .0;
+    /// Will be nullopt if georeferencing failed, e.g. due to insufficient GNSS data.
+    std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
+
+    double final_rmse = .0;
 };
 
 struct AddGNSSFactorParams

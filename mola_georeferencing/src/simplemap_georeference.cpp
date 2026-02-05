@@ -88,11 +88,13 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     }
 
     // store results:
-    ret.geo_ref.T_enu_to_map = {
+    ret.geo_ref.emplace();
+
+    ret.geo_ref->T_enu_to_map = {
         mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
         mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
 
-    ret.geo_ref.geo_coord = *smFrames.refCoord;
+    ret.geo_ref->geo_coord = *smFrames.refCoord;
 
     ret.final_rmse = rmseEnd;
 

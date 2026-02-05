@@ -105,14 +105,22 @@ void run_sm_georef(Cli& cli)
 
     const mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);
 
+    if (!smGeo.geo_ref.has_value())
+    {
+        std::cerr << "Georeferencing failed. No output will be generated.\n";
+        return;
+    }
+
+    const auto& geo_ref = smGeo.geo_ref.value();
+
     std::cout << "Obtained georeferencing:\n"
-              << "lat: " << smGeo.geo_ref.geo_coord.lat.getAsString() << "\n"
-              << "lon: " << smGeo.geo_ref.geo_coord.lon.getAsString() << "\n"
+              << "lat: " << geo_ref.geo_coord.lat.getAsString() << "\n"
+              << "lon: " << geo_ref.geo_coord.lon.getAsString() << "\n"
               << mrpt::format(
-                     "lat_lon: %.06f, %.06f\n", smGeo.geo_ref.geo_coord.lat.decimal_value,
-                     smGeo.geo_ref.geo_coord.lon.decimal_value)
-              << "h: " << smGeo.geo_ref.geo_coord.height << "\n"
-              << "T_enu_to_map: " << smGeo.geo_ref.T_enu_to_map.asString() << "\n";
+                     "lat_lon: %.06f, %.06f\n", geo_ref.geo_coord.lat.decimal_value,
+                     geo_ref.geo_coord.lon.decimal_value)
+              << "h: " << geo_ref.geo_coord.height << "\n"
+              << "T_enu_to_map: " << geo_ref.T_enu_to_map.asString() << "\n";
 
     if (cli.argWriteMMInto.isSet())
     {
@@ -127,7 +135,13 @@ void run_sm_georef(Cli& cli)
         mm.georeferencing = smGeo.geo_ref;
 
         // and save:
-        mm.save_to_file(cli.argWriteMMInto.getValue());
+        const auto saved_ok = mm.save_to_file(cli.argWriteMMInto.getValue());
+        if (!saved_ok)
+        {
+            std::cerr << "Error saving modified .mm file: '" << cli.argWriteMMInto.getValue()
+                      << "'\n";
+            return;
+        }
 
         std::cout << "[mola-sm-georeferencing-cli] Writing modified mm map: '"
                   << cli.argWriteMMInto.getValue() << "'..." << std::endl;
