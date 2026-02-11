@@ -96,6 +96,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         gr.T_enu_to_map.cov *= 1e-6;
     }
 
+    MCP_LOAD_OPT(cfg, convergence_max_position_sigma);
+    MCP_LOAD_OPT(cfg, convergence_max_orientation_sigma_deg);
+    MCP_LOAD_OPT(cfg, publish_estimated_georef_on_convergence);
+
     MCP_LOAD_REQ(cfg, kinematic_model);
 
     // Nonlinear optimization
@@ -104,22 +108,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     // name Sensor input names
     // -----------------------------------------------------
-    {
-        std::string do_process_imu_labels;
-        MCP_LOAD_OPT(cfg, do_process_imu_labels);
-        do_process_imu_labels_re = do_process_imu_labels;
-    }
+    MCP_LOAD_OPT(cfg, do_process_imu_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
+    MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
-    {
-        std::string do_process_odometry_labels;
-        MCP_LOAD_OPT(cfg, do_process_odometry_labels);
-        do_process_odometry_labels_re = do_process_odometry_labels;
-    }
-    {
-        std::string do_process_gnss_labels;
-        MCP_LOAD_OPT(cfg, do_process_gnss_labels);
-        do_process_gnss_labels_re = do_process_gnss_labels;
-    }
     if (cfg.has("initial_twist"))
     {
         ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);

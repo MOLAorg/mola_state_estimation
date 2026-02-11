@@ -28,6 +28,31 @@ What? Why? How?
 
 2. Selecting the S.E. method in launch files
 ------------------------------------------------
+
+2.1. Launching the state estimator standalone
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Next we show different possible use cases.
+
+.. dropdown:: Merging GNSS + IMU
+   :icon: code-review
+
+
+    .. code-block:: bash
+
+      # MOLA_VERBOSITY_BRIDGE_ROS2=DEBUG \
+      # MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR=DEBUG \
+
+      ros2 launch mola_state_estimation_smoother ros2-state-estimator.launch.py \
+        estimate_geo_reference:=True \
+        imu_topic_name:=imu \
+        gnss_topic_name:=gps1
+
+
+|
+
+2.2. Launching the state estimator + LO/LIO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 In the context of launching LiDAR odometry (LO) mapping or localization
 as explained :ref:`here <launching_mola_lo>`, note that default configurations
 include ``StateEstimationSimple`` as the method of choice, but it can be 

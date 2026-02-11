@@ -341,11 +341,7 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     return ret;
 }
 
-#if MOLA_VERSION_CHECK(2, 1, 0)
 void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
-#else
-void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
-#endif
 {
     auto lck = std::scoped_lock(state_mtx_);
 
@@ -358,22 +354,51 @@ void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
                                             << o->GetRuntimeClass()->className);
 
     // IMU:
-    if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o);
-        obsIMU && std::regex_match(o->sensorLabel, params.do_process_imu_labels_re))
+    if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o); obsIMU)
     {
-        this->fuse_imu(*obsIMU);
+        if (std::regex_match(
+                o->sensorLabel,
+                state_.do_process_imu_labels_re.get_regex(params.do_process_imu_labels_re)))
+        {
+            this->fuse_imu(*obsIMU);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping IMU reading labeled '%s' for not passing regex", o->sensorLabel.c_str());
+        }
     }
     // Odometry source:
     else if (auto obsOdom = std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(o);
-             obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+             obsOdom)
     {
-        this->fuse_odometry(*obsOdom, o->sensorLabel);
+        if (std::regex_match(
+                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                    params.do_process_odometry_labels_re)))
+        {
+            this->fuse_odometry(*obsOdom, o->sensorLabel);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping odometry reading labeled '%s' for not passing regex",
+                o->sensorLabel.c_str());
+        }
     }
     // GNSS source:
-    else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o);
-             obsGPS && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+    else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o); obsGPS)
     {
-        this->fuse_gnss(*obsGPS);
+        if (std::regex_match(
+                o->sensorLabel,
+                state_.do_process_gnss_labels_re.get_regex(params.do_process_gnss_labels_re)))
+        {
+            this->fuse_gnss(*obsGPS);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping GNSS reading labeled '%s' for not passing regex", o->sensorLabel.c_str());
+        }
     }
     else
     {

@@ -149,6 +149,16 @@ params:
   # Fixed geo-reference to use when estimate_geo_reference is false
   # fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
 
+  # Convergence Detection:
+  # Maximum position sigma (m) to consider converged
+  convergence_max_position_sigma: "${MOLA_SE_CONVERGENCE_POS_SIGMA|1.0}"
+
+  # Maximum orientation sigma (deg) to consider converged
+  convergence_max_orientation_sigma_deg: "${MOLA_SE_CONVERGENCE_ORI_SIGMA|5.0}"
+
+  # If true and estimate_geo_reference is true, publish geo-ref on convergence
+  publish_estimated_georef_on_convergence: "${MOLA_SE_PUBLISH_GEOREF_ON_CONV|true}"
+
   # --------------------------------------------------------------------------
   # Nonlinear Optimization
   # --------------------------------------------------------------------------
@@ -163,15 +173,15 @@ params:
 
   # Regular expression to filter IMU sensor labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_imu_labels_re: ".*"
+  do_process_imu_labels_re: ".*"
 
   # Regular expression to filter odometry input labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_odometry_labels_re: ".*"
+  do_process_odometry_labels_re: ".*"
 
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
-  # do_process_gnss_labels_re: ".*"
+  do_process_gnss_labels_re: ".*"
 # ============================================================================
 # End of Configuration
 # ============================================================================

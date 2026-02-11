@@ -23,11 +23,13 @@
 // this package:
 #include <mola_gtsam_factors/id.h>
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
+#include <mola_kernel/interfaces/MapSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_kernel/interfaces/VizInterface.h>
 #include <mola_kernel/version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
+#include <mola_state_estimation_smoother/RegexCache.h>
 
 // MOLA:
 #include <mola_imu_preintegration/ImuIntegrator.h>
@@ -104,7 +106,10 @@ namespace mola::state_estimation_smoother
  *
  * \ingroup mola_state_estimation_grp
  */
-class StateEstimationSmoother : public mola::NavStateFilter, public mola::LocalizationSourceBase
+class StateEstimationSmoother : public mola::NavStateFilter,
+                                public mola::LocalizationSourceBase,
+                                public mola::MapSourceBase
+
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
    private:
@@ -182,15 +187,20 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_map_to_odometry_frame(
         const std::string& frame_id) const;
 
+    /// Implements NavStateFilter::has_converged_localization
+    [[nodiscard]] bool has_converged_localization(mrpt::poses::CPose3DPDFGaussian& pose) const
+#if MOLA_VERSION_CHECK(2, 5, 0)
+        override
+#endif
+        ;
+
+    /// Returns the current georeferencing, if available
+    [[nodiscard]] std::optional<mola::Georeferencing> current_georeferencing() const;
+
     /** @} */
 
-   protected:
     // Implementation of RawDataConsumer
-#if MOLA_VERSION_CHECK(2, 1, 0)
     void onNewObservation(const CObservation::ConstPtr& o) override;
-#else
-    void onNewObservation(const CObservation::Ptr& o) override;
-#endif
 
    private:
     Parameters params_;
@@ -264,6 +274,14 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
         /// Will be populated with the first GNSS coords when in active estimation mode.
         std::optional<mrpt::topography::TGeodeticCoords> tentative_geo_coord_reference;
+
+        /// Flag to track if we've already published the estimated geo-ref
+        bool estimated_georef_published = false;
+
+        // To be built from parameters strings when changed.
+        RegexCache do_process_imu_labels_re;
+        RegexCache do_process_odometry_labels_re;
+        RegexCache do_process_gnss_labels_re;
     };
 
     State                state_;
@@ -290,6 +308,8 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
     /// Delete out-of-window entries in stamp2frame_index and last_estimated_state
     void delete_too_old_entries();
 
+    void publishEstimatedGeoreferencing();
+
     using pair_nearby_frame_iterators_t = std::pair<
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;
@@ -307,9 +327,6 @@ class StateEstimationSmoother : public mola::NavStateFilter, public mola::Locali
 
     /// Gets the latest state of a pose wrt the reference frame ("map")
     [[nodiscard]] NavState get_latest_state_and_covariance(const frame_index_t idx) const;
-
-    /// Gets the latest estimated transform of T_enu_to_map
-    [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> get_estimated_T_enu_to_map() const;
 
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian>

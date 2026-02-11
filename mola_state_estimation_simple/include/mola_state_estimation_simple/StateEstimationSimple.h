@@ -20,9 +20,13 @@
  */
 #pragma once
 
+// This package
+#include <mola_state_estimation_simple/Parameters.h>
+#include <mola_state_estimation_simple/RegexCache.h>
+
+// MOLA
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/version.h>
-#include <mola_state_estimation_simple/Parameters.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/optional_ref.h>
 #include <mrpt/obs/CObservationGPS.h>
@@ -120,13 +124,8 @@ class StateEstimationSimple : public mola::NavStateFilter
 
     /** @} */
 
-   protected:
     // Implementation of RawDataConsumer
-#if MOLA_VERSION_CHECK(2, 1, 0)
     void onNewObservation(const CObservation::ConstPtr& o) override;
-#else
-    void onNewObservation(const CObservation::Ptr& o) override;
-#endif
 
    private:
     struct State
@@ -139,6 +138,11 @@ class StateEstimationSimple : public mola::NavStateFilter
         std::optional<mrpt::math::TTwist3D>            last_twist;
         std::optional<mrpt::math::CMatrixDouble66>     last_twist_cov;
         bool                                           pose_already_updated_with_odom = false;
+
+        // To be built from parameters strings when changed.
+        RegexCache do_process_imu_labels_re;
+        RegexCache do_process_odometry_labels_re;
+        RegexCache do_process_gnss_labels_re;
     };
 
     State                        state_;

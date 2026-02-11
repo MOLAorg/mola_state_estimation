@@ -132,7 +132,10 @@ void test_odometry_fusion()
         mrpt::obs::CObservationOdometry odom;
         odom.timestamp = mrpt::Clock::fromDouble(1.0);
         odom.odometry  = mrpt::poses::CPose2D(1.0, 0, 0);  // 1m forward
-        estimator.fuse_odometry(odom);
+
+        // Could be: estimator.fuse_odometry(odom);
+        // But let's test the RawDataConsumer API:
+        estimator.onNewObservation(std::make_shared<const mrpt::obs::CObservationOdometry>(odom));
     }
 
     // Check: Current state should reflect the odometry increment
@@ -173,7 +176,9 @@ void test_imu_angular_velocity()
         imu.set(mrpt::obs::IMU_WY, 0.0);
         imu.set(mrpt::obs::IMU_WZ, 1.0);  // 1 rad/s
         imu.sensorPose = mrpt::poses::CPose3D::Identity();  // IMU aligned with body
-        estimator.fuse_imu(imu);
+
+        // Could be also: estimator.fuse_imu(imu);
+        estimator.onNewObservation(std::make_shared<const mrpt::obs::CObservationIMU>(imu));
     }
 
     // Check if twist was updated
