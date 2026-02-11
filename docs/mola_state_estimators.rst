@@ -40,10 +40,11 @@ Next we show different possible use cases.
 
     .. code-block:: bash
 
-      #MOLA_VERBOSITY_BRIDGE_ROS2=DEBUG \
-      #MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR=DEBUG \
+      # MOLA_VERBOSITY_BRIDGE_ROS2=DEBUG \
+      # MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR=DEBUG \
 
       ros2 launch mola_state_estimation_smoother ros2-state-estimator.launch.py \
+        estimate_geo_reference:=True \
         imu_topic_name:=imu \
         gnss_topic_name:=gps1
 
