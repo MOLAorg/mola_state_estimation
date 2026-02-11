@@ -259,7 +259,9 @@ void run_test(const TestCase& testCase)
             obsImu.set(mrpt::obs::IMU_WZ, rng.drawGaussian1D(0, 0.01));
 
             // Send to state estimator
-            stateEst.fuse_imu(obsImu);
+            // Can use: stateEst.fuse_imu(obsImu);
+            // But let's use the Raw Data Consumer API to get it covered in tests:
+            stateEst.onNewObservation(std::make_shared<const mrpt::obs::CObservationIMU>(obsImu));
 
             if (VERBOSE && i % 5 == 0)
             {

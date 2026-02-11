@@ -199,7 +199,6 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /** @} */
 
-   protected:
     // Implementation of RawDataConsumer
     void onNewObservation(const CObservation::ConstPtr& o) override;
 

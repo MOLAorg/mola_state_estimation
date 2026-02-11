@@ -228,7 +228,9 @@ void run_test(const TestCase& testCase)
             cov(2, 2)             = mrpt::square(GNSS_NOISE_Z_M);
 
             // Send to state estimator:
-            stateEst.fuse_gnss(obsGps);
+            // Can use: stateEst.fuse_gnss(obsGps);
+            // But let's use the Raw Data Consumer API to get it covered in tests:
+            stateEst.onNewObservation(std::make_shared<const mrpt::obs::CObservationGPS>(obsGps));
         }
 
         // Enforce updating estimation from time to time:
@@ -326,6 +328,14 @@ void run_test(const TestCase& testCase)
         std::cout << "T_map_to_odom[" << odom_frame << "]:\n"
                   << mola::state_estimation_smoother::pose_pdf_to_string_with_sigmas(*T_map_to_odom)
                   << "\n";
+    }
+
+    // Check if geo-referencing has converged:
+    if (testCase.has_gnss)
+    {
+        mrpt::poses::CPose3DPDFGaussian veh_pose_in_map;
+        bool hasConverged = stateEst.has_converged_localization(veh_pose_in_map);
+        ASSERT_(hasConverged);
     }
 
     // done.
