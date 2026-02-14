@@ -5,7 +5,7 @@
 -->
 <package format="3">
   <name>mola_georeferencing</name>
-  <version>2.0.1</version>
+  <version>2.1.0</version>
   <description>C++ library for georeferencing key-frame maps (simplemaps) and related CLI tools</description>
 
   <maintainer email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</maintainer>
