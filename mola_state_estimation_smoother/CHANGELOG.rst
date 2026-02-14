@@ -2,6 +2,22 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#13 <https://github.com/MOLAorg/mola_state_estimation/issues/13>`_ from MOLAorg/feat/publish-georef-on-converge
+  Publish geo-ref on convergence
+* get onObservation() and has_converged_localization() method tested too
+* Refactor publish georef and sensor label regex
+  fix filtering observations by sensor label regex
+  refactor to publish georef on converged automatically
+  fix build against older mola_kernel
+  Fix wrong logic in GNSS fuse
+* remove old mola version guards
+* unit test: relax threshold to avoid spurious failures
+* Publish geo-ref on convergence
+  add new params to yaml file
+* Contributors: Jose Luis Blanco-Claraco
+
 2.0.1 (2026-01-15)
 ------------------
 * test: less strict limits to avoid random failures

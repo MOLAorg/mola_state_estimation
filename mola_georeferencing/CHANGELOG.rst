@@ -2,6 +2,14 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* simplemap_georeference(): returns std::optional to reflect lack of GNSS data enough
+* Merge pull request `#12 <https://github.com/MOLAorg/mola_state_estimation/issues/12>`_ from MOLAorg/feat/mm-geodetic
+  Feat/mm-geodetic
+* Add mola-mm-add-geodetic-cli app
+* Contributors: Jose Luis Blanco-Claraco
+
 2.0.1 (2026-01-15)
 ------------------
 * Fix potential bug in sm_georeferencing
