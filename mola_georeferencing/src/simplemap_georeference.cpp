@@ -43,9 +43,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
     if (smFrames.frames.empty())
     {
-        params.logger->logStr(
-            mrpt::system::LVL_ERROR,
-            "The input simplemap seems not to have any GNSS observations!");
+        if (params.logger)
+        {
+            params.logger->logStr(
+                mrpt::system::LVL_ERROR,
+                "The input simplemap seems not to have any GNSS observations!");
+        }
         return ret;
     }
 
@@ -234,7 +237,10 @@ void mola::add_gnss_factors(
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
-        v.insert(P(frame.kf_index), vehiclePose);
+        if (!v.exists(P(frame.kf_index)))
+        {
+            v.insert(P(frame.kf_index), vehiclePose);
+        }
 
         fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             T(0), P(frame.kf_index), vehiclePose, noisePoses);
