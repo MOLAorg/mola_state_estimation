@@ -17,6 +17,7 @@
 #include <mp2p_icp/metricmap.h>
 #include <mrpt/maps/CSimpleMap.h>
 #include <mrpt/obs/CObservationGPS.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/system/COutputLogger.h>
 
 // GTSAM:
@@ -29,7 +30,8 @@ struct SMGeoReferencingOutput
 {
     SMGeoReferencingOutput() = default;
 
-    /// Will be nullopt if georeferencing failed, e.g. due to insufficient GNSS data.
+    /// Will be nullopt if georeferencing failed, e.g. due to insufficient GNSS
+    /// data.
     std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
 
     double final_rmse = .0;
@@ -45,6 +47,11 @@ struct AddGNSSFactorParams
     double minimumUncertaintyXYZ = 0.20;  // [m]
 };
 
+struct AddIMUGravityFactorParams
+{
+    double imuGravitySigmaDeg = 3.0;  // [deg]
+};
+
 struct SMGeoReferencingParams
 {
     SMGeoReferencingParams() = default;
@@ -54,6 +61,12 @@ struct SMGeoReferencingParams
     std::optional<mrpt::topography::TGeodeticCoords> geodeticReference;
 
     AddGNSSFactorParams fgParams;
+
+    /// If true, use IMU acceleration data found in the simplemap to add
+    /// gravity-alignment constraints (MeasuredGravityFactor) to the
+    /// optimization. This helps in cases with poor Z data in GPS.
+    bool                      useIMUGravityAlignment = true;
+    AddIMUGravityFactorParams imuGravityParams;
 
     mrpt::system::COutputLogger* logger = nullptr;
 };
@@ -68,6 +81,7 @@ SMGeoReferencingOutput simplemap_georeference(
 struct FrameGNSS
 {
     mrpt::poses::CPose3D              pose;
+    size_t                            kf_index = 0;  //!< Index in the source CSimpleMap
     mrpt::obs::CObservationGPS::Ptr   obs;
     mrpt::obs::gnss::Message_NMEA_GGA gga;
     mrpt::topography::TGeodeticCoords coords;
@@ -86,6 +100,27 @@ struct GNSSFrames
 GNSSFrames extract_gnss_frames_from_sm(
     const mrpt::maps::CSimpleMap&                           sm,
     const std::optional<mrpt::topography::TGeodeticCoords>& refCoord = std::nullopt);
+
+struct FrameIMUAcc
+{
+    size_t               kf_index = 0;  //!< Index in the source CSimpleMap
+    mrpt::poses::CPose3D vehiclePose;
+    mrpt::poses::CPose3D sensorPoseOnVehicle;
+    gtsam::Vector3       normalizedAcc;
+};
+
+struct IMUAccFrames
+{
+    std::vector<FrameIMUAcc> frames;
+};
+
+IMUAccFrames extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm);
+
+/// Adds MeasuredGravityFactor factors to the graph. Creates new P(kf_index)
+/// variables for keyframes not already present in \a existingPoseKeys.
+void add_imu_gravity_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUAccFrames& imuFrames,
+    const std::set<size_t>& existingPoseKeys, const AddIMUGravityFactorParams& params);
 
 void add_gnss_factors(
     gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,

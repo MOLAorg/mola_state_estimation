@@ -43,7 +43,8 @@ in an independent file with:
 
       USAGE:
 
-         mola-sm-georeferencing  [-v <INFO>] [-l <foobar.so>]
+         mola-sm-georeferencing  [-v <INFO>] [--no-imu-gravity] [-l <foobar.so>]
+                                 [--imu-gravity-sigma-deg <3.0>]
                                  [--horizontality-sigma <1.0>] [-o <map.georef>]
                                  [--write-into <map.mm>] -i <map.simplemap> [--]
                                  [--version] [-h]
@@ -54,9 +55,16 @@ in an independent file with:
          -v <INFO>,  --verbosity <INFO>
          Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)
 
+         --no-imu-gravity
+         Disable using IMU acceleration data for gravity alignment (enabled by
+         default).
+
          -l <foobar.so>,  --load-plugins <foobar.so>
          One or more (comma separated) *.so files to load as plugins, e.g.
          defining new CMetricMap classes
+
+         --imu-gravity-sigma-deg <3.0>
+         IMU gravity alignment uncertainty (degrees).
 
          --horizontality-sigma <1.0>
          For short trajectories (not >10x the GPS uncertainty), this helps to

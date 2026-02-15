@@ -23,6 +23,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/MeasuredGravityFactor.h>
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -42,9 +43,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
     if (smFrames.frames.empty())
     {
-        params.logger->logStr(
-            mrpt::system::LVL_ERROR,
-            "The input simplemap seems not to have any GNSS observations!");
+        if (params.logger)
+        {
+            params.logger->logStr(
+                mrpt::system::LVL_ERROR,
+                "The input simplemap seems not to have any GNSS observations!");
+        }
         return ret;
     }
 
@@ -56,6 +60,28 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     gtsam::Values               v;
 
     add_gnss_factors(graph, v, smFrames, params.fgParams);
+
+    // Collect which P(kf_index) keys are already in the graph from GNSS:
+    std::set<size_t> existingPoseKeys;
+    for (const auto& f : smFrames.frames)
+    {
+        existingPoseKeys.insert(f.kf_index);
+    }
+
+    if (params.useIMUGravityAlignment)
+    {
+        const IMUAccFrames imuFrames = extract_imu_acc_frames_from_sm(sm);
+
+        if (params.logger)
+        {
+            std::stringstream ss;
+            ss << "[simplemap_georeference] Found: " << imuFrames.frames.size()
+               << " IMU acceleration frames";
+            params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+        }
+
+        add_imu_gravity_factors(graph, v, imuFrames, existingPoseKeys, params.imuGravityParams);
+    }
 
     gtsam::LevenbergMarquardtParams lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
 
@@ -112,8 +138,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
     ret.frames.reserve(sm.size());
 
     // Build list of KF poses with GNSS observations:
-    for (const auto& [pose, sf, twist] : sm)
+    for (size_t kfIdx = 0; kfIdx < sm.size(); kfIdx++)
     {
+        const auto& [pose, sf, twist] = sm.get(kfIdx);
+
         ASSERT_(pose);
         ASSERT_(sf);
 
@@ -129,9 +157,10 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
 
             auto& f = ret.frames.emplace_back();
 
-            f.pose = p;
-            f.obs  = obs;
-            f.gga  = obs->getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+            f.pose     = p;
+            f.kf_index = kfIdx;
+            f.obs      = obs;
+            f.gga      = obs->getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
 
             if (obs->covariance_enu)
             {
@@ -204,18 +233,102 @@ void mola::add_gnss_factors(
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
         fg.emplace_shared<mola::factors::FactorGnssEnu>(
-            P(i), sensorPointOnVeh, observedENU, robustNoise);
+            P(frame.kf_index), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
-        v.insert(P(i), vehiclePose);
+        if (!v.exists(P(frame.kf_index)))
+        {
+            v.insert(P(frame.kf_index), vehiclePose);
+        }
 
-        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(T(0), P(i), vehiclePose, noisePoses);
+        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            T(0), P(frame.kf_index), vehiclePose, noisePoses);
 
         if (params.addHorizontalityConstraints)
         {
             fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                P(i), gtsam::Pose3::Identity(), noiseHorizontality);
+                P(frame.kf_index), gtsam::Pose3::Identity(), noiseHorizontality);
         }
+    }
+}
+
+mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm)
+{
+    IMUAccFrames ret;
+    ret.frames.reserve(sm.size());
+
+    for (size_t kfIdx = 0; kfIdx < sm.size(); kfIdx++)
+    {
+        const auto& [pose, sf, twist] = sm.get(kfIdx);
+
+        ASSERT_(pose);
+        ASSERT_(sf);
+
+        const auto p = pose->getMeanVal();
+
+        mrpt::obs::CObservationIMU::Ptr obs;
+        for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationIMU>(i)); i++)
+        {
+            if (!obs->has(mrpt::obs::IMU_X_ACC))
+            {
+                continue;
+            }
+
+            const gtsam::Vector3 measuredGravity = {
+                obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
+                obs->get(mrpt::obs::IMU_Z_ACC)};
+
+            const double norm = measuredGravity.norm();
+
+            // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
+            if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
+            {
+                continue;  // skip: not a valid gravity-like reading
+            }
+
+            auto& f               = ret.frames.emplace_back();
+            f.kf_index            = kfIdx;
+            f.vehiclePose         = p;
+            f.sensorPoseOnVehicle = obs->sensorPose;
+            f.normalizedAcc       = measuredGravity.normalized();
+        }
+    }
+
+    return ret;
+}
+
+void mola::add_imu_gravity_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUAccFrames& imuFrames,
+    const std::set<size_t>& existingPoseKeys, const AddIMUGravityFactorParams& params)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+
+    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+    auto accNoise =
+        gtsam::noiseModel::Isotropic::Sigma(3, mrpt::DEG2RAD(params.imuGravitySigmaDeg));
+
+    for (const auto& frame : imuFrames.frames)
+    {
+        const auto key = P(frame.kf_index);
+
+        // If this KF doesn't already have a P variable (from GNSS), create one:
+        if (existingPoseKeys.count(frame.kf_index) == 0)
+        {
+            if (!v.exists(key))
+            {
+                const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.vehiclePose);
+                v.insert(key, vehiclePose);
+
+                fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                    T(0), key, vehiclePose, noisePoses);
+            }
+        }
+
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+
+        fg.emplace_shared<mola::factors::MeasuredGravityFactor>(
+            T(0), key, sensorOnVehicle, frame.normalizedAcc, accNoise);
     }
 }
