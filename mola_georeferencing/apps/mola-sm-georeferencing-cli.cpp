@@ -47,6 +47,14 @@ struct Cli
         "1.0",
         cmd};
 
+    TCLAP::ValueArg<double> argIMUGravitySigmaDeg{"",
+                                                  "imu-gravity-sigma-deg",
+                                                  "IMU gravity alignment uncertainty (degrees).",
+                                                  false,
+                                                  3.0,
+                                                  "3.0",
+                                                  cmd};
+
     TCLAP::ValueArg<std::string> argPlugins{
         "l",
         "load-plugins",
@@ -56,6 +64,12 @@ struct Cli
         "foobar.so",
         "foobar.so",
         cmd};
+
+    TCLAP::SwitchArg argNoIMUGravity{
+        "", "no-imu-gravity",
+        "Disable using IMU acceleration data for gravity alignment "
+        "(enabled by default).",
+        cmd, false};
 
     TCLAP::ValueArg<std::string> arg_verbosity_level{
         "v",   "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)",
@@ -102,6 +116,15 @@ void run_sm_georef(Cli& cli)
         p.fgParams.horizontalitySigmaZ         = cli.argHorz.getValue();
     }
     // TODO: p.fgParams.minimumUncertaintyXYZ = xxx;
+
+    if (cli.argNoIMUGravity.getValue())
+    {
+        p.useIMUGravityAlignment = false;
+    }
+    if (cli.argIMUGravitySigmaDeg.isSet())
+    {
+        p.imuGravityParams.imuGravitySigmaDeg = cli.argIMUGravitySigmaDeg.getValue();
+    }
 
     const mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);
 
