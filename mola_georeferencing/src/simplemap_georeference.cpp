@@ -259,6 +259,23 @@ void mola::add_gnss_factors(
     }
 }
 
+namespace
+{
+bool imu_acceleration_seems_valid(const gtsam::Vector3& measuredGravity)
+{
+    const double norm = measuredGravity.norm();
+
+    // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
+    if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+}  // namespace
+
 mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm)
 {
     IMUAccFrames ret;
@@ -269,10 +286,7 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
                                     const mrpt::poses::CPose3D& sensorPose,
                                     const gtsam::Vector3&       measuredGravity)
     {
-        const double norm = measuredGravity.norm();
-
-        // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
-        if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
+        if (!imu_acceleration_seems_valid(measuredGravity))
         {
             return;  // skip: not a valid gravity-like reading
         }
@@ -319,12 +333,27 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
         }
 
         // Get the current linear accelerations map (in the vehicle frame of reference)
+        // Average them all so there are not too many factors:
+        gtsam::Vector3 avr_acc   = gtsam::Vector3::Zero();
+        size_t         avr_count = 0;
+
         for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
+        {
+            const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
+            if (imu_acceleration_seems_valid(acc))
+            {
+                avr_count++;
+                avr_acc += acc;
+            }
+        }
+
+        if (avr_count > 0)
         {
             addMeasurement(
                 kfIdx, p, mrpt::poses::CPose3D::Identity(),
-                mrpt::gtsam_wrappers::toPoint3(measuredGravity));
+                avr_acc / static_cast<double>(avr_count));
         }
+
 #endif
     }  // end for each SM keyframe
 
