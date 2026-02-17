@@ -17,6 +17,12 @@
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/topography/conversions.h>
 
+#if __has_include(<mp2p_icp/update_velocity_buffer_from_obs.h>)
+#include <mola_imu_preintegration/LocalVelocityBuffer.h>
+#include <mp2p_icp/update_velocity_buffer_from_obs.h>
+#define HAS_VELOCITY_BUFFER
+#endif
+
 // gtsam factors:
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Marginals.h>
@@ -258,6 +264,26 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
     IMUAccFrames ret;
     ret.frames.reserve(sm.size());
 
+    const auto addMeasurement = [&ret](
+                                    size_t kfIdx, const mrpt::poses::CPose3D& p,
+                                    const mrpt::poses::CPose3D& sensorPose,
+                                    const gtsam::Vector3&       measuredGravity)
+    {
+        const double norm = measuredGravity.norm();
+
+        // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
+        if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
+        {
+            return;  // skip: not a valid gravity-like reading
+        }
+
+        auto& f               = ret.frames.emplace_back();
+        f.kf_index            = kfIdx;
+        f.vehiclePose         = p;
+        f.sensorPoseOnVehicle = sensorPose;
+        f.normalizedAcc       = measuredGravity.normalized();
+    };
+
     for (size_t kfIdx = 0; kfIdx < sm.size(); kfIdx++)
     {
         const auto& [pose, sf, twist] = sm.get(kfIdx);
@@ -267,10 +293,12 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
 
         const auto p = pose->getMeanVal();
 
+        // 1) Process direct CObservationIMU, if available:
         mrpt::obs::CObservationIMU::Ptr obs;
         for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationIMU>(i)); i++)
         {
-            if (!obs->has(mrpt::obs::IMU_X_ACC))
+            if (!obs->has(mrpt::obs::IMU_X_ACC) || !obs->has(mrpt::obs::IMU_Y_ACC) ||
+                !obs->has(mrpt::obs::IMU_Z_ACC))
             {
                 continue;
             }
@@ -279,21 +307,26 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
                 obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
                 obs->get(mrpt::obs::IMU_Z_ACC)};
 
-            const double norm = measuredGravity.norm();
-
-            // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
-            if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
-            {
-                continue;  // skip: not a valid gravity-like reading
-            }
-
-            auto& f               = ret.frames.emplace_back();
-            f.kf_index            = kfIdx;
-            f.vehiclePose         = p;
-            f.sensorPoseOnVehicle = obs->sensorPose;
-            f.normalizedAcc       = measuredGravity.normalized();
+            addMeasurement(kfIdx, p, obs->sensorPose, measuredGravity);
         }
-    }
+
+        // 2) Process embedded IMU info embedded into the metadata:
+#if defined(HAS_VELOCITY_BUFFER)
+        mola::imu::LocalVelocityBuffer lvb;
+        for (const auto& o : *sf)
+        {
+            mp2p_icp::update_velocity_buffer_from_obs(lvb, o);
+        }
+
+        // Get the current linear accelerations map (in the vehicle frame of reference)
+        for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
+        {
+            addMeasurement(
+                kfIdx, p, mrpt::poses::CPose3D::Identity(),
+                mrpt::gtsam_wrappers::toPoint3(measuredGravity));
+        }
+#endif
+    }  // end for each SM keyframe
 
     return ret;
 }
