@@ -14,6 +14,7 @@
 
 // MOLA+MRPT
 #include <mola_georeferencing/simplemap_georeference.h>
+#include <mrpt/core/get_env.h>
 #include <mrpt/poses/gtsam_wrappers.h>
 #include <mrpt/topography/conversions.h>
 
@@ -47,16 +48,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
     }
 
-    if (smFrames.frames.empty())
-    {
-        if (params.logger)
-        {
-            params.logger->logStr(
-                mrpt::system::LVL_ERROR,
-                "The input simplemap seems not to have any GNSS observations!");
-        }
-        return ret;
-    }
+    // we check GNSS frames later on, to check if we have at least IMU data.
 
     // Build and optimize GTSAM graph:
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose
@@ -74,9 +66,15 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         existingPoseKeys.insert(f.kf_index);
     }
 
+    bool hasIMUGravityFactors = false;
     if (params.useIMUGravityAlignment)
     {
         const IMUAccFrames imuFrames = extract_imu_acc_frames_from_sm(sm);
+
+        if (!imuFrames.frames.empty())
+        {
+            hasIMUGravityFactors = true;
+        }
 
         if (params.logger)
         {
@@ -89,11 +87,38 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         add_imu_gravity_factors(graph, v, imuFrames, existingPoseKeys, params.imuGravityParams);
     }
 
+    if (smFrames.frames.empty() && !hasIMUGravityFactors)
+    {
+        if (params.logger)
+        {
+            params.logger->logStr(
+                mrpt::system::LVL_ERROR,
+                "The input simplemap seems not to have neither GNSS nor IMU acceleration data, so "
+                "no georeferencing/gravity alignment can be performed.");
+        }
+        return ret;
+    }
+
+    thread_local bool DEBUG_PRINT_GRAPH =
+        mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_FACTOR_GRAPH", false);
+    if (DEBUG_PRINT_GRAPH)
+    {
+        graph.print("\n====\nGTSAM graph:\n");
+        v.print("\n====\nGTSAM initial values:\n");
+    }
+
     gtsam::LevenbergMarquardtParams lmParams = gtsam::LevenbergMarquardtParams::CeresDefaults();
 
     gtsam::LevenbergMarquardtOptimizer lm(graph, v, lmParams);
 
     auto optimal = lm.optimize();
+
+    thread_local bool DEBUG_PRINT_FG_ERRORS =
+        mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_FG_ERRORS", false);
+    if (DEBUG_PRINT_FG_ERRORS)
+    {
+        graph.printErrors(optimal, "\n===\nFG errors:\n");
+    }
 
     const double errInit = graph.error(v);
     const double errEnd  = graph.error(optimal);
@@ -122,11 +147,16 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     // store results:
     ret.geo_ref.emplace();
 
+    // We will always have this T, using IMU or GNSS:
     ret.geo_ref->T_enu_to_map = {
         mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
         mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
 
-    ret.geo_ref->geo_coord = *smFrames.refCoord;
+    // We may not have geodetics reference if using IMU only. Leave lat=lon=h=0
+    if (smFrames.refCoord.has_value())
+    {
+        ret.geo_ref->geo_coord = *smFrames.refCoord;
+    }
 
     ret.final_rmse = rmseEnd;
 
@@ -371,21 +401,38 @@ void mola::add_imu_gravity_factors(
     auto accNoise =
         gtsam::noiseModel::Isotropic::Sigma(3, mrpt::DEG2RAD(params.imuGravitySigmaDeg));
 
+    // If T(0) was not added because there were no GNSS frames, add it now:
+    if (existingPoseKeys.empty())
+    {
+        if (!v.exists(T(0)))
+        {
+            v.insert(T(0), gtsam::Pose3::Identity());
+        }
+
+        // Also, add a weak prior to anchor the undefined azimuth angle, which is unobservable
+        // without GNSS:
+
+        //  Used when there are IMU factors but no GNSS data, to "anchor" the solution in the
+        //  azimuth angle, which is unobservable with gravity-only factors [rad] */
+        double azimuthUnobservableSigma = 1.0;
+
+        auto noisePriorT0 = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector6(1.0, 1.0, azimuthUnobservableSigma, 1.0, 1.0, 1.0));
+        fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            T(0), gtsam::Pose3::Identity(), noisePriorT0);
+    }
+
     for (const auto& frame : imuFrames.frames)
     {
         const auto key = P(frame.kf_index);
 
         // If this KF doesn't already have a P variable (from GNSS), create one:
-        if (existingPoseKeys.count(frame.kf_index) == 0)
+        if (existingPoseKeys.count(frame.kf_index) == 0 && !v.exists(key))
         {
-            if (!v.exists(key))
-            {
-                const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.vehiclePose);
-                v.insert(key, vehiclePose);
+            const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.vehiclePose);
+            v.insert(key, vehiclePose);
 
-                fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                    T(0), key, vehiclePose, noisePoses);
-            }
+            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(key, vehiclePose, noisePoses);
         }
 
         const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
