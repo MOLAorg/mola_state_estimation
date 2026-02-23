@@ -9,3 +9,12 @@ add_test(
 set_tests_properties(test-mola-sm-georeferencing PROPERTIES
     PASS_REGULAR_EXPRESSION "Obtained georeferencing:.*lat: 31deg 1' 29.*lon: 121deg 26' 26.*h: 18.8"
 )
+
+
+# C++ unit tests:
+mola_add_test(
+  TARGET  test_imu_attitude
+  SOURCES test_imu_attitude.cpp
+  LINK_LIBRARIES
+    mola::mola_georeferencing
+)
