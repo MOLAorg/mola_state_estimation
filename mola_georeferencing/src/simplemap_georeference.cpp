@@ -147,11 +147,16 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     // store results:
     ret.geo_ref.emplace();
 
+    // We will always have this T, using IMU or GNSS:
     ret.geo_ref->T_enu_to_map = {
         mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
         mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
 
-    ret.geo_ref->geo_coord = *smFrames.refCoord;
+    // We may not have geodetics reference if using IMU only. Leave lat=lon=h=0
+    if (smFrames.refCoord.has_value())
+    {
+        ret.geo_ref->geo_coord = *smFrames.refCoord;
+    }
 
     ret.final_rmse = rmseEnd;
 
@@ -411,10 +416,10 @@ void mola::add_imu_gravity_factors(
         //  azimuth angle, which is unobservable with gravity-only factors [rad] */
         double azimuthUnobservableSigma = 1.0;
 
-        auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
-            gtsam::Vector6(1.0, 1.0, 1.0, 1.0, 1.0, azimuthUnobservableSigma));
+        auto noisePriorT0 = gtsam::noiseModel::Diagonal::Sigmas(
+            gtsam::Vector6(1.0, 1.0, azimuthUnobservableSigma, 1.0, 1.0, 1.0));
         fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-            T(0), gtsam::Pose3::Identity(), noiseHorizontality);
+            T(0), gtsam::Pose3::Identity(), noisePriorT0);
     }
 
     for (const auto& frame : imuFrames.frames)
