@@ -432,8 +432,7 @@ void mola::add_imu_gravity_factors(
             const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.vehiclePose);
             v.insert(key, vehiclePose);
 
-            fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-                T(0), key, vehiclePose, noisePoses);
+            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(key, vehiclePose, noisePoses);
         }
 
         const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
