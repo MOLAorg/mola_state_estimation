@@ -2,6 +2,30 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#18 <https://github.com/MOLAorg/mola_state_estimation/issues/18>`_ from MOLAorg/fix/should-fail-on-missing-mm
+  Add guards against failures for missing input .mm files
+* Add guards against failures for missing input .mm files
+* Merge pull request `#17 <https://github.com/MOLAorg/mola_state_estimation/issues/17>`_ from MOLAorg/feat/mm-add-geodetic-handle-null-geodetics
+  mola-mm-add-geodetic: Don't create output map if input geodetics are …
+* mola-mm-add-geodetic: Don't create output map if input geodetics are missing.
+  We may still have a valid input .georef, obtained from IMU only, but without geodetics coordinates
+* Merge pull request `#16 <https://github.com/MOLAorg/mola_state_estimation/issues/16>`_ from MOLAorg/feat/imu-align-without-gps
+  Use IMU even without GPS data
+* improved unit tests
+* fix potential UB
+* Use IMU even without GPS data
+* IMU frames: use averaged gravity measurements per key-frame
+* Merge pull request `#15 <https://github.com/MOLAorg/mola_state_estimation/issues/15>`_ from MOLAorg/fix/use-lvb
+  georeferencing: correctly use IMU data in the LocalVelocityBuffer too…
+* georeferencing: correctly use IMU data in the LocalVelocityBuffer too for gravity alignment
+* Merge pull request `#14 <https://github.com/MOLAorg/mola_state_estimation/issues/14>`_ from MOLAorg/feature/use-imu-for-georef-hint
+  Feature/use-imu-for-georef-hint
+* Fix potential errors
+* georeferencing now optionally uses IMU acceleration measurements to help with gravity-alignment
+* Contributors: Jose Luis Blanco-Claraco
+
 2.1.0 (2026-02-14)
 ------------------
 * simplemap_georeference(): returns std::optional to reflect lack of GNSS data enough
