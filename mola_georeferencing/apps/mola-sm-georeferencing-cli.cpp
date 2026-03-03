@@ -152,7 +152,12 @@ void run_sm_georef(Cli& cli)
         std::cout << "[mola-sm-georeferencing-cli] Loading mm map: '"
                   << cli.argWriteMMInto.getValue() << "'..." << std::endl;
 
-        mm.load_from_file(cli.argWriteMMInto.getValue());
+        const bool loadOk = mm.load_from_file(cli.argWriteMMInto.getValue());
+        if (!loadOk)
+        {
+            THROW_EXCEPTION_FMT(
+                "Error loading input map file: '%s'", cli.argWriteMMInto.getValue().c_str());
+        }
 
         // overwrite metadata:
         mm.georeferencing = smGeo.geo_ref;

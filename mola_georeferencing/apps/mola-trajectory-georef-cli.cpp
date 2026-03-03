@@ -57,7 +57,11 @@ void run_traj_georef(Cli& cli)
         std::cout << "[mola-trajectory-georef-cli] Reading input map from: '" << filMM << "'..."
                   << std::endl;
 
-        mm.load_from_file(filMM);
+        const bool loadOk = mm.load_from_file(filMM);
+        if (!loadOk)
+        {
+            THROW_EXCEPTION_FMT("Error loading input map file: '%s'", filMM.c_str());
+        }
 
         std::cout << "[mola-trajectory-georef-cli] Done read map: " << mm.contents_summary()
                   << std::endl;
