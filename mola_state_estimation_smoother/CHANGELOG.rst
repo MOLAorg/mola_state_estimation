@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.2.0 (2026-03-03)
+------------------
 * Merge pull request `#14 <https://github.com/MOLAorg/mola_state_estimation/issues/14>`_ from MOLAorg/feature/use-imu-for-georef-hint
   Feature/use-imu-for-georef-hint
 * clang-format

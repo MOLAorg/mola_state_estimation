@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.2.0 (2026-03-03)
+------------------
 * Merge pull request `#18 <https://github.com/MOLAorg/mola_state_estimation/issues/18>`_ from MOLAorg/fix/should-fail-on-missing-mm
   Add guards against failures for missing input .mm files
 * Add guards against failures for missing input .mm files
