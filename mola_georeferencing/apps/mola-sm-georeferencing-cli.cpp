@@ -13,10 +13,14 @@
 */
 
 #include <mola_georeferencing/simplemap_georeference.h>
+#include <mp2p_icp/metricmap.h>
 #include <mrpt/3rdparty/tclap/CmdLine.h>
+#include <mrpt/containers/yaml.h>
 #include <mrpt/io/CFileGZOutputStream.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
+
+#include <fstream>
 
 // CLI flags:
 
@@ -33,8 +37,14 @@ struct Cli
         cmd};
 
     TCLAP::ValueArg<std::string> argOutput{
-        "o",   "output",     "Write the obtained georeferencing metadata to a .georef file",
-        false, "map.georef", "map.georef",
+        "o",
+        "output",
+        "Write the obtained georeferencing metadata to a file. The format is "
+        "determined by the file extension: binary gzip (`*.georef`) or YAML "
+        "(`*.yaml`, `*.yml`).",
+        false,
+        "map.georef",
+        "(map.georef|map.yaml)",
         cmd};
 
     TCLAP::ValueArg<double> argHorz{
@@ -76,6 +86,11 @@ struct Cli
         false, "INFO",      "INFO",
         cmd};
 };
+
+static bool is_binary_georef(const std::string& fil)
+{
+    return mrpt::system::extractFileExtension(fil) == "georef";
+}
 
 void run_sm_georef(Cli& cli)
 {
@@ -145,6 +160,17 @@ void run_sm_georef(Cli& cli)
               << "h: " << geo_ref.geo_coord.height << "\n"
               << "T_enu_to_map: " << geo_ref.T_enu_to_map.asString() << "\n";
 
+    // Warn if the user has not requested any output at all.
+    if (!cli.argWriteMMInto.isSet() && !cli.argOutput.isSet())
+    {
+        std::cerr
+            << "[mola-sm-georeferencing-cli] WARNING: Georeferencing was computed successfully "
+               "but no output destination was specified.\n"
+               "  Use '--write-into <map.mm>' to inject it into a metric map, or\n"
+               "  '-o <map.georef|map.yaml>' to save it to a standalone file.\n"
+               "  The result will be discarded.\n";
+    }
+
     if (cli.argWriteMMInto.isSet())
     {
         mp2p_icp::metric_map_t mm;
@@ -182,12 +208,26 @@ void run_sm_georef(Cli& cli)
         std::cout << "[mola-sm-georeferencing-cli] Writing georef data file: '" << outFil << "'..."
                   << std::endl;
 
-        mrpt::io::CFileGZOutputStream                         f(outFil);
-        std::optional<mp2p_icp::metric_map_t::Georeferencing> g;
-        g = smGeo.geo_ref;
+        std::optional<mp2p_icp::metric_map_t::Georeferencing> g = smGeo.geo_ref;
 
-        auto arch = mrpt::serialization::archiveFrom(f);
-        arch << g;
+        if (is_binary_georef(outFil))
+        {
+            // Binary gzip format (*.georef)
+            mrpt::io::CFileGZOutputStream f(outFil);
+            auto                          arch = mrpt::serialization::archiveFrom(f);
+            arch << g;
+        }
+        else
+        {
+            // YAML format (*.yaml, *.yml, or any other extension)
+            const auto    yamlData = mp2p_icp::ToYAML(g);
+            std::ofstream of(outFil);
+            if (!of.is_open())
+            {
+                THROW_EXCEPTION_FMT("Cannot open output file for writing: '%s'", outFil.c_str());
+            }
+            of << yamlData;
+        }
     }
 }
 

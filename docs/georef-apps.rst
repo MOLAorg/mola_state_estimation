@@ -26,15 +26,27 @@ map file, use:
       # georeference it:
       mola-sm-georeferencing -i datasetWithGPS.simplemap --write-into myMap.mm
 
-Alternatively, the georeferenciation metadata can be also stored, independently of a metric map,
-in an independent file with:
+Alternatively, the georeferencing metadata can also be stored independently of a metric map
+in a standalone file. Two output formats are supported:
 
 .. code-block:: bash
 
-      # georeference it:
-      mola-sm-georeferencing -i datasetWithGPS.simplemap --output myMap.georef
+      # Binary gzip format (compact, suitable for archiving):
+      mola-sm-georeferencing -i datasetWithGPS.simplemap -o myMap.georef
 
+      # YAML format (human-readable, easy to inspect or edit):
+      mola-sm-georeferencing -i datasetWithGPS.simplemap -o myMap.yaml
 
+The output format is selected automatically from the file extension: ``*.georef`` produces
+a binary gzip file, while ``*.yaml`` or ``*.yml`` (or any other extension) produces a
+human-readable YAML file.  Both formats are accepted by all other MOLA/mp2p_icp tools that
+consume georeferencing data (e.g. ``sm2mm --georef``, ``mm-georef``,
+``mola-trajectory-georef``).
+
+.. note::
+
+   If neither ``--write-into`` nor ``-o`` is provided, the tool will print a warning and
+   discard the computed result. Always supply at least one output destination.
 
 .. dropdown:: Full CLI reference
    :icon: code-review
@@ -45,7 +57,8 @@ in an independent file with:
 
          mola-sm-georeferencing  [-v <INFO>] [--no-imu-gravity] [-l <foobar.so>]
                                  [--imu-gravity-sigma-deg <3.0>]
-                                 [--horizontality-sigma <1.0>] [-o <map.georef>]
+                                 [--horizontality-sigma <1.0>]
+                                 [-o <(map.georef|map.yaml)>]
                                  [--write-into <map.mm>] -i <map.simplemap> [--]
                                  [--version] [-h]
 
@@ -70,8 +83,11 @@ in an independent file with:
          For short trajectories (not >10x the GPS uncertainty), this helps to
          avoid degeneracy.
 
-         -o <map.georef>,  --output <map.georef>
-         Write the obtained georeferencing metadata to a .georef file
+         -o <(map.georef|map.yaml)>,  --output <(map.georef|map.yaml)>
+         Write the obtained georeferencing metadata to a file. The format is
+         determined by the file extension: binary gzip (``*.georef``) or YAML
+         (``*.yaml``, ``*.yml``). Both formats are accepted by all MOLA/mp2p_icp
+         tools that consume georeferencing data.
 
          --write-into <map.mm>
          An existing .mm file in which to write the georeferencing metadata
