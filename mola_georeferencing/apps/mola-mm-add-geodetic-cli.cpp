@@ -143,9 +143,6 @@ void add_geodetic_fields_to_layer(
     const auto& ys = pointMap.getPointsBufferRef_y();
     const auto& zs = pointMap.getPointsBufferRef_z();
 
-    // Transform map->ENU using the inverse of T_enu_to_map
-    const auto T_map_to_enu = -georef.T_enu_to_map.mean;
-
     // Process each point
     size_t progressCounter = 0;
     for (size_t i = 0; i < numPoints; i++)
@@ -154,8 +151,7 @@ void add_geodetic_fields_to_layer(
         const mrpt::math::TPoint3D ptMap(xs[i], ys[i], zs[i]);
 
         // Transform to ENU frame
-        mrpt::math::TPoint3D ptENU;
-        T_map_to_enu.composePoint(ptMap, ptENU);
+        const mrpt::math::TPoint3D ptENU = georef.T_enu_to_map.mean.composePoint(ptMap);
 
         try
         {
