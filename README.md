@@ -43,3 +43,5 @@ Note: Rows within each cell are for ``amd64`` and ``arm64`` architectures.
 `mola_state_estimation` is released under the GNU GPL v3 license, except noted otherwise in each individual module.
 Other options available upon request.
 See the [official project documentation](https://docs.mola-slam.org/latest/).
+
+Contributions require acceptance of the Contributor License Agreement (CLA).
