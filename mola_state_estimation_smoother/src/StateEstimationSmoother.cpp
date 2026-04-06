@@ -741,7 +741,7 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel.c_str());
         }
     }
-    // Robot pose wrt "map":
+    // Robot pose wrt a reference frame (odometry or map):
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
@@ -752,7 +752,14 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
                 sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
         }
 
-        this->fuse_pose(obsPose->timestamp, sensedSensorPose, params_.reference_frame_name);
+        // Use sensorLabel as frame_id if available (e.g. "wheel_odom", "visual_odom"),
+        // so each source gets its own odometry frame in the factor graph.
+        // Falls back to reference_frame_name for backward compatibility
+        // (e.g. ground truth robot pose observations without a label).
+        const std::string& frameId =
+            obsPose->sensorLabel.empty() ? params_.reference_frame_name : obsPose->sensorLabel;
+
+        this->fuse_pose(obsPose->timestamp, sensedSensorPose, frameId);
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o); obsGPS)
