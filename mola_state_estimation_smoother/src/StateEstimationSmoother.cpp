@@ -756,8 +756,35 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
         // so each source gets its own odometry frame in the factor graph.
         // Falls back to reference_frame_name for backward compatibility
         // (e.g. ground truth robot pose observations without a label).
-        const std::string& frameId =
-            obsPose->sensorLabel.empty() ? params_.reference_frame_name : obsPose->sensorLabel;
+        std::string frameId = params_.reference_frame_name;
+        if (!obsPose->sensorLabel.empty())
+        {
+            // Normalize: replace illegal chars (keep alphanumeric, '_', '-', '/')
+            std::string normalized;
+            normalized.reserve(obsPose->sensorLabel.size());
+            for (char c : obsPose->sensorLabel)
+                normalized += (std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                               c == '-' || c == '/')
+                                  ? c
+                                  : '_';
+
+            // Enforce max length
+            constexpr std::size_t MAX_FRAME_ID_LEN = 64;
+            if (normalized.size() > MAX_FRAME_ID_LEN) normalized.resize(MAX_FRAME_ID_LEN);
+
+            // Reject reserved names
+            if (normalized == params_.vehicle_frame_name || normalized == params_.enu_frame_name)
+            {
+                MRPT_LOG_WARN_FMT(
+                    "CObservationRobotPose sensorLabel '%s' is a reserved frame name; "
+                    "falling back to reference_frame_name '%s'",
+                    obsPose->sensorLabel.c_str(), params_.reference_frame_name.c_str());
+            }
+            else
+            {
+                frameId = normalized;
+            }
+        }
 
         this->fuse_pose(obsPose->timestamp, sensedSensorPose, frameId);
     }
