@@ -23,7 +23,7 @@
 #  Key environment variables:
 #    MOLA_LIDAR_TOPIC   - LiDAR PointCloud2 topic (default: /ouster/points)
 #    WHEEL_ODOM_TOPIC   - wheel odometry topic     (default: /wheel_odom)
-#    MOLA_IMU_TOPIC     - IMU topic                (default: /imu)
+#    IMU_TOPIC          - IMU topic                (default: /imu)
 # -----------------------------------------------------------------------------
 
 modules:
@@ -126,14 +126,14 @@ modules:
           output_sensor_label: "wheel_odom"
 
         # IMU for gravity alignment
-        - topic: ${MOLA_IMU_TOPIC|/imu}
+        - topic: ${IMU_TOPIC|/imu}
           msg_type: Imu
           output_sensor_label: "imu"
           fixed_sensor_pose: "${IMU_POSE_X|0} ${IMU_POSE_Y|0} ${IMU_POSE_Z|0} ${IMU_POSE_YAW|0} ${IMU_POSE_PITCH|0} ${IMU_POSE_ROLL|0}"
           use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
 
         # Optional GNSS
-        - topic: ${MOLA_GNSS_TOPIC|/gps}
+        - topic: ${GNSS_TOPIC|/gps}
           msg_type: NavSatFix
           output_sensor_label: "gps"
           fixed_sensor_pose: "0 0 0 0 0 0"

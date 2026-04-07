@@ -65,13 +65,13 @@ Next we show different possible use cases.
    .. code-block:: bash
 
       # Fake wheel odometry: 2% systematic scale drift in X, 50 Hz
-      python3 $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/scripts/fake_wheel_odom_publisher.py
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_wheel_odom_publisher.py
 
       # Fake visual/lidar odometry: 3 mm/step lateral drift, 30 Hz
-      python3 $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/scripts/fake_visual_odom_publisher.py
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_visual_odom_publisher.py
 
       # Fake IMU: gravity-aligned accelerometer + gyroscope, 100 Hz
-      python3 $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/scripts/fake_imu_publisher.py
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_imu_publisher.py
 
    Both fake odometry nodes share the same ground-truth motion (circle at vx=1 m/s,
    wz=0.2 rad/s) but have different noise and drift characteristics so that the smoother
@@ -86,11 +86,14 @@ Next we show different possible use cases.
         odom2_topic:=/visual_odom \
         imu_topic:=/imu
 
-   Or using ``mola-cli`` directly:
+   Or using ``mola-cli`` directly (set topic names via environment variables):
 
    .. code-block:: bash
 
-      mola-cli $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/mola-cli-launchs/demo_fuse_two_ros2_odometries.yaml
+      ODOM1_TOPIC=/wheel_odom \
+      ODOM2_TOPIC=/visual_odom \
+      IMU_TOPIC=/imu \
+        mola-cli $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml
 
    Key launch arguments:
 

@@ -249,7 +249,12 @@ void StateEstimationSmoother::spinOnce()
     lu.child_frame     = params_.vehicle_frame_name;
     lu.reference_frame = params_.reference_frame_name;
 
-    lu.method    = "state_estimator";
+    // Use just the YAML label part of the module instance name
+    // (e.g. "state_estimation" from "FullClassName:state_estimation"),
+    // since this string is used as a ROS topic prefix and filter key:
+    const auto& fullName = getModuleInstanceName();
+    const auto  colonPos = fullName.rfind(':');
+    lu.method = (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
     lu.quality   = 1;
     lu.timestamp = *tNowOpt;
     lu.pose      = nv->pose.getPoseMean().asTPose();
@@ -509,16 +514,34 @@ void StateEstimationSmoother::fuse_pose_locked(
         mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
         mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
 
-    // numerical sanity:
+    // numerical sanity: replace zero-variance entries (common in
+    // nav_msgs/Odometry messages with unfilled covariance) with a
+    // reasonable default so the factor graph remains well-conditioned.
+    auto poseSanitized = pose;
+    bool patched       = false;
     for (int i = 0; i < 6; i++)
     {
-        ASSERT_GT_(pose.cov(i, i), .0);
+        if (poseSanitized.cov(i, i) <= .0)
+        {
+            // Default sigmas: 1 m for position (i<3), 0.1 rad (~6 deg) for orientation
+            const double defaultSigma  = (i < 3) ? 1.0 : 0.1;
+            poseSanitized.cov(i, i)    = defaultSigma * defaultSigma;
+            patched                    = true;
+        }
+    }
+    if (patched)
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0,
+            "[fuse_pose] frame='%s': zero diagonal covariance entries patched with defaults "
+            "(source may not be publishing covariance)",
+            frame_id.c_str());
     }
 
     // Add factor:
     gtsam::Pose3   pose_out;
     gtsam::Matrix6 cov_out;
-    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(pose, pose_out, cov_out);
+    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
 
     // TODO: robust factors here?
 

@@ -1,48 +1,61 @@
 # -----------------------------------------------------------------------------
-#                        SLAM system definition for MOLA
+#                   SLAM system definition for MOLA
 #
-# This file defines: Input and output with ROS 2, the MOLA Visualizer.
-# This can be launched with the ROS2 launch file "ros2-state-estimator.launch.py"
+# Central mola-cli launch file for the StateEstimationSmoother with BridgeROS2.
+# Supports up to 4 odometry sources, IMU, and GNSS — all controlled via
+# environment variables.  Unused slots default to an empty topic and are
+# silently skipped by BridgeROS2.
+#
+# This file can be launched with the ROS2 launch files in ros2-launchs/, or
+# directly with mola-cli:
+#
+#   ODOM1_TOPIC=/wheel_odom ODOM2_TOPIC=/visual_odom IMU_TOPIC=/imu \
+#     mola-cli state_estimator_ros2.yaml
+#
+# Environment variables (with defaults — empty means disabled):
+#   ODOM1_TOPIC / ODOM1_LABEL   - 1st odometry topic / sensor label
+#   ODOM2_TOPIC / ODOM2_LABEL   - 2nd odometry topic / sensor label
+#   ODOM3_TOPIC / ODOM3_LABEL   - 3rd odometry topic / sensor label
+#   ODOM4_TOPIC / ODOM4_LABEL   - 4th odometry topic / sensor label
+#   IMU_TOPIC                   - IMU topic           (default: empty)
+#   GNSS_TOPIC                  - GNSS topic          (default: empty)
+#   MOLA_WITH_GUI               - show MolaViz        (default: true)
+#
+# See params/state-estimation-smoother.yaml for smoother-specific env vars.
 # -----------------------------------------------------------------------------
 
 modules:
   # =====================
-  # MolaViz
+  # MolaViz (optional)
   # =====================
   - name: viz
     type: mola::MolaViz
     enabled: ${MOLA_WITH_GUI|true}
     verbosity_level: "${MOLA_VERBOSITY_MOLA_VIZ|INFO}"
-    params: ~ # none
+    params: ~
 
   # =====================
-  # State Estimation
+  # State Estimation Smoother
   # =====================
   - name: state_estimation
     type: mola::mola_state_estimation_smoother::StateEstimationSmoother
     verbosity_level: "${MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR|INFO}"
     raw_data_source: "ros2_bridge"
 
-    # When using StateEstimationSmoother, this execution rate (Hz) determines the
-    # rate of publishing filtered pose estimations.
-    execution_rate: ${MOLA_STATE_ESTIMATOR_PUBLISH_RATE|10} # Hz
+    # Rate (Hz) at which the smoother publishes fused pose estimates to ROS2.
+    execution_rate: ${MOLA_STATE_ESTIMATOR_PUBLISH_RATE|20}  # Hz
 
-    # This includes here a whole block "params: (...)":
+    # Smoother parameters (external file for easy per-robot customisation):
     params: "${MOLA_STATE_ESTIMATOR_YAML|../params/state-estimation-smoother.yaml}"
 
   # =====================
-  # ROS2 <-> MOLA
+  # ROS2 <-> MOLA Bridge
   # =====================
-  - type: mola::BridgeROS2
-    name: ros2_bridge
+  - name: ros2_bridge
+    type: mola::BridgeROS2
     verbosity_level: "${MOLA_VERBOSITY_BRIDGE_ROS2|INFO}"
     export_to_rawlog: ${MOLA_BRIDGE_ROS2_EXPORT_TO_RAWLOG_FILE|''}
-
-    # In BridgeROS2, this execution rate (Hz) determines the
-    # rate of publishing odometry observations, if enabled.
-    # All other subscribed sensors are forwarded to the MOLA
-    # system without delay as they are received from ROS.
-    execution_rate: 20 # Hz
+    execution_rate: 20  # Hz
 
     gui_preview_sensors:
       - raw_sensor_label: ${MOLA_LIDAR_NAME|lidar}
@@ -51,97 +64,63 @@ modules:
         win_pos: 5 5 400 400
 
     params:
-      # tf frame name with respect to sensor poses are measured, and also used for publishing
-      # SLAM/localization results (read below).
       base_link_frame: "${MOLA_TF_BASE_LINK|base_link}"
-
-      # If not empty, the node will broadcast a static /tf from base_footprint to
-      # base_link with the TF base_footprint_to_base_link_tf at start up.
       base_footprint_frame: "${MOLA_TF_FOOTPRINT_LINK|base_footprint}"
-      base_footprint_to_base_link_tf: "${MOLA_TF_FOOTPRINT_TO_BASE_LINK|[0, 0, 0, 0, 0, 0]}" # [x, y, z, yaw_deg, pitch_deg, roll_deg]
-
-      # Used for:
-      # (a) importing odometry to MOLA if ``forward_ros_tf_as_mola_odometry_observations=true``
-      # (b) querying ``${odom_frame} => ${base_link_frame}`` when
-      #     ``publish_localization_following_rep105=true``.
+      base_footprint_to_base_link_tf: "${MOLA_TF_FOOTPRINT_TO_BASE_LINK|[0, 0, 0, 0, 0, 0]}"
       odom_frame: "${MOLA_TF_ESTIMATED_ODOMETRY|odom}"
-
-      # tf frame used for:
-      # (a) See ``publish_tf_from_robot_pose_observations``
-      # (b) To follow REP105 (``publish_localization_following_rep105``), this must match
-      #     the frame used as reference in the LocalizationSource (e.g. mola_lidar_odometry)
       reference_frame: "${MOLA_TF_MAP|map}"
 
-      # How to publish localization to /tf:
-      # - ``false``(direct mode): reference_frame ("map") -> base_link ("base_link")
-      #   Note that reference_frame in this case comes from the localization source module
-      #   (e.g. mola_lidar_odometry), it is not configured here.
-      #
-      #  - ``true`` (indirect mode), following ROS [REP
-      #  105](https://ros.org/reps/rep-0105.html):
-      #   ``map -> odom``  (such as "map -> odom -> base_link" = "map -> base_link")
-      publish_localization_following_rep105: false # For state estimation smoother, this is better false. See online docs.
+      publish_localization_following_rep105: false
 
-      # If enabled, during spinOnce(), the tf ``${odom_frame} => ${base_link_frame}`` will
-      # be queried and forwarded as an `CObservationOdometry` reading to the MOLA subsystem:
       forward_ros_tf_as_mola_odometry_observations: ${MOLA_FORWARD_ROS_TF_ODOM_TO_MOLA|false}
 
-      # If enabled, SLAM/Localization results will be published as nav_msgs/Odometry messages.
       publish_odometry_msgs_from_slam: ${MOLA_LOCALIZATION_PUBLISH_ODOM_MSGS|true}
-
-      # If the flag above is true, this allows fine tuning which localization source will be actually forwarded (MOLA module name). Empty=any.
-      publish_odometry_msgs_from_slam_source: ${MOLA_LOCALIZATION_PUBLISH_ODOM_MSGS_SOURCE|""} # alternative: 'state_estimation_smoother'
-
-      # If enabled, SLAM/Localization results will be published as tf messages, for frames
-      # according to explained above for `publish_localization_following_rep105`.
+      publish_odometry_msgs_from_slam_source: ${MOLA_LOCALIZATION_PUBLISH_ODOM_MSGS_SOURCE|""}
       publish_tf_from_slam: ${MOLA_LOCALIZATION_PUBLISH_TF|true}
+      publish_tf_from_slam_source: ${MOLA_LOCALIZATION_PUBLISH_TF_SOURCE|""}
 
-      # If the flag above is true, this allows fine tuning which localization source will be actually forwarded (MOLA module name). Empty=any.
-      publish_tf_from_slam_source: ${MOLA_LOCALIZATION_PUBLISH_TF_SOURCE|""} # alternative: 'state_estimation_smoother'
-
-      # If enabled, robot pose observations (typically, ground truth from datasets), will be
-      # forwarded to ROS as /tf messages: ``${reference_frame} => ${base_link}``
       publish_tf_from_robot_pose_observations: false
 
-      # If not empty, this defines a topic name (type: geometry_msgs/PoseWithCovarianceStamped)
-      # to subscribe to. Each received message will map to requests to re-localize to MOLA modules
-      # in the system implementing `mola::Relocalization`:
       relocalize_from_topic: "/initialpose"
 
-      # Everything published to ROS2 will have timestamps from:
-      #  - true: the original dataset timestamps.
-      #  - false: the wall-clock time.
-      publish_in_sim_time: ${MOLA_ROS2_PUBLISH_IN_SIM_TIME|true}
+      publish_in_sim_time: ${MOLA_ROS2_PUBLISH_IN_SIM_TIME|false}
+      period_publish_new_localization: ${MOLA_ROS2_PUBLISH_LOCALIZATION_PERIOD|0.050}
+      period_publish_new_map: ${MOLA_ROS2_PUBLISH_MAPS_PERIOD|1.0}
 
-      # Period [s] to publish new localization estimates to ROS2 from the MOLA SLAM solution:
-      # Note that no repeated localization are published. This is just the period for checking if new
-      # estimates are available and waiting to be published.
-      period_publish_new_localization: ${MOLA_ROS2_PUBLISH_LOCALIZATION_PERIOD|0.050} # [s]
-
-      # Period [s] to publish the updated map to ROS2 from the MOLA SLAM solution:
-      # Note that no repeated maps are published. This is just the period for checking the need to republish.
-      period_publish_new_map: ${MOLA_ROS2_PUBLISH_MAPS_PERIOD|1.0} # [s]
-
-      # A placeholder for optional flags from "ros2 launch", captured
-      # as all cli arguments after "--ros-args":
       ros_args: '${ROS_ARGS|"[]"}'
 
-      # ROS2 topics to be forwarded to the MOLA system:
+      # ---- Subscribe to sensor topics (empty topic = disabled) ----
       subscribe:
-        - topic: ${MOLA_GNSS_TOPIC|/gps}
-          msg_type: NavSatFix
-          output_sensor_label: "gps"
-          # If present, this will override whatever /tf tells about the sensor pose:
-          fixed_sensor_pose: "${GNSS_POSE_X|0} ${GNSS_POSE_Y|0} ${GNSS_POSE_Z|0} ${GNSS_POSE_YAW|0} ${GNSS_POSE_PITCH|0} ${GNSS_POSE_ROLL|0}" # 'x y z yaw_deg pitch_deg roll_deg''
-          use_fixed_sensor_pose: ${MOLA_USE_FIXED_GNSS_POSE|false}
+        # Odometry source 1
+        - topic: ${ODOM1_TOPIC|}
+          msg_type: Odometry
+          output_sensor_label: "${ODOM1_LABEL|odom1}"
 
-        - topic: ${MOLA_IMU_TOPIC|/imu}
+        # Odometry source 2
+        - topic: ${ODOM2_TOPIC|}
+          msg_type: Odometry
+          output_sensor_label: "${ODOM2_LABEL|odom2}"
+
+        # Odometry source 3
+        - topic: ${ODOM3_TOPIC|}
+          msg_type: Odometry
+          output_sensor_label: "${ODOM3_LABEL|odom3}"
+
+        # Odometry source 4
+        - topic: ${ODOM4_TOPIC|}
+          msg_type: Odometry
+          output_sensor_label: "${ODOM4_LABEL|odom4}"
+
+        # IMU
+        - topic: ${IMU_TOPIC|}
           msg_type: Imu
-          output_sensor_label: "imu"
-          # If present, this will override whatever /tf tells about the sensor pose:
-          fixed_sensor_pose: "${IMU_POSE_X|0} ${IMU_POSE_Y|0} ${IMU_POSE_Z|0} ${IMU_POSE_YAW|0} ${IMU_POSE_PITCH|0} ${IMU_POSE_ROLL|0}" # 'x y z yaw_deg pitch_deg roll_deg''
+          output_sensor_label: "${IMU_LABEL|imu}"
+          fixed_sensor_pose: "${IMU_POSE_X|0} ${IMU_POSE_Y|0} ${IMU_POSE_Z|0} ${IMU_POSE_YAW|0} ${IMU_POSE_PITCH|0} ${IMU_POSE_ROLL|0}"
           use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
 
-        #- topic: /odom
-        #  msg_type: Odometry
-        #  output_sensor_label: odom
+        # GNSS
+        - topic: ${GNSS_TOPIC|}
+          msg_type: NavSatFix
+          output_sensor_label: "${GNSS_LABEL|gps}"
+          fixed_sensor_pose: "${GNSS_POSE_X|0} ${GNSS_POSE_Y|0} ${GNSS_POSE_Z|0} ${GNSS_POSE_YAW|0} ${GNSS_POSE_PITCH|0} ${GNSS_POSE_ROLL|0}"
+          use_fixed_sensor_pose: ${MOLA_USE_FIXED_GNSS_POSE|false}

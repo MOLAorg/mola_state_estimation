@@ -93,7 +93,7 @@ params:
   # the "reference_frame", with a sigma given by this value. Use a small number, like 1e-6, for
   # initialing the first odometry pose near the map origin. Do not set when using geo-referenced
   # maps.
-  # link_first_pose_to_reference_origin_sigma: 1e-6
+  link_first_pose_to_reference_origin_sigma: ${MOLA_LINK_FIRST_POSE_SIGMA|}
 
   # --------------------------------------------------------------------------
   # Initial State Estimation

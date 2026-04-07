@@ -1,5 +1,8 @@
 # ROS 2 launch file: Fuse two external odometry sources via the MOLA smoother
 #
+# This is a convenience wrapper around the central state_estimator_ros2.yaml,
+# pre-configuring it for two nav_msgs/Odometry inputs + optional IMU/GNSS.
+#
 # Usage:
 #   ros2 launch mola_state_estimation_smoother ros2-fuse-two-odometries.launch.py \
 #       odom1_topic:=/wheel_odom odom2_topic:=/visual_odom
@@ -30,21 +33,33 @@ def generate_launch_description():
     odom1_env = SetEnvironmentVariable(
         name='ODOM1_TOPIC', value=LaunchConfiguration('odom1_topic'))
 
+    odom1_label_arg = DeclareLaunchArgument(
+        "odom1_label", default_value="wheel_odom",
+        description="Sensor label for first odometry source")
+    odom1_label_env = SetEnvironmentVariable(
+        name='ODOM1_LABEL', value=LaunchConfiguration('odom1_label'))
+
     odom2_topic_arg = DeclareLaunchArgument(
         "odom2_topic", default_value="/visual_odom",
         description="Second nav_msgs/Odometry topic (e.g. visual/lidar odometry)")
     odom2_env = SetEnvironmentVariable(
         name='ODOM2_TOPIC', value=LaunchConfiguration('odom2_topic'))
 
+    odom2_label_arg = DeclareLaunchArgument(
+        "odom2_label", default_value="visual_odom",
+        description="Sensor label for second odometry source")
+    odom2_label_env = SetEnvironmentVariable(
+        name='ODOM2_LABEL', value=LaunchConfiguration('odom2_label'))
+
     imu_topic_arg = DeclareLaunchArgument(
         "imu_topic", default_value="/imu",
-        description="IMU topic for gravity alignment")
+        description="IMU topic for gravity alignment (empty to disable)")
     imu_env = SetEnvironmentVariable(
         name='IMU_TOPIC', value=LaunchConfiguration('imu_topic'))
 
     gnss_topic_arg = DeclareLaunchArgument(
-        "gnss_topic", default_value="/gps",
-        description="GNSS topic for geo-referencing")
+        "gnss_topic", default_value="",
+        description="GNSS topic for geo-referencing (empty to disable)")
     gnss_env = SetEnvironmentVariable(
         name='GNSS_TOPIC', value=LaunchConfiguration('gnss_topic'))
 
@@ -70,6 +85,16 @@ def generate_launch_description():
         name='MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION',
         value=LaunchConfiguration('enforce_planar_motion'))
 
+    # Anchor first pose to map origin (useful for local demos without geo-ref):
+    link_first_pose_env = SetEnvironmentVariable(
+        name='MOLA_LINK_FIRST_POSE_SIGMA', value='1e-6')
+
+    # Publish fused estimates from the smoother:
+    publish_tf_source_env = SetEnvironmentVariable(
+        name='MOLA_LOCALIZATION_PUBLISH_TF_SOURCE', value='state_estimation')
+    publish_odom_source_env = SetEnvironmentVariable(
+        name='MOLA_LOCALIZATION_PUBLISH_ODOM_MSGS_SOURCE', value='state_estimation')
+
     # Namespace
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
@@ -83,7 +108,7 @@ def generate_launch_description():
     tf_remaps = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
     mola_system_yaml_file = os.path.join(
-        myDir, 'mola-cli-launchs', 'demo_fuse_two_ros2_odometries.yaml')
+        myDir, 'mola-cli-launchs', 'state_estimator_ros2.yaml')
 
     node_group = GroupAction([
         PushRosNamespace(
@@ -110,12 +135,17 @@ def generate_launch_description():
         declare_namespace_cmd,
         declare_use_namespace_cmd,
         odom1_topic_arg, odom1_env,
+        odom1_label_arg, odom1_label_env,
         odom2_topic_arg, odom2_env,
+        odom2_label_arg, odom2_label_env,
         imu_topic_arg, imu_env,
         gnss_topic_arg, gnss_env,
         use_mola_gui_arg, use_mola_gui_env,
         use_rviz_arg,
         mola_tf_base_link_arg, mola_tf_base_link_env,
         enforce_planar_motion_arg, enforce_planar_motion_env,
+        link_first_pose_env,
+        publish_tf_source_env,
+        publish_odom_source_env,
         node_group
     ])
