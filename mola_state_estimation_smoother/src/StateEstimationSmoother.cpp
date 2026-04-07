@@ -249,7 +249,12 @@ void StateEstimationSmoother::spinOnce()
     lu.child_frame     = params_.vehicle_frame_name;
     lu.reference_frame = params_.reference_frame_name;
 
-    lu.method    = "state_estimator";
+    // Use just the YAML label part of the module instance name
+    // (e.g. "state_estimation" from "FullClassName:state_estimation"),
+    // since this string is used as a ROS topic prefix and filter key:
+    const auto& fullName = getModuleInstanceName();
+    const auto  colonPos = fullName.rfind(':');
+    lu.method = (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
     lu.quality   = 1;
     lu.timestamp = *tNowOpt;
     lu.pose      = nv->pose.getPoseMean().asTPose();
@@ -509,16 +514,34 @@ void StateEstimationSmoother::fuse_pose_locked(
         mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
         mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
 
-    // numerical sanity:
+    // numerical sanity: replace zero-variance entries (common in
+    // nav_msgs/Odometry messages with unfilled covariance) with a
+    // reasonable default so the factor graph remains well-conditioned.
+    auto poseSanitized = pose;
+    bool patched       = false;
     for (int i = 0; i < 6; i++)
     {
-        ASSERT_GT_(pose.cov(i, i), .0);
+        if (poseSanitized.cov(i, i) <= .0)
+        {
+            // Default sigmas: 1 m for position (i<3), 0.1 rad (~6 deg) for orientation
+            const double defaultSigma  = (i < 3) ? 1.0 : 0.1;
+            poseSanitized.cov(i, i)    = defaultSigma * defaultSigma;
+            patched                    = true;
+        }
+    }
+    if (patched)
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0,
+            "[fuse_pose] frame='%s': zero diagonal covariance entries patched with defaults "
+            "(source may not be publishing covariance)",
+            frame_id.c_str());
     }
 
     // Add factor:
     gtsam::Pose3   pose_out;
     gtsam::Matrix6 cov_out;
-    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(pose, pose_out, cov_out);
+    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
 
     // TODO: robust factors here?
 
@@ -741,7 +764,7 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel.c_str());
         }
     }
-    // Robot pose wrt "map":
+    // Robot pose wrt a reference frame (odometry or map):
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
@@ -752,7 +775,41 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
                 sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
         }
 
-        this->fuse_pose(obsPose->timestamp, sensedSensorPose, params_.reference_frame_name);
+        // Use sensorLabel as frame_id if available (e.g. "wheel_odom", "visual_odom"),
+        // so each source gets its own odometry frame in the factor graph.
+        // Falls back to reference_frame_name for backward compatibility
+        // (e.g. ground truth robot pose observations without a label).
+        std::string frameId = params_.reference_frame_name;
+        if (!obsPose->sensorLabel.empty())
+        {
+            // Normalize: replace illegal chars (keep alphanumeric, '_', '-', '/')
+            std::string normalized;
+            normalized.reserve(obsPose->sensorLabel.size());
+            for (char c : obsPose->sensorLabel)
+                normalized += (std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                               c == '-' || c == '/')
+                                  ? c
+                                  : '_';
+
+            // Enforce max length
+            constexpr std::size_t MAX_FRAME_ID_LEN = 64;
+            if (normalized.size() > MAX_FRAME_ID_LEN) normalized.resize(MAX_FRAME_ID_LEN);
+
+            // Reject reserved names
+            if (normalized == params_.vehicle_frame_name || normalized == params_.enu_frame_name)
+            {
+                MRPT_LOG_WARN_FMT(
+                    "CObservationRobotPose sensorLabel '%s' is a reserved frame name; "
+                    "falling back to reference_frame_name '%s'",
+                    obsPose->sensorLabel.c_str(), params_.reference_frame_name.c_str());
+            }
+            else
+            {
+                frameId = normalized;
+            }
+        }
+
+        this->fuse_pose(obsPose->timestamp, sensedSensorPose, frameId);
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o); obsGPS)

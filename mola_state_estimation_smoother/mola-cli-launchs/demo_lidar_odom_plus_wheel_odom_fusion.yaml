@@ -1,0 +1,140 @@
+# -----------------------------------------------------------------------------
+#  DEMO: LiDAR odometry + ROS2 wheel odometry fused in the Smoother
+#
+#  This mola-cli launch file runs:
+#   1. mola::BridgeROS2 - subscribes to LiDAR PointCloud2 + wheel Odometry + IMU
+#   2. mola::LidarOdometry - computes LiDAR-based odometry from point clouds
+#   3. mola::StateEstimationSmoother - fuses LiDAR odom + wheel odom + IMU
+#   4. BridgeROS2 publishes fused result back to ROS2 as nav_msgs/Odometry + /tf
+#
+#  Data flow:
+#    ROS2 /lidar_points --> BridgeROS2 --> LidarOdometry ---+
+#    ROS2 /wheel_odom   --> BridgeROS2 ----+                |
+#    ROS2 /imu          --> BridgeROS2 ----+--> StateEstimationSmoother
+#                                                     |
+#                                            advertiseUpdatedLocalization()
+#                                                     |
+#                                              BridgeROS2 --> ROS2 /state_estimation/pose
+#                                                         --> ROS2 /tf (map->base_link)
+#
+#  Usage:
+#    mola-cli demo_lidar_odom_plus_wheel_odom_fusion.yaml
+#
+#  Key environment variables:
+#    MOLA_LIDAR_TOPIC   - LiDAR PointCloud2 topic (default: /ouster/points)
+#    WHEEL_ODOM_TOPIC   - wheel odometry topic     (default: /wheel_odom)
+#    IMU_TOPIC          - IMU topic                (default: /imu)
+# -----------------------------------------------------------------------------
+
+modules:
+  # =====================
+  # MolaViz (optional)
+  # =====================
+  - name: viz
+    type: mola::MolaViz
+    enabled: ${MOLA_WITH_GUI|true}
+    verbosity_level: INFO
+    params: ~
+
+  # =====================
+  # LiDAR Odometry Front-End
+  # =====================
+  - name: lidar_odom
+    type: mola::LidarOdometry
+    verbosity_level: ${MOLA_VERBOSITY_MOLA_LO|INFO}
+    raw_data_source: "ros2_bridge"
+    params: "${MOLA_ODOMETRY_PIPELINE_YAML|../../mola_lidar_odometry/pipelines/lidar3d-default.yaml}"
+
+  # =====================
+  # State Estimation Smoother
+  # =====================
+  - name: state_estimation
+    type: mola::mola_state_estimation_smoother::StateEstimationSmoother
+    verbosity_level: ${MOLA_VERBOSITY_STATE_ESTIMATOR|INFO}
+    raw_data_source: "ros2_bridge"
+
+    execution_rate: ${MOLA_STATE_ESTIMATOR_PUBLISH_RATE|20}  # Hz
+
+    params:
+      vehicle_frame_name: "${MOLA_TF_BASE_LINK|base_link}"
+      reference_frame_name: "${MOLA_TF_MAP|map}"
+
+      kinematic_model: "${MOLA_NAVSTATE_KINEMATIC_MODEL|KinematicModel::ConstantVelocity}"
+      sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|2.5}
+      min_time_difference_to_create_new_frame: 0.01
+      max_time_to_use_velocity_model: 0.75
+
+      sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
+      sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|10.0}
+      sigma_integrator_position: 0.1
+      sigma_integrator_orientation: 1.0
+
+      # Accept all odometry labels (wheel_odom will arrive via onNewObservation,
+      # lidar_odom arrives directly via fuse_pose from LidarOdometry module):
+      do_process_odometry_labels_re: ".*"
+      do_process_imu_labels_re: ".*"
+      do_process_gnss_labels_re: ".*"
+
+      estimate_geo_reference: false
+      additional_isam2_update_steps: 3
+
+  # =====================
+  # ROS2 <-> MOLA Bridge
+  # =====================
+  - name: ros2_bridge
+    type: mola::BridgeROS2
+    verbosity_level: ${MOLA_VERBOSITY_BRIDGE_ROS2|INFO}
+    execution_rate: 20  # Hz
+
+    gui_preview_sensors:
+      - raw_sensor_label: ${MOLA_LIDAR_NAME|lidar}
+        decimation: 1
+        enabled: ${MOLA_WITH_GUI|true}
+        win_pos: 5 5 400 400
+
+    params:
+      base_link_frame: "${MOLA_TF_BASE_LINK|base_link}"
+      base_footprint_frame: ""
+      odom_frame: "${MOLA_TF_ESTIMATED_ODOMETRY|odom}"
+      reference_frame: "${MOLA_TF_MAP|map}"
+
+      # The smoother publishes fused results; direct mode:
+      publish_localization_following_rep105: false
+
+      # Only forward the smoother's fused output (not the raw lidar_odom):
+      publish_odometry_msgs_from_slam: true
+      publish_odometry_msgs_from_slam_source: "state_estimation"
+      publish_tf_from_slam: true
+      publish_tf_from_slam_source: "state_estimation"
+
+      publish_in_sim_time: ${MOLA_ROS2_PUBLISH_IN_SIM_TIME|false}
+      period_publish_new_map: 1.0
+
+      ros_args: '${ROS_ARGS|"[]"}'
+
+      subscribe:
+        # LiDAR point cloud (processed by LidarOdometry front-end)
+        - topic: ${MOLA_LIDAR_TOPIC|/ouster/points}
+          msg_type: ${MOLA_LIDAR_TOPIC_TYPE|PointCloud2}
+          output_sensor_label: ${MOLA_LIDAR_NAME|lidar}
+          fixed_sensor_pose: "${LIDAR_POSE_X|0} ${LIDAR_POSE_Y|0} ${LIDAR_POSE_Z|0} ${LIDAR_POSE_YAW|0} ${LIDAR_POSE_PITCH|0} ${LIDAR_POSE_ROLL|0}"
+          use_fixed_sensor_pose: ${MOLA_USE_FIXED_LIDAR_POSE|false}
+
+        # External wheel odometry (directly consumed by smoother via onNewObservation)
+        - topic: ${WHEEL_ODOM_TOPIC|/wheel_odom}
+          msg_type: Odometry
+          output_sensor_label: "wheel_odom"
+
+        # IMU for gravity alignment
+        - topic: ${IMU_TOPIC|/imu}
+          msg_type: Imu
+          output_sensor_label: "imu"
+          fixed_sensor_pose: "${IMU_POSE_X|0} ${IMU_POSE_Y|0} ${IMU_POSE_Z|0} ${IMU_POSE_YAW|0} ${IMU_POSE_PITCH|0} ${IMU_POSE_ROLL|0}"
+          use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
+
+        # Optional GNSS
+        - topic: ${GNSS_TOPIC|/gps}
+          msg_type: NavSatFix
+          output_sensor_label: "gps"
+          fixed_sensor_pose: "0 0 0 0 0 0"
+          use_fixed_sensor_pose: ${MOLA_USE_FIXED_GNSS_POSE|false}

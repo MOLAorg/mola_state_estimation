@@ -49,6 +49,128 @@ Next we show different possible use cases.
         gnss_topic_name:=gps1
 
 
+.. dropdown:: Fusing two ``nav_msgs/Odometry`` sources (e.g. wheel + visual odometry)
+   :icon: code-review
+
+   This demo subscribes to two ``nav_msgs/Odometry`` topics from ROS 2, fuses them
+   in the sliding-window factor graph smoother alongside an optional IMU, and publishes
+   the fused result back as ``nav_msgs/Odometry`` + ``/tf``.
+
+   Each odometry topic is assigned a distinct ``output_sensor_label``; the smoother
+   treats them as independent odometry frames and estimates the optimal
+   ``T_map_to_odom_X`` transform for each one.
+
+   **Step 1 — Start fake sensor publishers (for testing without a real robot):**
+
+   .. code-block:: bash
+
+      # Fake wheel odometry: 2% systematic scale drift in X, 50 Hz
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_wheel_odom_publisher.py
+
+      # Fake visual/lidar odometry: 3 mm/step lateral drift, 30 Hz
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_visual_odom_publisher.py
+
+      # Fake IMU: gravity-aligned accelerometer + gyroscope, 100 Hz
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_imu_publisher.py
+
+   Both fake odometry nodes share the same ground-truth motion (circle at vx=1 m/s,
+   wz=0.2 rad/s) but have different noise and drift characteristics so that the smoother
+   can demonstrate visible fusion benefit.
+
+   **Step 2 — Launch the smoother:**
+
+   .. code-block:: bash
+
+      ros2 launch mola_state_estimation_smoother ros2-fuse-two-odometries.launch.py \
+        odom1_topic:=/wheel_odom \
+        odom2_topic:=/visual_odom \
+        imu_topic:=/imu
+
+   Or using ``mola-cli`` directly (set topic names via environment variables):
+
+   .. code-block:: bash
+
+      ODOM1_TOPIC=/wheel_odom \
+      ODOM2_TOPIC=/visual_odom \
+      IMU_TOPIC=/imu \
+        mola-cli $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml
+
+   Key launch arguments:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 15 55
+
+      * - Argument
+        - Default
+        - Description
+      * - ``odom1_topic``
+        - ``/wheel_odom``
+        - First ``nav_msgs/Odometry`` topic (e.g. wheel encoders)
+      * - ``odom2_topic``
+        - ``/visual_odom``
+        - Second ``nav_msgs/Odometry`` topic (e.g. visual/LiDAR odometry)
+      * - ``imu_topic``
+        - ``/imu``
+        - IMU topic for gravity alignment
+      * - ``gnss_topic``
+        - ``/gps``
+        - Optional GNSS topic for geo-referencing
+      * - ``enforce_planar_motion``
+        - ``False``
+        - Constrain z=0, pitch=0, roll=0 for ground vehicles
+      * - ``use_mola_gui``
+        - ``True``
+        - Show MolaViz visualization
+
+   **Step 3 — Verify fused output:**
+
+   .. code-block:: bash
+
+      # Fused pose as nav_msgs/Odometry:
+      ros2 topic echo /state_estimation/pose
+
+      # Inspect all published topics:
+      ros2 topic list | grep state_estimation
+
+      # View /tf tree:
+      ros2 run tf2_tools view_frames
+
+
+.. dropdown:: LiDAR odometry + wheel odometry fused in the smoother
+   :icon: code-review
+
+   This demo runs ``mola::LidarOdometry`` from a live ``PointCloud2`` topic alongside
+   an external wheel odometry source from ROS 2. Both are fused by
+   ``StateEstimationSmoother``, and the fused result is published back to ROS 2.
+
+   Data flow::
+
+     ROS2 /lidar_points  --> BridgeROS2 --> LidarOdometry ---+
+     ROS2 /wheel_odom    --> BridgeROS2 ----+                |
+     ROS2 /imu           --> BridgeROS2 ----+--> StateEstimationSmoother
+                                                      |
+                                             advertiseUpdatedLocalization()
+                                                      |
+                                               BridgeROS2 --> /state_estimation/pose
+                                                          --> /tf (map -> base_link)
+
+   .. code-block:: bash
+
+      ros2 launch mola_lidar_odometry ros2-lidar-odometry.launch.py \
+        lidar_topic_name:=/ouster/points \
+        use_state_estimator:=True \
+        forward_ros_tf_odom_to_mola:=False
+
+   To additionally subscribe to a wheel odometry topic, use the ``mola-cli`` YAML directly:
+
+   .. code-block:: bash
+
+      WHEEL_ODOM_TOPIC=/wheel_odom \
+      MOLA_LIDAR_TOPIC=/ouster/points \
+        mola-cli $(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/mola-cli-launchs/demo_lidar_odom_plus_wheel_odom_fusion.yaml
+
+
 |
 
 2.2. Launching the state estimator + LO/LIO
