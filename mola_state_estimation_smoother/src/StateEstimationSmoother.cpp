@@ -254,7 +254,7 @@ void StateEstimationSmoother::spinOnce()
     // since this string is used as a ROS topic prefix and filter key:
     const auto& fullName = getModuleInstanceName();
     const auto  colonPos = fullName.rfind(':');
-    lu.method = (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
+    lu.method    = (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
     lu.quality   = 1;
     lu.timestamp = *tNowOpt;
     lu.pose      = nv->pose.getPoseMean().asTPose();
@@ -524,9 +524,9 @@ void StateEstimationSmoother::fuse_pose_locked(
         if (poseSanitized.cov(i, i) <= .0)
         {
             // Default sigmas: 1 m for position (i<3), 0.1 rad (~6 deg) for orientation
-            const double defaultSigma  = (i < 3) ? 1.0 : 0.1;
-            poseSanitized.cov(i, i)    = defaultSigma * defaultSigma;
-            patched                    = true;
+            const double defaultSigma = (i < 3) ? 1.0 : 0.1;
+            poseSanitized.cov(i, i)   = defaultSigma * defaultSigma;
+            patched                   = true;
         }
     }
     if (patched)
