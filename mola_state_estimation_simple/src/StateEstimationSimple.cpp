@@ -317,15 +317,6 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
         auto twistCov = state_.last_twist_cov.value();
         twistCov *= dt * dt;
         cov += twistCov;
-
-        for (int i = 0; i < 3; i++)
-        {
-            (*state_.last_twist_cov)(i, i) += varXYZ;
-        }
-        for (int i = 3; i < 6; i++)
-        {
-            (*state_.last_twist_cov)(i, i) += varRot;
-        }
     }
 
     ret.pose.cov_inv = cov.inverse_LLt();
