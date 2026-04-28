@@ -312,21 +312,14 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
         cov(i, i) += varRot;
     }
 
-    if (state_.last_twist_cov.has_value())
-    {
-        auto twistCov = state_.last_twist_cov.value();
-        twistCov *= dt * dt;
-        cov += twistCov;
-
-        for (int i = 0; i < 3; i++)
-        {
-            (*state_.last_twist_cov)(i, i) += varXYZ;
-        }
-        for (int i = 3; i < 6; i++)
-        {
-            (*state_.last_twist_cov)(i, i) += varRot;
-        }
-    }
+    // sigma_rel is a position-domain quantity (meters): add it directly as
+    // position variance, independent of the fuse_pose/query dt ratio.
+    cov(0, 0) += mrpt::square(params.sigma_relative_pose_linear);
+    cov(1, 1) += mrpt::square(params.sigma_relative_pose_linear);
+    cov(2, 2) += mrpt::square(params.sigma_relative_pose_linear);
+    cov(3, 3) += mrpt::square(params.sigma_relative_pose_angular);
+    cov(4, 4) += mrpt::square(params.sigma_relative_pose_angular);
+    cov(5, 5) += mrpt::square(params.sigma_relative_pose_angular);
 
     ret.pose.cov_inv = cov.inverse_LLt();
 
