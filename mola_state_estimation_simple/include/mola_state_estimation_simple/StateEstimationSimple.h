@@ -39,7 +39,7 @@
 
 namespace mola::state_estimation_simple
 {
-/** Fuse of odometry, IMU, and SE(3) pose/twist estimations.
+/** Simple motion-model state estimator fusing odometry, IMU, and SE(3) pose/twist.
  *
  * Usage:
  * - (1) Call initialize() or set the required parameters directly in params_.
@@ -50,13 +50,24 @@ namespace mola::state_estimation_simple
  * - (4) Read the estimation up to any nearby moment in time with
  *       estimated_navstate()
  *
- * Old observations are automatically removed.
+ * ## Prior covariance model (estimated_navstate)
+ *
+ * Given `dt` seconds elapsed since the last `fuse_pose()` call, the returned
+ * prior pose covariance diagonal is:
+ *
+ *   cov_xyz = sigma_relative_pose_linear^2
+ *           + (sigma_random_walk_acceleration_linear * dt)^2
+ *
+ *   cov_rot = sigma_relative_pose_angular^2
+ *           + (sigma_random_walk_acceleration_angular * dt)^2
+ *
+ * `sigma_relative_pose_linear` [m] is a dt-independent floor on position
+ * uncertainty and is the primary knob for tightening the ICP prior.
+ * `sigma_random_walk_acceleration_linear` [m/s^2] adds time-growing
+ * uncertainty due to unmodeled accelerations.
  *
  * \note This implementation of mola::NavStateFilter ignores the passed
- *       "frame_id".
- * \note It also ignore GNSS sensor.
- *
- * \sa mola::IMUIntegrator
+ *       "frame_id" and GNSS observations.
  *
  * \ingroup mola_state_estimation_grp
  */
