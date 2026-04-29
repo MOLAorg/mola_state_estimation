@@ -2,6 +2,23 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#23 <https://github.com/MOLAorg/mola_state_estimation/issues/23>`_ from MOLAorg/feat/fuse-ros2-demos
+  Add ros2 launch demo files to fuse 2 odometries
+* mola cli launch file: made generic for multiple odometry sources
+* harden frame name usage
+* Odometry sources: use CObservationRobotPose::sensorLabel as 'tf' frame name
+* Add ros2 launch demo files to fuse 2 odometries
+* Merge pull request `#22 <https://github.com/MOLAorg/mola_state_estimation/issues/22>`_ from MOLAorg/feat/refactor-mutexes
+  Feat/refactor mutexes
+* Refactor to use regular mutex instead of recursive_mutex
+* Merge pull request `#21 <https://github.com/MOLAorg/mola_state_estimation/issues/21>`_ from MOLAorg/fix-misc
+  Fixes for 2D motion
+* FIX: Planar constraints didn't constraint roll / pitch, only tz
+* FIX: 2D probabilistic model used wrong XY uncertainty
+* Contributors: Jose Luis Blanco-Claraco
+
 2.2.0 (2026-03-03)
 ------------------
 * Merge pull request `#14 <https://github.com/MOLAorg/mola_state_estimation/issues/14>`_ from MOLAorg/feature/use-imu-for-georef-hint

@@ -2,6 +2,17 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* FIX: Filter out invalid geodetic coordinates (0,0,0)
+* Merge pull request `#20 <https://github.com/MOLAorg/mola_state_estimation/issues/20>`_ from MOLAorg/fix/wrong-enu-map-transform
+  FIX: Wrong transformation applied to ENU-MAP
+* FIX: Wrong transformation applied to ENU-MAP
+* Merge pull request `#19 <https://github.com/MOLAorg/mola_state_estimation/issues/19>`_ from MOLAorg/feat/georef-output-yaml
+  mola-sm-georeferencing: support yaml output format
+* mola-sm-georeferencing: support yaml output format
+* Contributors: Jose Luis Blanco-Claraco
+
 2.2.0 (2026-03-03)
 ------------------
 * Merge pull request `#18 <https://github.com/MOLAorg/mola_state_estimation/issues/18>`_ from MOLAorg/fix/should-fail-on-missing-mm

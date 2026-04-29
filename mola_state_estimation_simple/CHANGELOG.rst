@@ -2,6 +2,14 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#24 <https://github.com/MOLAorg/mola_state_estimation/issues/24>`_ from MOLAorg/fix/bugs-in-simple-estimator-cov
+  Fix: Avoid double covariance increment
+* fix: don't use twist cov in propagating pose uncertainty in this simple mode
+* Fix: Avoid double covariance increment
+* Contributors: Jose Luis Blanco-Claraco
+
 2.2.0 (2026-03-03)
 ------------------
 
