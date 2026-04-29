@@ -1,10 +1,11 @@
 # Based on GTSAM file (by @ProfFan)
 name: CI Build colcon
 
-on: [push]
+on: [ push ]
 
 jobs:
-  build_docker: # On Linux, iterates on all ROS 1 and ROS 2 distributions.
+  build_docker:
+    # On Linux, iterates on all ROS 1 and ROS 2 distributions.
     runs-on: ubuntu-latest
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -20,27 +21,27 @@ jobs:
         # https://ros.org/reps/rep-2000.html
         include:
           # Humble Hawksbill (May 2022 - May 2027)
-          #- docker_image: ubuntu:jammy
-          #  ros_distribution: humble
-          #  use_ros_testing: false
+          - docker_image: ubuntu:jammy
+            ros_distribution: humble
+            use_ros_testing: false
 
           - docker_image: ubuntu:jammy
             ros_distribution: humble
             use_ros_testing: true
 
           # Jazzy (2024 - ??)
-          #- docker_image: ubuntu:noble
-          #  ros_distribution: jazzy
-          #  use_ros_testing: false
+          - docker_image: ubuntu:noble
+            ros_distribution: jazzy
+            use_ros_testing: false
 
           - docker_image: ubuntu:noble
             ros_distribution: jazzy
             use_ros_testing: true
 
           # Rolling Ridley (No End-Of-Life)
-          #- docker_image: ubuntu:noble
-          #  ros_distribution: rolling
-          #  use_ros_testing: false
+          - docker_image: ubuntu:noble
+            ros_distribution: rolling
+            use_ros_testing: false
 
           - docker_image: ubuntu:noble
             ros_distribution: rolling
@@ -76,7 +77,7 @@ jobs:
         run: |
           . /opt/ros/*/setup.sh
           rosdep update
-          rosdep install --from-paths . --ignore-src -r -y
+          rosdep install --from-paths . --ignore-src -y
 
       - name: Install lcov for coverage analysis
         if: matrix.coverage_run == true
