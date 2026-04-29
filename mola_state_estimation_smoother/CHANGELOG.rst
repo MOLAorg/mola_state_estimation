@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.3.0 (2026-04-29)
+------------------
 * Merge pull request `#23 <https://github.com/MOLAorg/mola_state_estimation/issues/23>`_ from MOLAorg/feat/fuse-ros2-demos
   Add ros2 launch demo files to fuse 2 odometries
 * mola cli launch file: made generic for multiple odometry sources

@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.3.0 (2026-04-29)
+------------------
 * FIX: Filter out invalid geodetic coordinates (0,0,0)
 * Merge pull request `#20 <https://github.com/MOLAorg/mola_state_estimation/issues/20>`_ from MOLAorg/fix/wrong-enu-map-transform
   FIX: Wrong transformation applied to ENU-MAP
