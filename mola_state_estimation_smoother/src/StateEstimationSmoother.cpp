@@ -1184,6 +1184,58 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         << " nr factors. New factors=" << state_.gtsam->newFactors.size()
         << ", new values=" << state_.gtsam->newValues.size());
 
+    // Per-type factor counts in the current sliding window. Useful to diagnose
+    // which sensor streams are actively contributing to the smoother.
+    if (isLoggingLevelVisible(mrpt::system::LVL_DEBUG))
+    {
+        size_t nPosePrior = 0, nPoseBetween = 0, nTwistPrior = 0;
+        size_t nImuAttitude = 0, nImuGravity = 0, nGnss = 0;
+        size_t nConstVel = 0, nTrapInt = 0, nAngVelInt = 0, nTricycle = 0;
+        size_t nOther = 0, nNullSlots = 0;
+
+        for (const auto& f : smoother.getFactors())
+        {
+            if (!f)
+            {
+                ++nNullSlots;  // unused slots (findUnusedFactorSlots=true)
+                continue;
+            }
+            const auto* p = f.get();
+            if (dynamic_cast<const gtsam::PriorFactor<gtsam::Pose3>*>(p))
+                ++nPosePrior;
+            else if (dynamic_cast<const gtsam::BetweenFactor<gtsam::Pose3>*>(p))
+                ++nPoseBetween;
+            else if (dynamic_cast<const gtsam::PriorFactor<gtsam::Point3>*>(p))
+                ++nTwistPrior;
+            else if (dynamic_cast<const mola::factors::Pose3RotationFactor*>(p))
+                ++nImuAttitude;
+            else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
+                ++nImuGravity;
+            else if (dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p))
+                ++nGnss;
+            else if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(p))
+                ++nConstVel;
+            else if (dynamic_cast<const mola::factors::FactorTrapezoidalIntegratorPose*>(p))
+                ++nTrapInt;
+            else if (dynamic_cast<const mola::factors::FactorAngularVelocityIntegrationPose*>(p))
+                ++nAngVelInt;
+            else if (dynamic_cast<const mola::factors::FactorTricycleKinematic*>(p))
+                ++nTricycle;
+            else
+                ++nOther;
+        }
+
+        MRPT_LOG_DEBUG_FMT(
+            "[sliding-window factors] KFs=%zu  odom-frames=%zu | "
+            "pose priors=%zu  pose between (odom)=%zu  twist priors=%zu | "
+            "IMU attitude=%zu  IMU gravity=%zu  GNSS=%zu | "
+            "kinematics: const-vel=%zu trap-int=%zu ang-vel-int=%zu tricycle=%zu | "
+            "other=%zu  null-slots=%zu  total-active=%zu",
+            state_.last_estimated_states.size(), state_.known_odom_frames.size(), nPosePrior,
+            nPoseBetween, nTwistPrior, nImuAttitude, nImuGravity, nGnss, nConstVel, nTrapInt,
+            nAngVelInt, nTricycle, nOther, nNullSlots, smoother.getFactors().nrFactors());
+    }
+
     const auto optValues = smoother.calculateEstimate();
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
