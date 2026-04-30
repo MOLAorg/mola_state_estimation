@@ -21,6 +21,7 @@
 
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mrpt/core/get_env.h>
+#include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/system/filesystem.h>
 
@@ -294,6 +295,54 @@ void test_gnss_ignored()
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// Test 6: CObservationRobotPose via onNewObservation
+// --------------------------------------------------------------------------
+// Verify that incoming CObservationRobotPose observations are dispatched to
+// fuse_pose(), and that a non-identity sensorPose is correctly compensated.
+void test_robot_pose_observation()
+{
+    std::cout << "[Test 6] CObservationRobotPose dispatch... ";
+
+    mola::state_estimation_simple::StateEstimationSimple estimator;
+    estimator.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    estimator.initialize(get_default_config());
+
+    const auto cov = mrpt::math::CMatrixDouble66::Identity();
+
+    // t=0: Initial pose at origin via CObservationRobotPose
+    {
+        auto obs         = mrpt::obs::CObservationRobotPose::Create();
+        obs->timestamp   = mrpt::Clock::fromDouble(0.0);
+        obs->sensorLabel = "lidar_odom";
+        obs->pose        = mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov);
+        estimator.onNewObservation(obs);
+    }
+
+    // t=1: Sensor reports pose (3,0,0) but the sensor is mounted 1m forward
+    // of the vehicle frame. Vehicle pose should therefore be (2,0,0).
+    {
+        auto obs         = mrpt::obs::CObservationRobotPose::Create();
+        obs->timestamp   = mrpt::Clock::fromDouble(1.0);
+        obs->sensorLabel = "lidar_odom";
+        obs->sensorPose  = mrpt::poses::CPose3D(1.0, 0, 0, 0, 0, 0);
+        obs->pose        = mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(3.0, 0, 0), cov);
+        estimator.onNewObservation(obs);
+    }
+
+    // Twist should reflect 2 m/s in X (vehicle frame went 0 -> 2 in 1 s)
+    auto twistOpt = estimator.get_last_twist();
+    ASSERT_(twistOpt.has_value());
+    ASSERT_NEAR_(twistOpt->vx, 2.0, 1e-3);
+
+    // Extrapolation to t=1.5 should give vehicle x = 2 + 0.5*2 = 3.0
+    auto stateOpt = estimator.estimated_navstate(mrpt::Clock::fromDouble(1.5), "map");
+    ASSERT_(stateOpt.has_value());
+    ASSERT_NEAR_(stateOpt->pose.mean.x(), 3.0, 1e-3);
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -305,6 +354,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_imu_angular_velocity();
         test_planar_motion();
         test_gnss_ignored();
+        test_robot_pose_observation();
 
         std::cout << "\nAll StateEstimationSimple tests passed!\n";
         return 0;
