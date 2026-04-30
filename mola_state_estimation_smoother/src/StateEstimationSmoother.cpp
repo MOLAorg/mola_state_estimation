@@ -1646,7 +1646,13 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     // Pose:
     ns.pose.mean       = frame.pose;
     const auto poseCov = gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(idx)));
-    ASSERT_(poseCov.determinant() > 0);
+    if (poseCov.determinant() <= 0)
+    {
+        THROW_EXCEPTION_FMT(
+            "get_latest_state_and_covariance: pose marginal covariance for KF %u is "
+            "numerically degenerate (det=%g). The factor graph may be under-constrained.",
+            static_cast<unsigned>(idx), poseCov.determinant());
+    }
     ns.pose.cov_inv = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov).inverse_LLt();
 
     // Twist:
@@ -1658,7 +1664,13 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     twCov.block<3, 3>(0, 0) = vCov;
     twCov.block<3, 3>(3, 3) = wCov;
 
-    ASSERT_(twCov.determinant() > 0);
+    if (twCov.determinant() <= 0)
+    {
+        THROW_EXCEPTION_FMT(
+            "get_latest_state_and_covariance: twist marginal covariance for KF %u is "
+            "numerically degenerate (det=%g). The factor graph may be under-constrained.",
+            static_cast<unsigned>(idx), twCov.determinant());
+    }
     ns.twist_inv_cov = twCov.inverse();
 
     return ns;
