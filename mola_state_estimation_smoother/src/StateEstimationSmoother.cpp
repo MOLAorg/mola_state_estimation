@@ -298,7 +298,11 @@ void StateEstimationSmoother::fuse_odometry(
     else
     {
         // This is the first time we have wheels odometry.
-        lastOdom = odom.odometry;
+        // Store the pose but skip factor creation: the increment is zero,
+        // which would produce a stiff near-zero BetweenFactor.
+        state_.last_wheels_odometry_name = odomName;
+        state_.last_wheels_odometry      = odom.odometry;
+        return;
     }
     // Use a probabilistic motion model:
     mrpt::obs::CActionRobotMovement2D odoAct;
