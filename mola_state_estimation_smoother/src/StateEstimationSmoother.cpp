@@ -1590,27 +1590,19 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 {
     ASSERT_NOT_EQUAL_(from, to);
 
-    // Take note of already connected frames to avoid duplications
+    // Take note of already connected frames to avoid duplications.
+    // Check both sets first, then insert both, to keep them in sync.
     // --------------------------------------------------------------------
-    // From => to
+    auto& fromKf = state_.last_estimated_states.at(from);
+    auto& toKf   = state_.last_estimated_states.at(to);
+
+    if (fromKf.kinematic_links_to.count(to) != 0 || toKf.kinematic_links_to.count(from) != 0)
     {
-        auto& fromKf = state_.last_estimated_states.at(from);
-        if (fromKf.kinematic_links_to.count(to) != 0)
-        {
-            return;  // already added
-        }
-        fromKf.kinematic_links_to.insert(to);
+        return;  // already added
     }
 
-    // To => From
-    {
-        auto& toKf = state_.last_estimated_states.at(to);
-        if (toKf.kinematic_links_to.count(from) != 0)
-        {
-            return;  // already added
-        }
-        toKf.kinematic_links_to.insert(from);
-    }
+    fromKf.kinematic_links_to.insert(to);
+    toKf.kinematic_links_to.insert(from);
 
     // Dispatch to factor generation:
     // --------------------------------------------------------------------
