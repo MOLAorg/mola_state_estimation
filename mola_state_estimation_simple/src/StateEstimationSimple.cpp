@@ -383,16 +383,27 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
-        auto sensedSensorPose = obsPose->pose;
-        if (obsPose->sensorPose != mrpt::poses::CPose3D())
+        if (std::regex_match(
+                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                    params.do_process_odometry_labels_re)))
         {
-            sensedSensorPose =
-                sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
-        }
+            auto sensedSensorPose = obsPose->pose;
+            if (obsPose->sensorPose != mrpt::poses::CPose3D())
+            {
+                sensedSensorPose =
+                    sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
+            }
 
-        // This simple estimator is not frame-aware; use sensorLabel as frame_id
-        // for logging consistency with the smoother, but fuse_pose() ignores it.
-        this->fuse_pose(obsPose->timestamp, sensedSensorPose, obsPose->sensorLabel);
+            // This simple estimator is not frame-aware; use sensorLabel as frame_id
+            // for logging consistency with the smoother, but fuse_pose() ignores it.
+            this->fuse_pose(obsPose->timestamp, sensedSensorPose, obsPose->sensorLabel);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping robot pose reading labeled '%s' for not passing regex",
+                o->sensorLabel.c_str());
+        }
     }
     // GNSS source:
     else if (auto obsGPS = std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o); obsGPS)
