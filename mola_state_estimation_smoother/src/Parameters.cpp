@@ -74,6 +74,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     // Geo-referencing
     // -----------------------------------------------------
+    MCP_LOAD_OPT(cfg, gnss_huber_threshold);
     MCP_LOAD_OPT(cfg, estimate_geo_reference);
 
     if (cfg.has("fixed_geo_reference"))

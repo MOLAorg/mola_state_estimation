@@ -484,11 +484,20 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
     const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
-    auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
-              gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
+
+    gtsam::SharedNoiseModel enuNoiseModel;
+    if (params_.gnss_huber_threshold > 0)
+    {
+        enuNoiseModel = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(params_.gnss_huber_threshold), enuNoise);
+    }
+    else
+    {
+        enuNoiseModel = enuNoise;
+    }
 
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
-        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
+        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseModel);
 }
 
 void StateEstimationSmoother::fuse_pose(
