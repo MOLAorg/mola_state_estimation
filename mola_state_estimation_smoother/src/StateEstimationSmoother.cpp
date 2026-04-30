@@ -356,7 +356,11 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
         q.x(imu.get(mrpt::obs::IMU_ORI_QUAT_X));
         q.y(imu.get(mrpt::obs::IMU_ORI_QUAT_Y));
         q.z(imu.get(mrpt::obs::IMU_ORI_QUAT_Z));
-        if (std::abs(q.norm() - 1.0) > 0.02)
+        if (std::isnan(q.w()) || std::isnan(q.x()) || std::isnan(q.y()) || std::isnan(q.z()))
+        {
+            MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring IMU orientation quaternion with NaN components");
+        }
+        else if (std::abs(q.norm() - 1.0) > 0.02)
         {
             MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring non-normalized IMU orientation quaternion");
         }
