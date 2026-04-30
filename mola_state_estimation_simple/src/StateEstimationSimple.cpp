@@ -22,6 +22,7 @@
 #include <mola_imu_preintegration/ImuIntegrator.h>
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mola_yaml/yaml_helpers.h>
+#include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/Lie/SO.h>
 
 // arguments: class_name, parent_class, class namespace
@@ -375,6 +376,32 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
         {
             MRPT_LOG_DEBUG_FMT(
                 "Skipping odometry reading labeled '%s' for not passing regex",
+                o->sensorLabel.c_str());
+        }
+    }
+    // Robot pose wrt a reference frame (odometry or map):
+    else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
+             obsPose)
+    {
+        if (std::regex_match(
+                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                    params.do_process_odometry_labels_re)))
+        {
+            auto sensedSensorPose = obsPose->pose;
+            if (obsPose->sensorPose != mrpt::poses::CPose3D())
+            {
+                sensedSensorPose =
+                    sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
+            }
+
+            // This simple estimator is not frame-aware; use sensorLabel as frame_id
+            // for logging consistency with the smoother, but fuse_pose() ignores it.
+            this->fuse_pose(obsPose->timestamp, sensedSensorPose, obsPose->sensorLabel);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping robot pose reading labeled '%s' for not passing regex",
                 o->sensorLabel.c_str());
         }
     }
