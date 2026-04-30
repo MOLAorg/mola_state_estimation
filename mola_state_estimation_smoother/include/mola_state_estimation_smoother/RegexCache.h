@@ -36,6 +36,21 @@ namespace mola
 class RegexCache
 {
    public:
+    RegexCache() = default;
+
+    // Mutex is not movable; move only the data so State() assignment compiles.
+    RegexCache& operator=(RegexCache&& other) noexcept
+    {
+        if (this != &other)
+        {
+            std::lock_guard<std::mutex> lckSrc(other.mutex_);
+            std::lock_guard<std::mutex> lckDst(mutex_);
+            cachedExpression_ = std::move(other.cachedExpression_);
+            cachedRegex_      = std::move(other.cachedRegex_);
+        }
+        return *this;
+    }
+
     // Returns a copy of the cached regex, recompiling only if the expression changed.
     std::regex get_regex(const std::string& regExpression)
     {
