@@ -22,6 +22,7 @@
  */
 #pragma once
 
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <string>
@@ -30,13 +31,15 @@ namespace mola
 {
 
 /** Holds a reference to a cached regex. Recompiles only if the expression changed.
+ *  Thread-safe: multiple sensor threads may call get_regex() concurrently.
  */
 class RegexCache
 {
    public:
-    // Returns a reference to a cached regex. Recompiles only if the expression changed.
-    const std::regex& get_regex(const std::string& regExpression)
+    // Returns a copy of the cached regex, recompiling only if the expression changed.
+    std::regex get_regex(const std::string& regExpression)
     {
+        std::lock_guard<std::mutex> lck(mutex_);
         if (!cachedRegex_ || regExpression != cachedExpression_)
         {
             cachedExpression_ = regExpression;
@@ -46,6 +49,7 @@ class RegexCache
     }
 
    private:
+    mutable std::mutex        mutex_;
     std::string               cachedExpression_;
     std::optional<std::regex> cachedRegex_;
 };
