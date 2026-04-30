@@ -1124,8 +1124,9 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
         return it->second;
     }
 
-    // New one: starting at "1" (0=reserved for "map")
-    const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size()) + 1;
+    // New one: starting at "1" (0=reserved for "map").
+    // Use a monotonic counter so IDs stay unique even if entries are ever removed.
+    const auto newId = state_.next_odom_frame_id++;
     state_.known_odom_frames.insert(frame_id_name, newId);
 
     // Initialize gtsam symbol and prior factor for the new frame:

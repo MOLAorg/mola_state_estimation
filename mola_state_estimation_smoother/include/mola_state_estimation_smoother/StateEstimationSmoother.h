@@ -235,6 +235,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// A bimap of known odometry "frame_id" <=> "numeric IDs":
         mrpt::containers::bimap<std::string, odometry_frameid_t> known_odom_frames;
 
+        /// Monotonic counter for odometry frame IDs; avoids collisions if entries are ever removed.
+        odometry_frameid_t next_odom_frame_id = 1;
+
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<frame_index_t, FrameState> last_estimated_states;
 
