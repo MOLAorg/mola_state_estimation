@@ -180,16 +180,14 @@ class PoseLatest:
 
     def __init__(self):
         self._data = None
+        self._updated_at = None
 
     def update(self, x, y, yaw):
         self._data = (x, y, yaw)
-        logging.info(
-            "Pose received: x=%.3f m, y=%.3f m, yaw=%.3f rad",
-            x, y, yaw,
-        )
+        self._updated_at = time.monotonic()
 
     def latest(self):
-        return self._data
+        return self._data, self._updated_at
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +204,7 @@ def wait_for_convergence(
     settle_seconds=2.0,
     timeout_seconds=60.0,
     warm_up_seconds=0.0,
+    max_sample_age_seconds=0.5,
 ):
     """
     Spin *node* until the estimated pose converges to the GT pose or timeout.
@@ -215,21 +214,29 @@ def wait_for_convergence(
     """
     import rclpy
 
-    deadline = time.time() + warm_up_seconds + timeout_seconds
-    warm_up_end = time.time() + warm_up_seconds
+    start = time.monotonic()
+    deadline = start + warm_up_seconds + timeout_seconds
+    warm_up_end = start + warm_up_seconds
     settled_since = None
     pos_err = float("inf")
     yaw_err = float("inf")
 
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         rclpy.spin_once(node, timeout_sec=0.05)
 
-        if time.time() < warm_up_end:
+        now = time.monotonic()
+        if now < warm_up_end:
             continue
 
-        gt = gt_provider.latest()
-        est = est_provider.latest()
-        if gt is None or est is None:
+        gt, gt_t = gt_provider.latest()
+        est, est_t = est_provider.latest()
+        if (
+            gt is None or est is None or
+            gt_t is None or est_t is None or
+            now - gt_t > max_sample_age_seconds or
+            now - est_t > max_sample_age_seconds
+        ):
+            settled_since = None
             continue
 
         pos_err = math.hypot(gt[0] - est[0], gt[1] - est[1])
@@ -239,17 +246,10 @@ def wait_for_convergence(
             abs(yaw_err) < math.radians(max_heading_err_deg)
         )
 
-        logging.info(
-            "Convergence check: pos_err=%.3f m, yaw_err=%.3f deg, pass=%s",
-            pos_err,
-            math.degrees(yaw_err),
-            passed,
-        )
-
         if passed:
             if settled_since is None:
-                settled_since = time.time()
-            if time.time() - settled_since >= settle_seconds:
+                settled_since = now
+            if now - settled_since >= settle_seconds:
                 logging.info(
                     "Converged after %.1f s: pos_err=%.3f m, yaw_err=%.3f deg",
                     settle_seconds,

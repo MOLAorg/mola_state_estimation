@@ -19,10 +19,8 @@ import launch_testing.actions
 import pytest
 import rclpy
 from ament_index_python import get_package_share_directory
-
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
-
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import PoseLatest, wait_for_convergence  # noqa: E402, isort:skip
@@ -75,8 +73,8 @@ def generate_test_description():
             'MOLA_LOCALIZATION_PUBLISH_TF_SOURCE': 'state_estimation',
             'MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION': 'true',
             'MOLA_ESTIMATE_GEO_REF': 'true',
-            'MOLA_VERBOSITY_BRIDGE_ROS2': 'DEBUG',
-            'MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR': 'DEBUG',
+            'MOLA_VERBOSITY_BRIDGE_ROS2': 'INFO',
+            'MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR': 'INFO',
             'RCUTILS_LOGGING_BUFFERED_STREAM': '1',
         },
     )
@@ -119,15 +117,16 @@ class TestMovingGeoRef(unittest.TestCase):
             return math.atan2(siny_cosp, cosy_cosp)
 
         def _est_cb(msg):
-            x = msg.pose.pose.position.x
-            y = msg.pose.pose.position.y
-            cls.est_pose.update(x, y, _yaw_from_quat(
-                msg.pose.pose.orientation))
+            cls.est_pose.update(
+                msg.pose.pose.position.x,
+                msg.pose.pose.position.y,
+                _yaw_from_quat(msg.pose.pose.orientation))
 
         def _gt_cb(msg):
-            x = msg.pose.position.x
-            y = msg.pose.position.y
-            cls.gt_pose.update(x, y, _yaw_from_quat(msg.pose.orientation))
+            cls.gt_pose.update(
+                msg.pose.position.x,
+                msg.pose.position.y,
+                _yaw_from_quat(msg.pose.orientation))
 
         cls.checker.create_subscription(
             Odometry, 'state_estimation/pose', _est_cb, 10)
@@ -143,16 +142,65 @@ class TestMovingGeoRef(unittest.TestCase):
         if os.environ.get(_SKIP_ENV):
             self.skipTest('MOLA_SKIP_INTEGRATION_TESTS is set')
 
-        # Allow 20 s for the smoother to converge on the geo-reference, then
-        # check that the estimated pose tracks GT within the moving thresholds
-        # for at least 3 s continuously.
-        wait_for_convergence(
-            self.checker,
-            self.gt_pose,
-            self.est_pose,
-            max_pos_err_m=1.5,
-            max_heading_err_deg=10.0,
-            settle_seconds=3.0,
-            timeout_seconds=100.0,
-            warm_up_seconds=20.0,
+        # Compare estimated pose in map frame vs GT in ENU frame.
+        # The true T_enu_to_map is identity by construction (robot anchored at ENU
+        # origin), so map == true ENU and the frames are directly comparable.
+        # Using the Odometry topic (map frame) avoids compounding with the smoother's
+        # estimated T_enu_to_map, which carries a ~2m bootstrap bias from the first
+        # noisy GNSS reading.
+        #
+        # All time comparisons use time.monotonic() — PoseLatest._updated_at is
+        # also stamped with time.monotonic(), so they are directly comparable.
+        max_pos_err_m = 1.5
+        max_heading_err_deg = 10.0
+        settle_seconds = 3.0
+        warm_up_seconds = 10.0
+        timeout_seconds = 25.0
+
+        deadline = time.monotonic() + warm_up_seconds + timeout_seconds
+        warm_up_end = time.monotonic() + warm_up_seconds
+        settled_since = None
+        pos_err = float('inf')
+        yaw_err_deg = float('inf')
+
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self.checker, timeout_sec=0.05)
+
+            now = time.monotonic()
+            if now < warm_up_end:
+                continue
+
+            gt, gt_t = self.gt_pose.latest()
+            est, est_t = self.est_pose.latest()
+            if (gt is None or est is None or
+                    gt_t is None or est_t is None or
+                    now - gt_t > 0.5 or now - est_t > 0.5):
+                continue
+
+            pos_err = math.hypot(gt[0] - est[0], gt[1] - est[1])
+            yaw_err = math.degrees(
+                math.atan2(math.sin(gt[2] - est[2]),
+                           math.cos(gt[2] - est[2])))
+            yaw_err_deg = abs(yaw_err)
+            passed = pos_err < max_pos_err_m and yaw_err_deg < max_heading_err_deg
+
+            print(
+                f'[moving] gt=({gt[0]:.2f},{gt[1]:.2f},{math.degrees(gt[2]):.1f}°) '
+                f'est_map=({est[0]:.2f},{est[1]:.2f},{math.degrees(est[2]):.1f}°) '
+                f'pos_err={pos_err:.3f}m yaw_err={yaw_err:.1f}° pass={passed}',
+                flush=True)
+
+            if passed:
+                if settled_since is None:
+                    settled_since = now
+                if now - settled_since >= settle_seconds:
+                    print(f'[moving] CONVERGED after {settle_seconds:.1f}s settled',
+                          flush=True)
+                    return
+            else:
+                settled_since = None
+
+        raise AssertionError(
+            f'did not converge within {timeout_seconds:.0f}s: '
+            f'pos_err={pos_err:.2f}m yaw_err={yaw_err_deg:.2f}deg'
         )

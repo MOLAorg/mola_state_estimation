@@ -34,7 +34,7 @@ What? Why? How?
 
 Next we show different possible use cases.
 
-.. dropdown:: Merging GNSS + IMU
+.. dropdown:: Merging wheel odometry + GNSS + IMU
    :icon: code-review
 
 
@@ -45,8 +45,15 @@ Next we show different possible use cases.
 
       ros2 launch mola_state_estimation_smoother ros2-state-estimator.launch.py \
         estimate_geo_reference:=True \
-        imu_topic_name:=imu \
-        gnss_topic_name:=gps1
+        odom1_topic:=/wheel_odom \
+        imu_topic_name:=/imu \
+        gnss_topic_name:=/gps1
+
+   Up to three ``nav_msgs/Odometry`` sources can be fused simultaneously via
+   ``odom1_topic``, ``odom2_topic``, and ``odom3_topic`` (empty string disables
+   each one). Without at least one odometry source the smoother relies solely on
+   the constant-velocity kinematic model between GNSS fixes, which degrades for
+   non-smooth motion.
 
 
 .. dropdown:: Fusing two ``nav_msgs/Odometry`` sources (e.g. wheel + visual odometry)
@@ -60,22 +67,23 @@ Next we show different possible use cases.
    treats them as independent odometry frames and estimates the optimal
    ``T_map_to_odom_X`` transform for each one.
 
-   **Step 1 — Start fake sensor publishers (for testing without a real robot):**
+   **Step 1 — Start the fake sensor publisher (for testing without a real robot):**
 
    .. code-block:: bash
 
-      # Fake wheel odometry: 2% systematic scale drift in X, 50 Hz
-      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_wheel_odom_publisher.py
+      # Wheel odom (50 Hz) + visual odom (30 Hz, Y drift) + IMU (100 Hz) —
+      # all from a single script, circular motion at vx=1 m/s, wz=0.2 rad/s:
+      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_sensor_publisher.py \
+        --ros-args \
+        -p scenario:=circle \
+        -p odom2_topic:=/visual_odom \
+        -p imu_topic:=/imu
 
-      # Fake visual/lidar odometry: 3 mm/step lateral drift, 30 Hz
-      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_visual_odom_publisher.py
-
-      # Fake IMU: gravity-aligned accelerometer + gyroscope, 100 Hz
-      python3 $(ros2 pkg prefix mola_demos)/share/mola_demos/demos/fake_imu_publisher.py
-
-   Both fake odometry nodes share the same ground-truth motion (circle at vx=1 m/s,
-   wz=0.2 rad/s) but have different noise and drift characteristics so that the smoother
-   can demonstrate visible fusion benefit.
+   The two odometry streams share the same ground-truth circular motion but have
+   different noise and drift characteristics so the smoother can demonstrate
+   visible fusion benefit.  The script supports three scenarios via ``scenario:=``
+   (``circle``, ``moving``, ``static``) and can also publish GNSS by setting
+   ``gnss_topic:=/gps``.
 
    **Step 2 — Launch the smoother:**
 

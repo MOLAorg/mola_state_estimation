@@ -75,8 +75,8 @@ def generate_test_description():
             'MOLA_LOCALIZATION_PUBLISH_TF': 'true',
             'MOLA_LOCALIZATION_PUBLISH_TF_SOURCE': 'state_estimation',
             'MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION': 'true',
-            'MOLA_VERBOSITY_BRIDGE_ROS2': 'DEBUG',
-            'MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR': 'DEBUG',
+            'MOLA_VERBOSITY_BRIDGE_ROS2': 'INFO',
+            'MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR': 'INFO',
             'RCUTILS_LOGGING_BUFFERED_STREAM': '1',
         },
     )
