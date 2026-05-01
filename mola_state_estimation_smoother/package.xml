@@ -57,6 +57,7 @@
   <test_depend>tf2_ros</test_depend>
   <test_depend>mola_launcher</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>mola_bridge_ros2</test_depend>
 
   <doc_depend>doxygen</doc_depend>
 
