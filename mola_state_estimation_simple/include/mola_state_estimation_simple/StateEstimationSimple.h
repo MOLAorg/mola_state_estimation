@@ -21,8 +21,8 @@
 #pragma once
 
 // This package
+#include <mola_kernel/utils/RegexCache.h>
 #include <mola_state_estimation_simple/Parameters.h>
-#include <mola_state_estimation_simple/RegexCache.h>
 
 // MOLA
 #include <mola_kernel/interfaces/NavStateFilter.h>

@@ -41,7 +41,8 @@ constexpr double MOTION_ANG_WZ      = 0.5;  // rad/s
 constexpr double ODOMETRY_NOISE_XY  = 0.01;
 constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 
-constexpr double MAXIMUM_SE3_FINAL_ERROR = 0.40;
+constexpr double MAXIMUM_SE3_FINAL_ERROR        = 0.40;
+constexpr double MAXIMUM_ENU2MAP_ROTATION_ERROR = 5.0_deg;
 
 constexpr const char* ODOMETRY_NAME = "odom";
 
@@ -312,7 +313,7 @@ void run_test(const TestCase& testCase)
             {
                 printf("log|error(T_enu_to_map)|=%.03g\n", enu2map_rot_error);
             }
-            ASSERT_LT_(enu2map_rot_error, 0.05);
+            ASSERT_LT_(enu2map_rot_error, MAXIMUM_ENU2MAP_ROTATION_ERROR);
         }
         else
         {

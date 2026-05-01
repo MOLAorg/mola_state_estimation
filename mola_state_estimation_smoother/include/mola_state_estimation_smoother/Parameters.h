@@ -186,6 +186,14 @@ class Parameters
      */
     bool publish_estimated_georef_on_convergence = true;
 
+    /** Huber robust cost threshold for GNSS factors [sigmas].
+     *  Applied in whitened (normalized) residual space, so units are
+     *  standard deviations, not meters. Suitable values: ~1.5 (switch to
+     *  linear loss beyond 1.5σ). Set to 0 to disable robust cost (plain
+     *  Gaussian).
+     */
+    double gnss_huber_threshold = 1.5;  // [sigmas]
+
     /** @} */
 
     /** @name Nonlinear optimization

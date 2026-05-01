@@ -298,7 +298,11 @@ void StateEstimationSmoother::fuse_odometry(
     else
     {
         // This is the first time we have wheels odometry.
-        lastOdom = odom.odometry;
+        // Store the pose but skip factor creation: the increment is zero,
+        // which would produce a stiff near-zero BetweenFactor.
+        state_.last_wheels_odometry_name = odomName;
+        state_.last_wheels_odometry      = odom.odometry;
+        return;
     }
     // Use a probabilistic motion model:
     mrpt::obs::CActionRobotMovement2D odoAct;
@@ -352,7 +356,11 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
         q.x(imu.get(mrpt::obs::IMU_ORI_QUAT_X));
         q.y(imu.get(mrpt::obs::IMU_ORI_QUAT_Y));
         q.z(imu.get(mrpt::obs::IMU_ORI_QUAT_Z));
-        if (std::abs(q.norm() - 1.0) > 0.02)
+        if (std::isnan(q.w()) || std::isnan(q.x()) || std::isnan(q.y()) || std::isnan(q.z()))
+        {
+            MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring IMU orientation quaternion with NaN components");
+        }
+        else if (std::abs(q.norm() - 1.0) > 0.02)
         {
             MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring non-normalized IMU orientation quaternion");
         }
@@ -480,11 +488,20 @@ void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
     const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
-    auto       enuNoiseRobust = gtsam::noiseModel::Robust::Create(
-              gtsam::noiseModel::mEstimator::Huber::Create(1.5), enuNoise);
+
+    gtsam::SharedNoiseModel enuNoiseModel;
+    if (params_.gnss_huber_threshold > 0)
+    {
+        enuNoiseModel = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(params_.gnss_huber_threshold), enuNoise);
+    }
+    else
+    {
+        enuNoiseModel = enuNoise;
+    }
 
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
-        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseRobust);
+        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseModel);
 }
 
 void StateEstimationSmoother::fuse_pose(
@@ -1111,8 +1128,9 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
         return it->second;
     }
 
-    // New one: starting at "1" (0=reserved for "map")
-    const auto newId = static_cast<odometry_frameid_t>(state_.known_odom_frames.size()) + 1;
+    // New one: starting at "1" (0=reserved for "map").
+    // Use a monotonic counter so IDs stay unique even if entries are ever removed.
+    const auto newId = state_.next_odom_frame_id++;
     state_.known_odom_frames.insert(frame_id_name, newId);
 
     // Initialize gtsam symbol and prior factor for the new frame:
@@ -1577,27 +1595,19 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 {
     ASSERT_NOT_EQUAL_(from, to);
 
-    // Take note of already connected frames to avoid duplications
+    // Take note of already connected frames to avoid duplications.
+    // Check both sets first, then insert both, to keep them in sync.
     // --------------------------------------------------------------------
-    // From => to
+    auto& fromKf = state_.last_estimated_states.at(from);
+    auto& toKf   = state_.last_estimated_states.at(to);
+
+    if (fromKf.kinematic_links_to.count(to) != 0 || toKf.kinematic_links_to.count(from) != 0)
     {
-        auto& fromKf = state_.last_estimated_states.at(from);
-        if (fromKf.kinematic_links_to.count(to) != 0)
-        {
-            return;  // already added
-        }
-        fromKf.kinematic_links_to.insert(to);
+        return;  // already added
     }
 
-    // To => From
-    {
-        auto& toKf = state_.last_estimated_states.at(to);
-        if (toKf.kinematic_links_to.count(from) != 0)
-        {
-            return;  // already added
-        }
-        toKf.kinematic_links_to.insert(from);
-    }
+    fromKf.kinematic_links_to.insert(to);
+    toKf.kinematic_links_to.insert(from);
 
     // Dispatch to factor generation:
     // --------------------------------------------------------------------
@@ -1640,7 +1650,13 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     // Pose:
     ns.pose.mean       = frame.pose;
     const auto poseCov = gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(idx)));
-    ASSERT_(poseCov.determinant() > 0);
+    if (poseCov.determinant() <= 0)
+    {
+        THROW_EXCEPTION_FMT(
+            "get_latest_state_and_covariance: pose marginal covariance for KF %u is "
+            "numerically degenerate (det=%g). The factor graph may be under-constrained.",
+            static_cast<unsigned>(idx), poseCov.determinant());
+    }
     ns.pose.cov_inv = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov).inverse_LLt();
 
     // Twist:
@@ -1652,7 +1668,13 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     twCov.block<3, 3>(0, 0) = vCov;
     twCov.block<3, 3>(3, 3) = wCov;
 
-    ASSERT_(twCov.determinant() > 0);
+    if (twCov.determinant() <= 0)
+    {
+        THROW_EXCEPTION_FMT(
+            "get_latest_state_and_covariance: twist marginal covariance for KF %u is "
+            "numerically degenerate (det=%g). The factor graph may be under-constrained.",
+            static_cast<unsigned>(idx), twCov.determinant());
+    }
     ns.twist_inv_cov = twCov.inverse();
 
     return ns;
