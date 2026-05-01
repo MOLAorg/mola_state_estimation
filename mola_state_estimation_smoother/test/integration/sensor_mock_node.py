@@ -6,6 +6,13 @@
 #
 # Run as a standalone ROS 2 node:
 #   python3 sensor_mock_node.py --ros-args -p scenario:=static -p seed:=42
+from common import (
+    GT_LAT0_DEG, GT_LON0_DEG, GT_ALT0_M,
+    enu_to_latlon, imu_quat_from_enu_pose, imu_linear_acc_body,
+    moving_gt_pose, moving_gt_twist, moving_gt_world_accel,
+    static_gt_pose, quaternion_from_euler_zyx,
+    MOVING_DURATION_S,
+)
 import math
 import os
 import sys
@@ -23,13 +30,6 @@ from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import TransformStamped
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import (
-    GT_LAT0_DEG, GT_LON0_DEG, GT_ALT0_M,
-    enu_to_latlon, imu_quat_from_enu_pose, imu_linear_acc_body,
-    moving_gt_pose, moving_gt_twist, moving_gt_world_accel,
-    static_gt_pose, quaternion_from_euler_zyx,
-    MOVING_DURATION_S,
-)
 
 _TRANSIENT_LOCAL_QOS = QoSProfile(
     depth=1,
@@ -86,9 +86,10 @@ class SensorMockNode(Node):
         self._pub_odom = self.create_publisher(Odometry, '/wheel_odom', 10)
         self._pub_gnss = self.create_publisher(NavSatFix, '/gps', 10)
         self._pub_imu = self.create_publisher(Imu, '/imu', 10)
-        self._pub_gt = self.create_publisher(PoseStamped, '/ground_truth/pose', 10)
+        self._pub_gt = self.create_publisher(
+            PoseStamped, '/ground_truth/pose', 10)
         self._pub_tf_static = self.create_publisher(TFMessage, '/tf_static',
-                                                     _TRANSIENT_LOCAL_QOS)
+                                                    _TRANSIENT_LOCAL_QOS)
 
         # Accumulated dead-reckoning pose in odom frame (x, y, yaw)
         self._odom_x = 0.0
@@ -176,8 +177,8 @@ class SensorMockNode(Node):
             return
 
         t = self._elapsed()
-        x, y, z, yaw, pitch, roll = self._gt_at(t)
-        vx, vy, vz, wx, wy, wz = self._gt_twist_at(t)
+        x, y, _z, yaw, _pitch, _roll = self._gt_at(t)
+        vx, vy, vz, _wx, _wy, wz = self._gt_twist_at(t)
 
         # Integrate noisy twist into odom pose
         odom_dt = 1.0 / self.get_parameter('odom_rate').value
@@ -208,9 +209,12 @@ class SensorMockNode(Node):
         msg.pose.covariance[35] = (self._odom_ang_sigma * t) ** 2 + 0.001
 
         # Twist in body frame
-        msg.twist.twist.linear.x = vx + self._rng.normal(0, self._odom_lin_sigma)
-        msg.twist.twist.linear.y = vy + self._rng.normal(0, self._odom_lin_sigma)
-        msg.twist.twist.angular.z = wz + self._rng.normal(0, self._odom_ang_sigma)
+        msg.twist.twist.linear.x = vx + \
+            self._rng.normal(0, self._odom_lin_sigma)
+        msg.twist.twist.linear.y = vy + \
+            self._rng.normal(0, self._odom_lin_sigma)
+        msg.twist.twist.angular.z = wz + \
+            self._rng.normal(0, self._odom_ang_sigma)
         msg.twist.covariance[0] = self._odom_lin_sigma ** 2
         msg.twist.covariance[7] = self._odom_lin_sigma ** 2
         msg.twist.covariance[35] = self._odom_ang_sigma ** 2
@@ -295,9 +299,12 @@ class SensorMockNode(Node):
         msg.angular_velocity_covariance[4] = math.radians(1.0) ** 2
         msg.angular_velocity_covariance[8] = math.radians(1.0) ** 2
 
-        msg.linear_acceleration.x = acc[0] + self._rng.normal(0, self._imu_acc_sigma)
-        msg.linear_acceleration.y = acc[1] + self._rng.normal(0, self._imu_acc_sigma)
-        msg.linear_acceleration.z = acc[2] + self._rng.normal(0, self._imu_acc_sigma)
+        msg.linear_acceleration.x = acc[0] + \
+            self._rng.normal(0, self._imu_acc_sigma)
+        msg.linear_acceleration.y = acc[1] + \
+            self._rng.normal(0, self._imu_acc_sigma)
+        msg.linear_acceleration.z = acc[2] + \
+            self._rng.normal(0, self._imu_acc_sigma)
         cov_acc = self._imu_acc_sigma ** 2
         msg.linear_acceleration_covariance[0] = cov_acc
         msg.linear_acceleration_covariance[4] = cov_acc

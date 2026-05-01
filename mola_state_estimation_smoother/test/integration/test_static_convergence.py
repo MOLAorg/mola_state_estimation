@@ -81,21 +81,7 @@ def generate_test_description():
         },
     )
 
-    mock_node = launch_ros.actions.Node(
-        package='mola_state_estimation_smoother',
-        executable='sensor_mock_node.py',
-        output='screen',
-        parameters=[{
-            'scenario': 'static',
-            'seed': 42,
-            'startup_delay_sec': 4.0,
-            'odom_rate': 10.0,
-            'gnss_rate': 2.0,
-            'imu_rate': 20.0,
-        }],
-    )
-
-    # Fall back to ExecuteProcess if the node is not installed as an entry point
+    # Use ExecuteProcess to launch the mock node:
     mock_proc = launch.actions.ExecuteProcess(
         cmd=['python3', mock_script,
              '--ros-args',
