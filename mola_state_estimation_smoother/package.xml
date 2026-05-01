@@ -46,6 +46,18 @@
   <!-- Needed by the mola-cli launch files -->
   <exec_depend>mola_launcher</exec_depend>
 
+  <!-- Integration test dependencies -->
+  <test_depend>launch_testing</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>launch_testing_ros</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>nav_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>tf2_ros</test_depend>
+  <test_depend>mola_launcher</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+
   <doc_depend>doxygen</doc_depend>
 
   <export>
