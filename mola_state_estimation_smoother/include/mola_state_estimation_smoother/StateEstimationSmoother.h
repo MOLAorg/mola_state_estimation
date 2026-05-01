@@ -27,9 +27,9 @@
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_kernel/interfaces/VizInterface.h>
+#include <mola_kernel/utils/RegexCache.h>
 #include <mola_kernel/version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
-#include <mola_state_estimation_smoother/RegexCache.h>
 
 // MOLA:
 #include <mola_imu_preintegration/ImuIntegrator.h>
