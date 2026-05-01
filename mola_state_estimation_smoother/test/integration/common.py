@@ -8,10 +8,14 @@
 #   The MOLA smoother internally computes ENU_yaw = quat_yaw + 90 deg + offset.
 #   With offset=0, quat_yaw must equal (vehicle_ENU_yaw - 90 deg).
 #   See also test-static-gnss-imu-orientation.cpp, vehicleToAzimuth formula.
+import logging
 import math
 import time
 
 import numpy as np
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)s: %(message)s')
 
 # Geodetic test origin  (must match static_test_smoother_params.yaml fixed_geo_reference)
 GT_LAT0_DEG = 36.8407
@@ -83,7 +87,7 @@ def imu_linear_acc_body(gt_yaw, gt_pitch=0.0, gt_roll=0.0,
     R = np.array([
         [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
         [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp,     cp * sr,                cp * cr               ],
+        [-sp,     cp * sr,                cp * cr],
     ])
     return R.T @ sf_world  # world to body
 
@@ -115,7 +119,8 @@ def moving_gt_twist(t):
     vx = vx_w * math.cos(yaw) + vy_w * math.sin(yaw)
     vy = -vx_w * math.sin(yaw) + vy_w * math.cos(yaw)
     # Angular velocity dYaw/dt
-    denom = MOVING_V ** 2 + (MOVING_A * MOVING_OMEGA * math.cos(MOVING_OMEGA * t)) ** 2
+    denom = MOVING_V ** 2 + (MOVING_A * MOVING_OMEGA *
+                             math.cos(MOVING_OMEGA * t)) ** 2
     wz = (
         -MOVING_V * MOVING_A * MOVING_OMEGA ** 2 * math.sin(MOVING_OMEGA * t)
         / max(denom, 1e-9)
@@ -178,6 +183,10 @@ class PoseLatest:
 
     def update(self, x, y, yaw):
         self._data = (x, y, yaw)
+        logging.info(
+            "Pose received: x=%.3f m, y=%.3f m, yaw=%.3f rad",
+            x, y, yaw,
+        )
 
     def latest(self):
         return self._data
@@ -225,12 +234,28 @@ def wait_for_convergence(
 
         pos_err = math.hypot(gt[0] - est[0], gt[1] - est[1])
         yaw_err = wrap_pi(gt[2] - est[2])
+        passed = (
+            pos_err < max_pos_err_m and
+            abs(yaw_err) < math.radians(max_heading_err_deg)
+        )
 
-        if (pos_err < max_pos_err_m and
-                abs(yaw_err) < math.radians(max_heading_err_deg)):
+        logging.info(
+            "Convergence check: pos_err=%.3f m, yaw_err=%.3f deg, pass=%s",
+            pos_err,
+            math.degrees(yaw_err),
+            passed,
+        )
+
+        if passed:
             if settled_since is None:
                 settled_since = time.time()
             if time.time() - settled_since >= settle_seconds:
+                logging.info(
+                    "Converged after %.1f s: pos_err=%.3f m, yaw_err=%.3f deg",
+                    settle_seconds,
+                    pos_err,
+                    math.degrees(yaw_err),
+                )
                 return
         else:
             settled_since = None

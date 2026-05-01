@@ -26,13 +26,14 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import PoseLatest, wrap_pi, wait_for_convergence
+from common import PoseLatest, wrap_pi, wait_for_convergence  # noqa: E402, isort:skip
 
 _SKIP_ENV = 'MOLA_SKIP_INTEGRATION_TESTS'
 
 # ------------------------------------------------------------------
 # Launch description
 # ------------------------------------------------------------------
+
 
 @pytest.mark.launch_test
 def generate_test_description():
@@ -42,12 +43,13 @@ def generate_test_description():
         ])
 
     pkg_share = get_package_share_directory('mola_state_estimation_smoother')
-    mola_yaml = os.path.join(pkg_share, 'mola-cli-launchs', 'state_estimator_ros2.yaml')
+    mola_yaml = os.path.join(
+        pkg_share, 'mola-cli-launchs', 'state_estimator_ros2.yaml')
     static_params = os.path.join(
         pkg_share, 'test', 'integration', 'data', 'static_test_smoother_params.yaml')
 
     mock_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                'sensor_mock_node.py')
+                               'sensor_mock_node.py')
 
     mola_node = launch_ros.actions.Node(
         package='mola_launcher',
@@ -73,6 +75,8 @@ def generate_test_description():
             'MOLA_LOCALIZATION_PUBLISH_TF': 'true',
             'MOLA_LOCALIZATION_PUBLISH_TF_SOURCE': 'state_estimation',
             'MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION': 'true',
+            'MOLA_VERBOSITY_BRIDGE_ROS2': 'DEBUG',
+            'MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR': 'DEBUG',
             'RCUTILS_LOGGING_BUFFERED_STREAM': '1',
         },
     )
