@@ -186,11 +186,13 @@ class Parameters
      */
     bool publish_estimated_georef_on_convergence = true;
 
-    /** Huber robust cost threshold for GNSS factors [meters].
-     *  Suitable values: ~1.5 for cm-level RTK, larger (e.g. 5-10) for noisy
-     *  single-band GPS.  Set to 0 to disable robust cost (plain Gaussian).
+    /** Huber robust cost threshold for GNSS factors [sigmas].
+     *  Applied in whitened (normalized) residual space, so units are
+     *  standard deviations, not meters. Suitable values: ~1.5 (switch to
+     *  linear loss beyond 1.5σ). Set to 0 to disable robust cost (plain
+     *  Gaussian).
      */
-    double gnss_huber_threshold = 1.5;  // [m]
+    double gnss_huber_threshold = 1.5;  // [sigmas]
 
     /** @} */
 
