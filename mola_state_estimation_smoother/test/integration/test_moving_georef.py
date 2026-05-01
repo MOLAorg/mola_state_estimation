@@ -61,6 +61,9 @@ def generate_test_description():
             'ODOM1_LABEL': 'wheel_odom',
             'IMU_TOPIC': '/imu',
             'GNSS_TOPIC': '/gps',
+            'ODOM2_TOPIC': '',  # remove after all distros have mola_yaml>=2.6.1
+            'ODOM3_TOPIC': '',  # remove after all distros have mola_yaml>=2.6.1
+            'ODOM4_TOPIC': '',  # remove after all distros have mola_yaml>=2.6.1
             'MOLA_USE_FIXED_IMU_POSE': 'true',
             'IMU_POSE_X': '0', 'IMU_POSE_Y': '0', 'IMU_POSE_Z': '0',
             'IMU_POSE_YAW': '0', 'IMU_POSE_PITCH': '0', 'IMU_POSE_ROLL': '0',
@@ -163,7 +166,8 @@ class TestMovingGeoRef(unittest.TestCase):
         settled_since = None
         pos_err = float('inf')
         yaw_err_deg = float('inf')
-        T_map_from_enu = None  # (tx, ty, dyaw) such that map = R(dyaw)·enu + (tx,ty)
+        # (tx, ty, dyaw) such that map = R(dyaw)·enu + (tx,ty)
+        T_map_from_enu = None
 
         while time.monotonic() < deadline:
             rclpy.spin_once(self.checker, timeout_sec=0.05)
