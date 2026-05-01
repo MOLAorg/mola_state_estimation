@@ -13,7 +13,8 @@ from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 from launch_ros.actions import Node, PushRosNamespace
 from launch.actions import (DeclareLaunchArgument, SetEnvironmentVariable,
-                            GroupAction, Shutdown)
+                            UnsetEnvironmentVariable, GroupAction, Shutdown,
+                            OpaqueFunction)
 from ament_index_python import get_package_share_directory
 import os
 
@@ -48,6 +49,27 @@ def generate_launch_description():
         default_value="False",
         description="Estimate geo-referencing from GNSS readings.")
 
+    odom1_topic_arg = DeclareLaunchArgument(
+        "odom1_topic", default_value="",
+        description="1st nav_msgs/Odometry topic (empty to disable)")
+    odom1_label_arg = DeclareLaunchArgument(
+        "odom1_label", default_value="odom1",
+        description="Sensor label for 1st odometry source")
+
+    odom2_topic_arg = DeclareLaunchArgument(
+        "odom2_topic", default_value="",
+        description="2nd nav_msgs/Odometry topic (empty to disable)")
+    odom2_label_arg = DeclareLaunchArgument(
+        "odom2_label", default_value="odom2",
+        description="Sensor label for 2nd odometry source")
+
+    odom3_topic_arg = DeclareLaunchArgument(
+        "odom3_topic", default_value="",
+        description="3rd nav_msgs/Odometry topic (empty to disable)")
+    odom3_label_arg = DeclareLaunchArgument(
+        "odom3_label", default_value="odom3",
+        description="Sensor label for 3rd odometry source")
+
     smoother_env_vars = GroupAction(actions=[
         SetEnvironmentVariable('MOLA_NAVSTATE_KINEMATIC_MODEL',
                                LaunchConfiguration('navstate_kinematic_model')),
@@ -59,6 +81,12 @@ def generate_launch_description():
                                LaunchConfiguration('navstate_sigma_random_walk_angacc')),
         SetEnvironmentVariable('MOLA_ESTIMATE_GEO_REF',
                                LaunchConfiguration('estimate_geo_reference')),
+        SetEnvironmentVariable('ODOM1_TOPIC', LaunchConfiguration('odom1_topic')),
+        SetEnvironmentVariable('ODOM1_LABEL', LaunchConfiguration('odom1_label')),
+        SetEnvironmentVariable('ODOM2_TOPIC', LaunchConfiguration('odom2_topic')),
+        SetEnvironmentVariable('ODOM2_LABEL', LaunchConfiguration('odom2_label')),
+        SetEnvironmentVariable('ODOM3_TOPIC', LaunchConfiguration('odom3_topic')),
+        SetEnvironmentVariable('ODOM3_LABEL', LaunchConfiguration('odom3_label')),
     ])
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,6 +165,21 @@ def generate_launch_description():
         name='MOLA_LOCALIZATION_PUBLISH_ODOM_MSGS_SOURCE',
         value='state_estimation')
 
+    def _set_link_first_pose_sigma(context, *args, **kwargs):
+        # When estimating geo-reference the map frame is defined by where the robot
+        # starts, so we must anchor the first pose to the map origin (sigma=1e-6).
+        # When localizing in a pre-built geo-referenced map the robot can start
+        # anywhere, so MOLA_LINK_FIRST_POSE_SIGMA must be left empty.
+        estimate_geo_ref = LaunchConfiguration(
+            'estimate_geo_reference').perform(context).strip().lower()
+        if estimate_geo_ref in ('true', '1', 'yes'):
+            return [SetEnvironmentVariable(
+                name='MOLA_LINK_FIRST_POSE_SIGMA', value='1e-6')]
+        return [UnsetEnvironmentVariable(name='MOLA_LINK_FIRST_POSE_SIGMA')]
+
+    link_first_pose_sigma_action = OpaqueFunction(
+        function=_set_link_first_pose_sigma)
+
     # Namespace
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
@@ -179,6 +222,9 @@ def generate_launch_description():
         navstate_sigma_random_walk_linacc_arg,
         navstate_sigma_random_walk_angacc_arg,
         estimate_geo_reference_arg,
+        odom1_topic_arg, odom1_label_arg,
+        odom2_topic_arg, odom2_label_arg,
+        odom3_topic_arg, odom3_label_arg,
         smoother_env_vars,
         # BridgeROS2
         enforce_planar_motion_arg, enforce_planar_motion_env,
@@ -193,6 +239,7 @@ def generate_launch_description():
         use_mola_gui_arg, use_mola_gui_env,
         localization_publish_tf_source_env,
         localization_publish_odom_source_env,
+        link_first_pose_sigma_action,
         # Node
         node_group
     ])

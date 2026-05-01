@@ -98,10 +98,23 @@ if(DETECTED_ROS2)
   # find dependencies
   find_package(ament_cmake REQUIRED)
 
+  # Install integration-test data files so tests can locate them via ament_index
+  install(
+    DIRECTORY test/integration/data
+    DESTINATION share/${PROJECT_NAME}/test/integration/
+  )
+
   if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
+    find_package(ament_cmake_pytest REQUIRED)
+    find_package(launch_testing_ament_cmake REQUIRED)
 
     add_subdirectory(tests)
+
+    add_launch_test(test/integration/test_static_convergence.py
+      TIMEOUT 90)
+    add_launch_test(test/integration/test_moving_georef.py
+      TIMEOUT 180)
   endif()
 
   ament_package()

@@ -1,0 +1,47 @@
+# MOLA state estimator params for the moving geo-ref integration test.
+# Standalone copy of state-estimation-smoother.yaml with:
+#   estimate_geo_reference: true (smoother discovers geo-ref from GNSS)
+#   no fixed_geo_reference, no first-pose anchor
+
+params:
+  vehicle_frame_name: "base_link"
+  reference_frame_name: "map"
+  enu_frame_name: "enu"
+
+  kinematic_model: "KinematicModel::ConstantVelocity"
+  sliding_window_length: 8.0 # long enough to merge several GNSS data
+  min_time_difference_to_create_new_frame: 0.01
+  max_time_to_use_velocity_model: 2.0
+  gnss_nearby_keyframe_stamp_tolerance: 1.0
+  imu_nearby_keyframe_stamp_tolerance: 0.10
+  time_between_frames_to_warning: 5.0
+
+  sigma_random_walk_acceleration_linear: 1.0
+  sigma_random_walk_acceleration_angular: 10.0
+  sigma_integrator_position: 0.1
+  sigma_integrator_orientation: 1.0
+  sigma_twist_from_consecutive_poses_linear: 1.0
+  sigma_twist_from_consecutive_poses_angular: 1.0
+
+  enforce_planar_motion: false
+
+  initial_twist: [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ]
+  initial_twist_sigma_lin: 20.0
+  initial_twist_sigma_ang: 3.0
+
+  imu_attitude_sigma_deg: "2.0"
+  imu_attitude_azimuth_offset_deg: "0.0"
+  imu_normalized_gravity_alignment_sigma: "0.4"
+
+  estimate_geo_reference: true
+
+  convergence_max_position_sigma: "1.0"
+  convergence_max_orientation_sigma_deg: "5.0"
+  publish_estimated_georef_on_convergence: true
+  link_first_pose_to_reference_origin_sigma: 1e-6
+
+  additional_isam2_update_steps: 3
+
+  do_process_imu_labels_re: ".*"
+  do_process_odometry_labels_re: ".*"
+  do_process_gnss_labels_re: ".*"

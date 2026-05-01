@@ -36,7 +36,7 @@ params:
   kinematic_model: "${MOLA_NAVSTATE_KINEMATIC_MODEL|KinematicModel::ConstantVelocity}"
 
   # Time window to keep past observations in the filter [seconds]
-  sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|2.5}
+  sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|6.0}
 
   # Minimum time difference between frames to create a new frame [seconds]
   min_time_difference_to_create_new_frame: 0.01
@@ -89,10 +89,19 @@ params:
   # If enabled, the estimator will enforce z, pitch, and roll to be always 0:
   enforce_planar_motion: ${MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION|false}
 
-  # If set, the first ever frame will also have an SE(3) edge favoring it to be the identity in
-  # the "reference_frame", with a sigma given by this value. Use a small number, like 1e-6, for
-  # initialing the first odometry pose near the map origin. Do not set when using geo-referenced
-  # maps.
+  # If set, pins the first robot frame to the "reference_frame" origin with the given sigma [m/rad].
+  #
+  # When to set (use 1e-6):
+  #   - estimate_geo_reference=true  : the map frame is defined by where the robot starts;
+  #     without this anchor the GTSAM graph has a rank-deficient null-space in the
+  #     T_enu_to_map direction and geo-reference estimation will not converge.
+  #   - Pure odometry (no GNSS)      : no absolute constraint exists; the anchor defines the
+  #     map origin.
+  #
+  # When to leave empty:
+  #   - estimate_geo_reference=false with GNSS and a pre-built geo-referenced map: the robot
+  #     may start anywhere in the map; the fixed T_enu_to_map + GNSS directly constrain its
+  #     absolute position without needing an origin anchor.
   link_first_pose_to_reference_origin_sigma: ${MOLA_LINK_FIRST_POSE_SIGMA|}
 
   # --------------------------------------------------------------------------
@@ -101,7 +110,7 @@ params:
 
   # Optional initial guess for the twist (vx vy vz: m/s, wx wy wz: rad/s):
   # Initial velocity twist (linear: vx, vy, vz; angular: wx, wy, wz)
-  initial_twist: ["${MOLA_INITIAL_VX|0.0}", 0.0, 0.0, 0.0, 0.0, 0.0]
+  initial_twist: [ "${MOLA_INITIAL_VX|0.0}", 0.0, 0.0, 0.0, 0.0, 0.0 ]
 
   # Defaults: somewhat confident that the vehicle is near rest.
   # Change these if needed to start with the vehicle at high speed.
@@ -182,6 +191,7 @@ params:
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
   do_process_gnss_labels_re: ".*"
+
 # ============================================================================
 # End of Configuration
 # ============================================================================
