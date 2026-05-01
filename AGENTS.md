@@ -59,6 +59,7 @@ incremental optimization. The primary estimator for multi-sensor fusion.
 | MOLA-CLI launch | `mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml` |
 | CLI app | `mola_state_estimation_smoother/apps/mola-navstate-cli.cpp` |
 | Tests (6) | `mola_state_estimation_smoother/tests/test-*.cpp` |
+| Integration tests | `mola_state_estimation_smoother/test/integration/test_*.py` |
 
 Key traits:
 - Inherits `mola::NavStateFilter`, `mola::LocalizationSourceBase`,
@@ -199,3 +200,5 @@ Major parameter groups:
 
 The project uses `clang-format` (config in `.clang-format` at repo root).
 CI enforces formatting via `.github/workflows/check-clang-format.yml`.
+Don't use long hyphens. Use American spelling. Use braced statements instead of
+one-liners.

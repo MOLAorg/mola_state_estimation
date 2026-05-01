@@ -142,50 +142,74 @@ class TestMovingGeoRef(unittest.TestCase):
         if os.environ.get(_SKIP_ENV):
             self.skipTest('MOLA_SKIP_INTEGRATION_TESTS is set')
 
-        # Compare estimated pose in map frame vs GT in ENU frame.
-        # The true T_enu_to_map is identity by construction (robot anchored at ENU
-        # origin), so map == true ENU and the frames are directly comparable.
-        # Using the Odometry topic (map frame) avoids compounding with the smoother's
-        # estimated T_enu_to_map, which carries a ~2m bootstrap bias from the first
-        # noisy GNSS reading.
+        # The estimator publishes pose in the `map` frame, while ground truth is
+        # in the `enu` frame. With link_first_pose_to_reference_origin_sigma=1e-6
+        # the smoother anchors the robot's first pose to the map origin with
+        # identity orientation, so map == enu only if the robot starts at ENU
+        # origin with yaw=0. In this scenario GT(t=0) = (0, 0, atan2(A·omega, V))
+        # = (0, 0, 45°), so T_enu_to_map is a -45° rotation about the origin and
+        # the two frames are NOT directly comparable.
         #
-        # All time comparisons use time.monotonic() — PoseLatest._updated_at is
-        # also stamped with time.monotonic(), so they are directly comparable.
+        # We recover T_map_from_enu from the first matched (gt, est) pair
+        # captured during the warm-up window, then transform GT into map.
         max_pos_err_m = 1.5
         max_heading_err_deg = 10.0
         settle_seconds = 3.0
-        warm_up_seconds = 10.0
-        timeout_seconds = 25.0
+        warm_up_seconds = 20.0
+        timeout_seconds = 40.0
 
         deadline = time.monotonic() + warm_up_seconds + timeout_seconds
         warm_up_end = time.monotonic() + warm_up_seconds
         settled_since = None
         pos_err = float('inf')
         yaw_err_deg = float('inf')
+        T_map_from_enu = None  # (tx, ty, dyaw) such that map = R(dyaw)·enu + (tx,ty)
 
         while time.monotonic() < deadline:
             rclpy.spin_once(self.checker, timeout_sec=0.05)
 
             now = time.monotonic()
-            if now < warm_up_end:
-                continue
 
             gt, gt_t = self.gt_pose.latest()
             est, est_t = self.est_pose.latest()
-            if (gt is None or est is None or
-                    gt_t is None or est_t is None or
-                    now - gt_t > 0.5 or now - est_t > 0.5):
+            fresh = (gt is not None and est is not None and
+                     gt_t is not None and est_t is not None and
+                     now - gt_t < 0.5 and now - est_t < 0.5)
+
+            # Lock T_map_from_enu using the very first fresh sample. At t≈0 the
+            # estimator's pose equals the map-anchored origin, so this pair pins
+            # the transform between the two frames for the rest of the run.
+            if T_map_from_enu is None and fresh:
+                dyaw = est[2] - gt[2]
+                c, s = math.cos(dyaw), math.sin(dyaw)
+                tx = est[0] - (c * gt[0] - s * gt[1])
+                ty = est[1] - (s * gt[0] + c * gt[1])
+                T_map_from_enu = (tx, ty, dyaw)
+                print(f'[moving] locked T_map_from_enu=({tx:.3f},{ty:.3f},'
+                      f'{math.degrees(dyaw):.2f}°)', flush=True)
+
+            if now < warm_up_end:
                 continue
 
-            pos_err = math.hypot(gt[0] - est[0], gt[1] - est[1])
+            if not fresh or T_map_from_enu is None:
+                continue
+
+            tx, ty, dyaw = T_map_from_enu
+            c, s = math.cos(dyaw), math.sin(dyaw)
+            gt_in_map_x = c * gt[0] - s * gt[1] + tx
+            gt_in_map_y = s * gt[0] + c * gt[1] + ty
+            gt_in_map_yaw = gt[2] + dyaw
+
+            pos_err = math.hypot(gt_in_map_x - est[0], gt_in_map_y - est[1])
             yaw_err = math.degrees(
-                math.atan2(math.sin(gt[2] - est[2]),
-                           math.cos(gt[2] - est[2])))
+                math.atan2(math.sin(gt_in_map_yaw - est[2]),
+                           math.cos(gt_in_map_yaw - est[2])))
             yaw_err_deg = abs(yaw_err)
             passed = pos_err < max_pos_err_m and yaw_err_deg < max_heading_err_deg
 
             print(
-                f'[moving] gt=({gt[0]:.2f},{gt[1]:.2f},{math.degrees(gt[2]):.1f}°) '
+                f'[moving] gt_map=({gt_in_map_x:.2f},{gt_in_map_y:.2f},'
+                f'{math.degrees(gt_in_map_yaw):.1f}°) '
                 f'est_map=({est[0]:.2f},{est[1]:.2f},{math.degrees(est[2]):.1f}°) '
                 f'pos_err={pos_err:.3f}m yaw_err={yaw_err:.1f}° pass={passed}',
                 flush=True)

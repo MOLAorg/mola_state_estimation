@@ -13,7 +13,8 @@ from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 from launch_ros.actions import Node, PushRosNamespace
 from launch.actions import (DeclareLaunchArgument, SetEnvironmentVariable,
-                            GroupAction, Shutdown, OpaqueFunction)
+                            UnsetEnvironmentVariable, GroupAction, Shutdown,
+                            OpaqueFunction)
 from ament_index_python import get_package_share_directory
 import os
 
@@ -174,7 +175,7 @@ def generate_launch_description():
         if estimate_geo_ref in ('true', '1', 'yes'):
             return [SetEnvironmentVariable(
                 name='MOLA_LINK_FIRST_POSE_SIGMA', value='1e-6')]
-        return []
+        return [UnsetEnvironmentVariable(name='MOLA_LINK_FIRST_POSE_SIGMA')]
 
     link_first_pose_sigma_action = OpaqueFunction(
         function=_set_link_first_pose_sigma)
