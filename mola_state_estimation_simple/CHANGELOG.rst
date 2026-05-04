@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.3.1 (2026-05-04)
+------------------
 * Merge pull request `#28 <https://github.com/MOLAorg/mola_state_estimation/issues/28>`_ from Zeal-Robotics/fix/simple-fuse-imu-preserve-linear-twist
   fix(state_estimation_simple): preserve linear twist across fuse_imu()
   Regression introduced in 15a1fce ("Add tests for simple estimator").

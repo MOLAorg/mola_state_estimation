@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.3.1 (2026-05-04)
+------------------
 * Merge pull request `#27 <https://github.com/MOLAorg/mola_state_estimation/issues/27>`_ from MOLAorg/feature/ros2-integration-tests
   Add ROS 2 launch-testing integration tests for StateEstimationSmoother
 * fix missing test dep
