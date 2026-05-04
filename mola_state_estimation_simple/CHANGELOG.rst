@@ -2,6 +2,20 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#28 <https://github.com/MOLAorg/mola_state_estimation/issues/28>`_ from Zeal-Robotics/fix/simple-fuse-imu-preserve-linear-twist
+  fix(state_estimation_simple): preserve linear twist across fuse_imu()
+  Regression introduced in 15a1fce ("Add tests for simple estimator").
+* Merge pull request `#26 <https://github.com/MOLAorg/mola_state_estimation/issues/26>`_ from MOLAorg/fix/smoother-issues
+  Fix misc smoother issues
+* Remove copies of RegexCache.h and use the shared version in mola_kernel
+* Merge pull request `#25 <https://github.com/MOLAorg/mola_state_estimation/issues/25>`_ from MOLAorg/feat/simple-also-process-robot-pose-obs
+  feat: Simple estimator now also processes CObservationsRobotPose
+* add regex filtering
+* feat: Simple estimator now also processes CObservationsRobotPose
+* Contributors: Jose Luis Blanco-Claraco, Robin Van Cauwenbergh
+
 2.3.0 (2026-04-29)
 ------------------
 * Merge pull request `#24 <https://github.com/MOLAorg/mola_state_estimation/issues/24>`_ from MOLAorg/fix/bugs-in-simple-estimator-cov

@@ -2,6 +2,33 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#27 <https://github.com/MOLAorg/mola_state_estimation/issues/27>`_ from MOLAorg/feature/ros2-integration-tests
+  Add ROS 2 launch-testing integration tests for StateEstimationSmoother
+* fix missing test dep
+* workaround for older mola_yaml
+* Fix frames of reference for the test checker
+* Progress fixing integration test
+* mock test code clean up
+* More debug traces in python mock integration test
+* Add ROS 2 launch-testing integration tests for StateEstimationSmoother
+  Two end-to-end test scenarios driven by a Python sensor mock node.
+* Merge pull request `#26 <https://github.com/MOLAorg/mola_state_estimation/issues/26>`_ from MOLAorg/fix/smoother-issues
+  Fix misc smoother issues
+* Clarify docs and fix test noise thresholds
+* Remove copies of RegexCache.h and use the shared version in mola_kernel
+* fix: make RegexCache move-assignable after adding std::mutex
+* fix: guard IMU quaternion path against NaN components in fuse_imu
+* fix: make RegexCache::get_regex thread-safe
+* fix: replace ASSERT\_ with descriptive exception in get_latest_state_and_covariance
+* fix: use monotonic counter for odometry frame IDs
+* fix: check both link sets before inserting in add_kinematic_factor_between
+* fix: make GNSS Huber threshold a configurable parameter
+* fix: skip BetweenFactor on first fuse_odometry call
+* feat: Print number of active factors in DEBUG log level
+* Contributors: Jose Luis Blanco-Claraco
+
 2.3.0 (2026-04-29)
 ------------------
 * Merge pull request `#23 <https://github.com/MOLAorg/mola_state_estimation/issues/23>`_ from MOLAorg/feat/fuse-ros2-demos
