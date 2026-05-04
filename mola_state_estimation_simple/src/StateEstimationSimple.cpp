@@ -116,16 +116,30 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // Transform frames: IMU -> vehicle:
     imuReading.rotate(imu.sensorPose.asTPose());
 
-    state_.last_twist.emplace();
+    // IMU only observes angular velocity: preserve linear (vx,vy,vz) from the
+    // last fuse_pose().
+    if (!state_.last_twist)
+    {
+        state_.last_twist.emplace();
+    }
     state_.last_twist->wx = imuReading.wx;
     state_.last_twist->wy = imuReading.wy;
     state_.last_twist->wz = imuReading.wz;
 
+    const double varRot = mrpt::square(params.sigma_imu_angular_velocity);
+    if (!state_.last_twist_cov)
     {
-        auto&        twistCov = state_.last_twist_cov.emplace();
-        const double varXYZ   = mrpt::square(5.0);  // No info on XYZ
-        const double varRot   = mrpt::square(params.sigma_imu_angular_velocity);
-        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+        const double varXYZ_no_info = mrpt::square(5.0);  // wide linear prior, [m²/s²]
+        auto&        twistCov       = state_.last_twist_cov.emplace();
+        twistCov.setDiagonal(
+            {varXYZ_no_info, varXYZ_no_info, varXYZ_no_info, varRot, varRot, varRot});
+    }
+    else
+    {
+        auto& twistCov = *state_.last_twist_cov;
+        twistCov(3, 3) = varRot;
+        twistCov(4, 4) = varRot;
+        twistCov(5, 5) = varRot;
     }
 
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
