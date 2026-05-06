@@ -150,11 +150,33 @@ class StateEstimationSimple : public mola::NavStateFilter
         std::optional<mrpt::math::CMatrixDouble66>     last_twist_cov;
         bool                                           pose_already_updated_with_odom = false;
 
+        // Per-source bookkeeping used by fuse_pose() to compute velocity from
+        // consecutive poses of the SAME source (LiDAR ICP), independently of
+        // whether odometry has since modified last_pose. Without this, fuse_pose()
+        // would compute incrPose = ICP_result - (ICP_prev + odom_accumulated),
+        // i.e. the odometry residual, rather than the true robot velocity.
+        //
+        // Also used by fuse_odometry_3d_pose() for 3D odometry deltas.
+        struct SourceState
+        {
+            std::optional<mrpt::poses::CPose3DPDFGaussian> last_pose;
+            std::optional<mrpt::Clock::time_point>         last_obs_tim;
+        };
+        std::map<std::string, SourceState> per_source;
+
         // To be built from parameters strings when changed.
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
         RegexCache do_process_gnss_labels_re;
     };
+
+    // Integrates a CObservationRobotPose that comes from an odometry source
+    // (e.g. wheel encoders forwarded as 3D pose). Unlike fuse_pose(), this
+    // applies an incremental delta to last_pose (keeping it in the LiDAR SLAM
+    // frame) and does NOT update last_pose_obs_tim, so it never interferes with
+    // the LiDAR ICP timestamp used for dt validation and pose extrapolation.
+    void fuse_odometry_3d_pose(
+        const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName);
 
     State                        state_;
     mutable std::recursive_mutex state_mtx_;

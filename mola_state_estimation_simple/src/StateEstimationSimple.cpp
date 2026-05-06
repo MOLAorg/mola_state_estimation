@@ -72,21 +72,116 @@ void StateEstimationSimple::fuse_odometry(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
-    // this will work well only for simple datasets with one odometry:
+    // Advance last_pose by the incremental 2D odometry delta:
     if (state_.last_odom_obs && state_.last_pose)
     {
         const auto poseIncr = odom.odometry - state_.last_odom_obs->odometry;
-
         state_.last_pose->mean = state_.last_pose->mean + mrpt::poses::CPose3D(poseIncr);
-
-        // We can skip velocity-based model, but retain the twist:
-        // state_.last_twist: do not modify
         state_.pose_already_updated_with_odom = true;
     }
-    // copy:
     state_.last_odom_obs = odom;
 
+    // Use wheel velocities when available: they give a correct, uncontaminated
+    // twist for de-skewing and sigma computation, independently of whether
+    // LiDAR ICP has produced a new pose yet.
+    if (odom.hasVelocities)
+    {
+        auto& tw = state_.last_twist.emplace();
+        tw.vx    = odom.velocityLocal.vx;
+        tw.vy    = odom.velocityLocal.vy;
+        tw.vz    = 0;
+        tw.wx    = 0;
+        tw.wy    = 0;
+        tw.wz    = odom.velocityLocal.omega;
+        // Note: fuse_imu() will override wx/wy/wz if IMU is also active.
+
+        const double varXYZ = mrpt::square(0.1);   // [m²/s²]
+        const double varRot = mrpt::square(0.05);  // [rad²/s²]
+        auto&        cov    = state_.last_twist_cov.emplace();
+        cov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+
+        MRPT_LOG_DEBUG_STREAM("fuse_odometry: twist from velocityLocal: " << tw.asString());
+    }
+
     MRPT_LOG_DEBUG_STREAM("fuse_odometry: odom=" << odom.asString());
+}
+
+void StateEstimationSimple::fuse_odometry_3d_pose(
+    const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName)
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    // Apply sensor-to-base correction if the sensor is not at the origin:
+    auto sensedPose = obs.pose;
+    if (obs.sensorPose != mrpt::poses::CPose3D())
+    {
+        sensedPose = sensedPose + mrpt::poses::CPose3DPDFGaussian(-obs.sensorPose);
+    }
+
+    auto& src = state_.per_source[odomName];
+
+    // Compute and apply the incremental delta to last_pose, keeping it in the
+    // LiDAR SLAM frame rather than replacing it with the absolute odom pose
+    // (which lives in a potentially offset odometry reference frame).
+    if (src.last_pose.has_value() && state_.last_pose.has_value())
+    {
+        const double dt =
+            src.last_obs_tim
+                ? mrpt::system::timeDifference(*src.last_obs_tim, obs.timestamp)
+                : 0.0;
+
+        if (dt < 0)
+        {
+            MRPT_LOG_THROTTLE_WARN_STREAM(
+                5.0,
+                "fuse_odometry_3d_pose(): backwards timestamp for source '"
+                    << odomName << "', dt=" << dt << ". Resetting source.");
+            src.last_pose    = sensedPose;
+            src.last_obs_tim = obs.timestamp;
+            return;
+        }
+
+        const auto delta      = sensedPose.mean - src.last_pose->mean;
+        state_.last_pose->mean = state_.last_pose->mean + delta;
+        state_.pose_already_updated_with_odom = true;
+
+        // Derive twist from the per-source consecutive 3D odom poses.
+        // This gives the correct wheel-odometry velocity independently of how
+        // last_pose has been set by LiDAR ICP.
+        if (dt > 0 && dt < params.max_time_to_use_velocity_model)
+        {
+            auto&        tw      = state_.last_twist.emplace();
+            const auto   logRot  = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
+            const double dt2     = dt * dt;
+
+            tw.vx = delta.x() / dt;
+            tw.vy = delta.y() / dt;
+            tw.vz = delta.z() / dt;
+            tw.wx = logRot[0] / dt;
+            tw.wy = logRot[1] / dt;
+            tw.wz = logRot[2] / dt;
+
+            auto& twistCov = state_.last_twist_cov.emplace();
+            twistCov.setDiagonal(
+                {mrpt::square(params.sigma_relative_pose_linear) / dt2,
+                 mrpt::square(params.sigma_relative_pose_linear) / dt2,
+                 mrpt::square(params.sigma_relative_pose_linear) / dt2,
+                 mrpt::square(params.sigma_relative_pose_angular) / dt2,
+                 mrpt::square(params.sigma_relative_pose_angular) / dt2,
+                 mrpt::square(params.sigma_relative_pose_angular) / dt2});
+
+            MRPT_LOG_DEBUG_STREAM(
+                "fuse_odometry_3d_pose('" << odomName << "'): twist=" << tw.asString());
+        }
+    }
+
+    src.last_pose    = sensedPose;
+    src.last_obs_tim = obs.timestamp;
+    // last_pose_obs_tim is intentionally NOT updated: it belongs to the LiDAR
+    // ICP source and governs the validity window in estimated_navstate().
+
+    MRPT_LOG_DEBUG_STREAM(
+        "fuse_odometry_3d_pose('" << odomName << "'): pose=" << sensedPose.mean);
 }
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -158,30 +253,40 @@ void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 
 void StateEstimationSimple::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
-    [[maybe_unused]] const std::string& frame_id)
+    const std::string& frame_id)
 {
     auto lck = std::scoped_lock(state_mtx_);
 
-    mrpt::poses::CPose3D incrPose;
-
-    // numerical sanity: variances>=0 (==0 allowed for some components only)
-    for (int i = 0; i < 6; i++)
-    {
-        ASSERT_GE_(pose.cov(i, i), .0);
-    }
-    // and the sum of all strictly >0
+    // Numerical sanity: variances >= 0 (== 0 allowed for some components only)
+    for (int i = 0; i < 6; i++) ASSERT_GE_(pose.cov(i, i), .0);
     ASSERT_GT_(pose.cov.trace(), .0);
 
+    // fuse_pose() is the exclusive path for the primary localization source
+    // (LiDAR ICP). Wheel-odometry CObservationRobotPose observations are
+    // routed to fuse_odometry_3d_pose() in onNewObservation() instead, so
+    // they never arrive here and cannot corrupt last_pose_obs_tim.
+
+    // Per-source bookkeeping for this localization source.
+    // We use src.last_pose rather than last_pose for the incrPose calculation
+    // so that the derived twist reflects true ICP-to-ICP motion even when
+    // fuse_odometry() / fuse_odometry_3d_pose() have modified last_pose in
+    // between ICP scans.
+    auto& src = state_.per_source[frame_id];
+
     double dt = 0;
-    if (state_.last_pose_obs_tim)
+    if (src.last_obs_tim)
     {
-        dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
+        dt = mrpt::system::timeDifference(*src.last_obs_tim, timestamp);
     }
 
     if (dt < 0)
     {
         MRPT_LOG_THROTTLE_WARN_STREAM(
-            5.0, "Ignoring fuse_pose() call with dt=" << dt << " frame_id=" << frame_id);
+            5.0,
+            "Ignoring fuse_pose() call with backwards timestamp: dt="
+                << dt << " frame_id=" << frame_id);
+        src.last_obs_tim = timestamp;
+        src.last_pose    = pose;
         return;
     }
 
@@ -191,28 +296,30 @@ void StateEstimationSimple::fuse_pose(
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): twist before=" << state_.last_twist->asString());
     }
 
-    if (dt < params.max_time_to_use_velocity_model && state_.last_pose)
+    if (src.last_pose.has_value() && dt > 0 && dt < params.max_time_to_use_velocity_model)
     {
-        auto& tw = state_.last_twist.emplace();
-
-        incrPose = pose.mean - (state_.last_pose)->mean;
+        // Velocity from consecutive ICP poses, uncontaminated by odometry
+        // updates to the shared last_pose between scans:
+        auto&        tw       = state_.last_twist.emplace();
+        const auto   incrPose = pose.mean - src.last_pose->mean;
+        const auto   logRot   = mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
+        const double dt2      = dt * dt;
 
         tw.vx = incrPose.x() / dt;
         tw.vy = incrPose.y() / dt;
         tw.vz = incrPose.z() / dt;
-
-        const auto logRot = mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
-
         tw.wx = logRot[0] / dt;
         tw.wy = logRot[1] / dt;
         tw.wz = logRot[2] / dt;
 
-        // Rough guess of the covariance of the twist:
-        auto&        twistCov = state_.last_twist_cov.emplace();
-        const double dt2      = dt * dt;
-        const double varXYZ   = mrpt::square(params.sigma_relative_pose_linear) / dt2;  // [m²/s²]
-        const double varRot = mrpt::square(params.sigma_relative_pose_angular) / dt2;  // [rad²/s²]
-        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+        auto& twistCov = state_.last_twist_cov.emplace();
+        twistCov.setDiagonal(
+            {mrpt::square(params.sigma_relative_pose_linear) / dt2,
+             mrpt::square(params.sigma_relative_pose_linear) / dt2,
+             mrpt::square(params.sigma_relative_pose_linear) / dt2,
+             mrpt::square(params.sigma_relative_pose_angular) / dt2,
+             mrpt::square(params.sigma_relative_pose_angular) / dt2,
+             mrpt::square(params.sigma_relative_pose_angular) / dt2});
     }
     else
     {
@@ -228,11 +335,12 @@ void StateEstimationSimple::fuse_pose(
     if (state_.last_twist_cov)
     {
         MRPT_LOG_DEBUG_STREAM(
-            "fuse_pose(): twist_cov after=\n"
-            << state_.last_twist_cov->asString());
+            "fuse_pose(): twist_cov after=\n" << state_.last_twist_cov->asString());
     }
 
-    // save for next iter:
+    src.last_pose    = pose;
+    src.last_obs_tim = timestamp;
+
     state_.last_pose                      = pose;
     state_.last_pose_obs_tim              = timestamp;
     state_.pose_already_updated_with_odom = false;
@@ -402,16 +510,11 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
                                     params.do_process_odometry_labels_re)))
         {
-            auto sensedSensorPose = obsPose->pose;
-            if (obsPose->sensorPose != mrpt::poses::CPose3D())
-            {
-                sensedSensorPose =
-                    sensedSensorPose + mrpt::poses::CPose3DPDFGaussian(-obsPose->sensorPose);
-            }
-
-            // This simple estimator is not frame-aware; use sensorLabel as frame_id
-            // for logging consistency with the smoother, but fuse_pose() ignores it.
-            this->fuse_pose(obsPose->timestamp, sensedSensorPose, obsPose->sensorLabel);
+            // Route to the dedicated 3D-odometry path so it never touches
+            // last_pose_obs_tim (which belongs to the LiDAR ICP source) and
+            // applies the pose as an incremental delta in the SLAM frame rather
+            // than replacing last_pose with the absolute odom-frame pose.
+            this->fuse_odometry_3d_pose(*obsPose, o->sensorLabel);
         }
         else
         {
