@@ -142,9 +142,13 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
             return;
         }
 
-        const auto delta                      = sensedPose.mean - src.last_pose->mean;
-        state_.last_pose->mean                = state_.last_pose->mean + delta;
-        state_.pose_already_updated_with_odom = true;
+        const auto delta       = sensedPose.mean - src.last_pose->mean;
+        state_.last_pose->mean = state_.last_pose->mean + delta;
+        // pose_already_updated_with_odom is NOT set here because
+        // last_pose_obs_tim is updated to obs.timestamp below, so
+        // estimated_navstate() will compute the correct dt and extrapolate
+        // normally. (Contrast with fuse_odometry() which does NOT update
+        // last_pose_obs_tim and must suppress extrapolation via the flag.)
 
         // Derive twist from the per-source consecutive 3D odom poses.
         // This gives the correct wheel-odometry velocity independently of how
@@ -178,8 +182,17 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
 
     src.last_pose    = sensedPose;
     src.last_obs_tim = obs.timestamp;
-    // last_pose_obs_tim is intentionally NOT updated: it belongs to the LiDAR
-    // ICP source and governs the validity window in estimated_navstate().
+
+    // Bootstrap last_pose when no SLAM source has set it yet, so that
+    // estimated_navstate() can return valid results when CObservationRobotPose
+    // is the sole pose source (e.g., in tests or lidar-odom-only setups).
+    // When fuse_pose() is also active it owns last_pose_obs_tim and overwrites
+    // it using the per-source src.last_obs_tim guard, so this update is safe.
+    if (!state_.last_pose.has_value())
+    {
+        state_.last_pose = sensedPose;
+    }
+    state_.last_pose_obs_tim = obs.timestamp;
 
     MRPT_LOG_DEBUG_STREAM("fuse_odometry_3d_pose('" << odomName << "'): pose=" << sensedPose.mean);
 }
