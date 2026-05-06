@@ -180,7 +180,8 @@ void StateEstimationSimple::fuse_pose(
 
     if (dt < 0)
     {
-        MRPT_LOG_WARN_STREAM("Ignoring fuse_pose() call with dt=" << dt);
+        MRPT_LOG_THROTTLE_WARN_STREAM(
+            5.0, "Ignoring fuse_pose() call with dt=" << dt << " frame_id=" << frame_id);
         return;
     }
 
