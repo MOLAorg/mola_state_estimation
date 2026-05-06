@@ -343,6 +343,85 @@ void test_robot_pose_observation()
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// Test 7: Mixed ICP + 3-D wheel-odometry source
+// --------------------------------------------------------------------------
+// LiDAR ICP supplies the ground-truth trajectory via fuse_pose() at 1 Hz.
+// Wheel odometry arrives as CObservationRobotPose at 2 Hz and advances the
+// state between ICP scans via fuse_odometry_3d_pose().
+//
+// Key invariants checked:
+//  (a) The twist derived from two consecutive ICP poses is the true ICP-to-ICP
+//      velocity and is NOT contaminated by odometry deltas applied to
+//      state_.last_pose between those scans.
+//  (b) estimated_navstate() extrapolates correctly from the odom-advanced pose
+//      while an ICP scan is still pending.
+//  (c) estimated_navstate() extrapolates correctly from the ICP pose once a
+//      new scan has been fused.
+void test_icp_and_3d_odometry_fusion()
+{
+    std::cout << "[Test 7] ICP + 3-D odometry fusion... ";
+
+    mola::state_estimation_simple::StateEstimationSimple estimator;
+    estimator.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    estimator.initialize(get_default_config());
+
+    const auto   cov = mrpt::math::CMatrixDouble66::Identity();
+    const double v_x = 1.0;  // m/s — robot moves steadily in +X
+
+    // Helper: inject a CObservationRobotPose for the wheel-odometry source.
+    auto send_wheel_odom = [&](double t, double x)
+    {
+        auto obs         = mrpt::obs::CObservationRobotPose::Create();
+        obs->timestamp   = mrpt::Clock::fromDouble(t);
+        obs->sensorLabel = "wheel_odom";
+        obs->pose        = mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(x, 0, 0), cov);
+        estimator.onNewObservation(obs);
+    };
+
+    // --- t=0: both sources initialise at origin ---
+    estimator.fuse_pose(
+        mrpt::Clock::fromDouble(0.0),
+        mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov), "map");
+    send_wheel_odom(0.0, 0.0);
+
+    // --- t=0.5: odom fires mid-scan, advancing state_.last_pose to x=0.5 ---
+    send_wheel_odom(0.5, 0.5);
+
+    // (b) Mid-scan extrapolation: odom twist (1 m/s) from (0.5,0,0) at t=0.5
+    //     queried at t=0.7 → expected x = 0.5 + 1.0*0.2 = 0.7
+    {
+        auto s = estimator.estimated_navstate(mrpt::Clock::fromDouble(0.7), "map");
+        ASSERT_(s.has_value());
+        ASSERT_NEAR_(s->pose.mean.x(), 0.7, 1e-3);
+    }
+
+    // --- t=1: LiDAR ICP delivers the true vehicle position (1,0,0) ---
+    estimator.fuse_pose(
+        mrpt::Clock::fromDouble(1.0),
+        mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(v_x, 0, 0), cov), "map");
+
+    // (a) Twist must equal the ICP-to-ICP velocity (1.0 m/s).
+    //     A regression would give 0.5 m/s because the broken code used the
+    //     odom-advanced state_.last_pose=(0.5,0,0) as the base instead of the
+    //     per-source ICP pose=(0,0,0).
+    {
+        auto tw = estimator.get_last_twist();
+        ASSERT_(tw.has_value());
+        ASSERT_NEAR_(tw->vx, v_x, 1e-3);
+    }
+
+    // (c) Post-ICP extrapolation: ICP pose (1,0,0) at t=1, query at t=1.5
+    //     → expected x = 1.0 + 1.0*0.5 = 1.5
+    {
+        auto s = estimator.estimated_navstate(mrpt::Clock::fromDouble(1.5), "map");
+        ASSERT_(s.has_value());
+        ASSERT_NEAR_(s->pose.mean.x(), 1.5, 1e-3);
+    }
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -355,6 +434,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_planar_motion();
         test_gnss_ignored();
         test_robot_pose_observation();
+        test_icp_and_3d_odometry_fusion();
 
         std::cout << "\nAll StateEstimationSimple tests passed!\n";
         return 0;
