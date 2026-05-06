@@ -75,7 +75,7 @@ void StateEstimationSimple::fuse_odometry(
     // Advance last_pose by the incremental 2D odometry delta:
     if (state_.last_odom_obs && state_.last_pose)
     {
-        const auto poseIncr = odom.odometry - state_.last_odom_obs->odometry;
+        const auto poseIncr    = odom.odometry - state_.last_odom_obs->odometry;
         state_.last_pose->mean = state_.last_pose->mean + mrpt::poses::CPose3D(poseIncr);
         state_.pose_already_updated_with_odom = true;
     }
@@ -86,16 +86,20 @@ void StateEstimationSimple::fuse_odometry(
     // LiDAR ICP has produced a new pose yet.
     if (odom.hasVelocities)
     {
-        auto& tw = state_.last_twist.emplace();
+        if (!state_.last_twist)
+        {
+            state_.last_twist.emplace();
+        }
+        auto& tw = *state_.last_twist;
         tw.vx    = odom.velocityLocal.vx;
         tw.vy    = odom.velocityLocal.vy;
         tw.vz    = 0;
-        tw.wx    = 0;
-        tw.wy    = 0;
         tw.wz    = odom.velocityLocal.omega;
-        // Note: fuse_imu() will override wx/wy/wz if IMU is also active.
+        // wx, wy: left as-is (set by fuse_imu() when IMU is active, or zero
+        // from default construction above when it is not).
+        // Note: fuse_imu() still overrides wx/wy/wz whenever it runs.
 
-        const double varXYZ = mrpt::square(0.1);   // [m²/s²]
+        const double varXYZ = mrpt::square(0.1);  // [m²/s²]
         const double varRot = mrpt::square(0.05);  // [rad²/s²]
         auto&        cov    = state_.last_twist_cov.emplace();
         cov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
@@ -126,23 +130,20 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
     if (src.last_pose.has_value() && state_.last_pose.has_value())
     {
         const double dt =
-            src.last_obs_tim
-                ? mrpt::system::timeDifference(*src.last_obs_tim, obs.timestamp)
-                : 0.0;
+            src.last_obs_tim ? mrpt::system::timeDifference(*src.last_obs_tim, obs.timestamp) : 0.0;
 
         if (dt < 0)
         {
             MRPT_LOG_THROTTLE_WARN_STREAM(
-                5.0,
-                "fuse_odometry_3d_pose(): backwards timestamp for source '"
-                    << odomName << "', dt=" << dt << ". Resetting source.");
+                5.0, "fuse_odometry_3d_pose(): backwards timestamp for source '"
+                         << odomName << "', dt=" << dt << ". Resetting source.");
             src.last_pose    = sensedPose;
             src.last_obs_tim = obs.timestamp;
             return;
         }
 
-        const auto delta      = sensedPose.mean - src.last_pose->mean;
-        state_.last_pose->mean = state_.last_pose->mean + delta;
+        const auto delta                      = sensedPose.mean - src.last_pose->mean;
+        state_.last_pose->mean                = state_.last_pose->mean + delta;
         state_.pose_already_updated_with_odom = true;
 
         // Derive twist from the per-source consecutive 3D odom poses.
@@ -150,9 +151,9 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
         // last_pose has been set by LiDAR ICP.
         if (dt > 0 && dt < params.max_time_to_use_velocity_model)
         {
-            auto&        tw      = state_.last_twist.emplace();
-            const auto   logRot  = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
-            const double dt2     = dt * dt;
+            auto&        tw     = state_.last_twist.emplace();
+            const auto   logRot = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
+            const double dt2    = dt * dt;
 
             tw.vx = delta.x() / dt;
             tw.vy = delta.y() / dt;
@@ -180,8 +181,7 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
     // last_pose_obs_tim is intentionally NOT updated: it belongs to the LiDAR
     // ICP source and governs the validity window in estimated_navstate().
 
-    MRPT_LOG_DEBUG_STREAM(
-        "fuse_odometry_3d_pose('" << odomName << "'): pose=" << sensedPose.mean);
+    MRPT_LOG_DEBUG_STREAM("fuse_odometry_3d_pose('" << odomName << "'): pose=" << sensedPose.mean);
 }
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -282,9 +282,8 @@ void StateEstimationSimple::fuse_pose(
     if (dt < 0)
     {
         MRPT_LOG_THROTTLE_WARN_STREAM(
-            5.0,
-            "Ignoring fuse_pose() call with backwards timestamp: dt="
-                << dt << " frame_id=" << frame_id);
+            5.0, "Ignoring fuse_pose() call with backwards timestamp: dt=" << dt << " frame_id="
+                                                                           << frame_id);
         src.last_obs_tim = timestamp;
         src.last_pose    = pose;
         return;
@@ -335,7 +334,8 @@ void StateEstimationSimple::fuse_pose(
     if (state_.last_twist_cov)
     {
         MRPT_LOG_DEBUG_STREAM(
-            "fuse_pose(): twist_cov after=\n" << state_.last_twist_cov->asString());
+            "fuse_pose(): twist_cov after=\n"
+            << state_.last_twist_cov->asString());
     }
 
     src.last_pose    = pose;
