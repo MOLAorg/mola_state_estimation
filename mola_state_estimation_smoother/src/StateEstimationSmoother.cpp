@@ -1182,17 +1182,33 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     auto& smoother = *state_.gtsam->smoother;
 
     // Update the smoother with pending factors/values:
-    if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
-        !state_.gtsam->newKeyStamps.empty())
+    try
     {
-        smoother.update(
-            state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps);
-    }
+        if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
+            !state_.gtsam->newKeyStamps.empty())
+        {
+            smoother.update(
+                state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps);
+        }
 
-    // Optional: Perform extra internal iterations for better accuracy
-    for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+        // Optional: Perform extra internal iterations for better accuracy
+        for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+        {
+            smoother.update();
+        }
+    }
+    catch (const std::exception& e)
     {
-        smoother.update();
+        MRPT_LOG_ERROR_STREAM(
+            "[process_pending_gtsam_updates] GTSAM update failed (factor graph may be "
+            "underconstrained or ill-conditioned). Resetting smoother state. Exception:\n"
+            << e.what());
+
+        // Discard pending data and reset so the node can continue operating.
+        state_.gtsam->newFactors.resize(0);
+        state_.gtsam->newValues.clear();
+        state_.gtsam->newKeyStamps.clear();
+        return;
     }
 
     // Print debug info:
@@ -1254,7 +1270,23 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             nAngVelInt, nTricycle, nOther, nNullSlots, smoother.getFactors().nrFactors());
     }
 
-    const auto optValues = smoother.calculateEstimate();
+    gtsam::Values optValues;
+    try
+    {
+        optValues = smoother.calculateEstimate();
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_ERROR_STREAM(
+            "[process_pending_gtsam_updates] GTSAM calculateEstimate() failed. "
+            "Discarding this update cycle. Exception:\n"
+            << e.what());
+
+        state_.gtsam->newFactors.resize(0);
+        state_.gtsam->newValues.clear();
+        state_.gtsam->newKeyStamps.clear();
+        return;
+    }
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
     for (auto& [kfIdx, kf] : state_.last_estimated_states)
