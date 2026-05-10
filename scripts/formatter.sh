@@ -17,5 +17,5 @@ find \
     mola_state_estimation \
     mola_state_estimation_simple \
     mola_state_estimation_smoother \
-    -iname "*.h" -o -iname "*.hpp" -o -iname "*.cpp" -o -iname "*.c" \
+    \( -iname "*.h" -o -iname "*.hpp" -o -iname "*.cpp" -o -iname "*.c" \) \
   -print0 | xargs -0 clang-format-14 "${MODE[@]}"
