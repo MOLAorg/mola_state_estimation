@@ -183,6 +183,12 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
             });
     }
 
+    params_loaded_ = true;
+    reinitialize_gtsam_locked();
+}
+
+void StateEstimationSmoother::reinitialize_gtsam_locked()
+{
     // Forward parameters to GTSAM smoother & iSAM2:
     gtsam::ISAM2Params isam2Params;
     isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
@@ -273,7 +279,14 @@ void StateEstimationSmoother::reset()
     reset_locked();
 }
 
-void StateEstimationSmoother::reset_locked() { state_ = State(); }
+void StateEstimationSmoother::reset_locked()
+{
+    state_ = State();
+    if (params_loaded_)
+    {
+        reinitialize_gtsam_locked();
+    }
+}
 
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
