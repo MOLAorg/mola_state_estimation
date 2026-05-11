@@ -2,6 +2,47 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#30 <https://github.com/MOLAorg/mola_state_estimation/issues/30>`_ from MOLAorg/bump-cmake-version
+  bump min req cmake version to 3.22
+* bump min req cmake version to 3.22
+* Merge pull request `#29 <https://github.com/MOLAorg/mola_state_estimation/issues/29>`_ from MOLAorg/fix/odometry-fuse-pose-twist-corruption
+  fix(state_estimation_simple): correct twist and initial-guess corruption when wheel odometry is active
+* Add more unit test cases
+* fix: odom twist does not overwrite IMU wx/wy
+* fix(state_estimation_simple): correct twist and initial-guess corruption when wheel odometry is active
+  Three inter-related bugs caused the LiDAR adaptive threshold sigma to grow
+  toward maximum_sigma whenever wheel odometry was fused:
+  1. Wrong twist from fuse_pose() when odometry is active.
+  fuse_pose() computed incrPose = new_ICP - last_pose, but last_pose had
+  been modified by fuse_odometry() / fuse_odometry_3d_pose() between scans.
+  The result was the odometry residual / dt instead of the true robot velocity,
+  corrupting de-skewing and the rot_error term in the adaptive threshold.
+  Fix: per-source SourceState in State tracks each source's own last absolute
+  pose and timestamp. fuse_pose() now computes incrPose = new_ICP - src.last_pose,
+  which is always the true ICP-to-ICP motion regardless of intervening odom updates.
+  2. CObservationRobotPose (3D odom path) overwrote last_pose_obs_tim.
+  When BridgeROS2 forwards wheel odometry as CObservationRobotPose
+  (odometry_as_robot_pose_observation=true), onNewObservation() routed it
+  to fuse_pose(), which updated last_pose_obs_tim to the odom timestamp.
+  If the next LiDAR ICP fuse_pose() arrived with a slightly earlier timestamp,
+  dt < 0 and the call was silently rejected. last_pose was then the absolute
+  wheel odometry pose (in the odom frame), producing ~90-degree initial-guess
+  errors for ICP (confirmed by debug traces showing motionModelError with
+  yaw ~ -1.56 rad and pitch ~ 0.51 rad on a stationary ground robot).
+  Fix: route CObservationRobotPose matching do_process_odometry_labels_re to a
+  new fuse_odometry_3d_pose() method that applies an incremental delta to
+  last_pose (keeping it in the SLAM frame) and never touches last_pose_obs_tim.
+  3. fuse_odometry() ignored the velocity carried in CObservationOdometry.
+  BridgeROS2 always populates hasVelocities / velocityLocal from the ROS
+  /odom twist. Those values were discarded, leaving last_twist stale.
+  Fix: when hasVelocities is true, update last_twist from velocityLocal.
+  IMU angular rates (fuse_imu) still override wx/wy/wz when available.
+  Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+* chore: reduce fuse_pose() backwards in time warning rate
+* Contributors: Jose Luis Blanco-Claraco
+
 2.3.1 (2026-05-04)
 ------------------
 * Merge pull request `#28 <https://github.com/MOLAorg/mola_state_estimation/issues/28>`_ from Zeal-Robotics/fix/simple-fuse-imu-preserve-linear-twist
