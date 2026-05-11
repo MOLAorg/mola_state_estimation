@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+2.4.0 (2026-05-11)
+------------------
 * FIX: reset() should reinitialize gtsam
 * FIX: don't let gtsam exceptions to crash the node
 * fix: support building in ROS2 humble with newer cmake
