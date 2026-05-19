@@ -67,6 +67,94 @@ void StateEstimationSimple::reset()
     MRPT_LOG_INFO_STREAM("reset() called");
 }
 
+void StateEstimationSimple::update_vel_filter(
+    const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
+    const mrpt::Clock::time_point& tim)
+{
+    auto write_twist_and_cov = [&](const std::array<double, 6>& v, const std::array<double, 6>& P)
+    {
+        auto& tw = state_.last_twist.emplace();
+        tw.vx    = v[0];
+        tw.vy    = v[1];
+        tw.vz    = v[2];
+        tw.wx    = v[3];
+        tw.wy    = v[4];
+        tw.wz    = v[5];
+
+        auto& cov = state_.last_twist_cov.emplace();
+        cov.setZero();
+        for (int i = 0; i < 6; i++)
+        {
+            cov(i, i) = P[i];
+        }
+    };
+
+    if (!params.velocity_filter_enabled)
+    {
+        // Write-through: no filtering, behaves identically to the pre-filter code.
+        write_twist_and_cov(z, R_diag);
+        return;
+    }
+
+    // Bootstrap on the very first call or after a twist reset.
+    if (!state_.vel_filter_last_tim.has_value() || !state_.last_twist.has_value())
+    {
+        state_.vel_filter_P        = R_diag;
+        state_.vel_filter_last_tim = tim;
+        write_twist_and_cov(z, R_diag);
+        return;
+    }
+
+    const double dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim, tim);
+    if (dt < 0)
+    {
+        return;  // ignore backwards timestamps, keep current state
+    }
+
+    // Process noise: velocity random walk, one sigma per component [units/s].
+    const std::array<double, 6> sigma_q = {
+        params.sigma_random_walk_acceleration_linear,
+        params.sigma_random_walk_acceleration_linear,
+        params.sigma_random_walk_acceleration_linear,
+        params.sigma_random_walk_acceleration_angular,
+        params.sigma_random_walk_acceleration_angular,
+        params.sigma_random_walk_acceleration_angular,
+    };
+
+    // Read current filtered estimate.
+    const auto&           cur_tw = *state_.last_twist;
+    std::array<double, 6> v = {cur_tw.vx, cur_tw.vy, cur_tw.vz, cur_tw.wx, cur_tw.wy, cur_tw.wz};
+
+    constexpr double kNoInfo = 1e8;  // R threshold for "unobserved" components
+    constexpr double kEps    = 1e-12;
+
+    for (int i = 0; i < 6; i++)
+    {
+        // Predict: always grow uncertainty regardless of whether a measurement
+        // arrives for this component.
+        state_.vel_filter_P[i] += mrpt::square(sigma_q[i] * dt);
+
+        // Skip update for unobserved components (large sentinel R) or when the
+        // innovation variance is non-positive (avoids 0/0 or NaN).
+        if (R_diag[i] >= kNoInfo)
+        {
+            continue;
+        }
+        const double denom = state_.vel_filter_P[i] + R_diag[i];
+        if (denom <= kEps)
+        {
+            continue;
+        }
+
+        const double K = state_.vel_filter_P[i] / denom;
+        v[i] += K * (z[i] - v[i]);
+        state_.vel_filter_P[i] *= (1.0 - K);
+    }
+
+    state_.vel_filter_last_tim = tim;
+    write_twist_and_cov(v, state_.vel_filter_P);
+}
+
 void StateEstimationSimple::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
 {
@@ -86,25 +174,28 @@ void StateEstimationSimple::fuse_odometry(
     // LiDAR ICP has produced a new pose yet.
     if (odom.hasVelocities)
     {
-        if (!state_.last_twist)
-        {
-            state_.last_twist.emplace();
-        }
-        auto& tw = *state_.last_twist;
-        tw.vx    = odom.velocityLocal.vx;
-        tw.vy    = odom.velocityLocal.vy;
-        tw.vz    = 0;
-        tw.wz    = odom.velocityLocal.omega;
-        // wx, wy: left as-is (set by fuse_imu() when IMU is active, or zero
-        // from default construction above when it is not).
-        // Note: fuse_imu() still overrides wx/wy/wz whenever it runs.
+        // 2D odometry measures vx, vy, wz only. Pass large R for the
+        // unmeasured components (vz, wx, wy) so the filter gain is ~0 for them.
+        const double no_info = 1e9;
+        const double var_xyz = mrpt::square(0.1);  // [m²/s²]
+        const double var_rot = mrpt::square(0.05);  // [rad²/s²]
 
-        const double varXYZ = mrpt::square(0.1);  // [m²/s²]
-        const double varRot = mrpt::square(0.05);  // [rad²/s²]
-        auto&        cov    = state_.last_twist_cov.emplace();
-        cov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+        const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
+        const double cur_wx = state_.last_twist.has_value() ? state_.last_twist->wx : 0.0;
+        const double cur_wy = state_.last_twist.has_value() ? state_.last_twist->wy : 0.0;
 
-        MRPT_LOG_DEBUG_STREAM("fuse_odometry: twist from velocityLocal: " << tw.asString());
+        const std::array<double, 6> z = {
+            odom.velocityLocal.vx,    odom.velocityLocal.vy, cur_vz, cur_wx, cur_wy,
+            odom.velocityLocal.omega,
+        };
+        const std::array<double, 6> R_diag = {
+            var_xyz, var_xyz, no_info, no_info, no_info, var_rot,
+        };
+
+        update_vel_filter(z, R_diag, odom.timestamp);
+
+        MRPT_LOG_DEBUG_STREAM(
+            "fuse_odometry: twist from velocityLocal: " << state_.last_twist->asString());
     }
 
     MRPT_LOG_DEBUG_STREAM("fuse_odometry: odom=" << odom.asString());
@@ -155,28 +246,24 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
         // last_pose has been set by LiDAR ICP.
         if (dt > 0 && dt < params.max_time_to_use_velocity_model)
         {
-            auto&        tw     = state_.last_twist.emplace();
-            const auto   logRot = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
-            const double dt2    = dt * dt;
+            const auto   logRot  = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
+            const double dt2     = dt * dt;
+            const double var_lin = mrpt::square(params.sigma_relative_pose_linear) / dt2;
+            const double var_ang = mrpt::square(params.sigma_relative_pose_angular) / dt2;
 
-            tw.vx = delta.x() / dt;
-            tw.vy = delta.y() / dt;
-            tw.vz = delta.z() / dt;
-            tw.wx = logRot[0] / dt;
-            tw.wy = logRot[1] / dt;
-            tw.wz = logRot[2] / dt;
+            const std::array<double, 6> z = {
+                delta.x() / dt, delta.y() / dt, delta.z() / dt,
+                logRot[0] / dt, logRot[1] / dt, logRot[2] / dt,
+            };
+            const std::array<double, 6> R_diag = {
+                var_lin, var_lin, var_lin, var_ang, var_ang, var_ang,
+            };
 
-            auto& twistCov = state_.last_twist_cov.emplace();
-            twistCov.setDiagonal(
-                {mrpt::square(params.sigma_relative_pose_linear) / dt2,
-                 mrpt::square(params.sigma_relative_pose_linear) / dt2,
-                 mrpt::square(params.sigma_relative_pose_linear) / dt2,
-                 mrpt::square(params.sigma_relative_pose_angular) / dt2,
-                 mrpt::square(params.sigma_relative_pose_angular) / dt2,
-                 mrpt::square(params.sigma_relative_pose_angular) / dt2});
+            update_vel_filter(z, R_diag, obs.timestamp);
 
             MRPT_LOG_DEBUG_STREAM(
-                "fuse_odometry_3d_pose('" << odomName << "'): twist=" << tw.asString());
+                "fuse_odometry_3d_pose('" << odomName
+                                          << "'): twist=" << state_.last_twist->asString());
         }
     }
 
@@ -225,30 +312,23 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     imuReading.rotate(imu.sensorPose.asTPose());
 
     // IMU only observes angular velocity: preserve linear (vx,vy,vz) from the
-    // last fuse_pose().
-    if (!state_.last_twist)
-    {
-        state_.last_twist.emplace();
-    }
-    state_.last_twist->wx = imuReading.wx;
-    state_.last_twist->wy = imuReading.wy;
-    state_.last_twist->wz = imuReading.wz;
+    // last fuse_pose(). Pass a very large R for the linear components so the
+    // filter gain for them is ~0 (no new information from this IMU reading).
+    const double no_info = 1e9;
+    const double var_ang = mrpt::square(params.sigma_imu_angular_velocity);
 
-    const double varRot = mrpt::square(params.sigma_imu_angular_velocity);
-    if (!state_.last_twist_cov)
-    {
-        const double varXYZ_no_info = mrpt::square(5.0);  // wide linear prior, [m²/s²]
-        auto&        twistCov       = state_.last_twist_cov.emplace();
-        twistCov.setDiagonal(
-            {varXYZ_no_info, varXYZ_no_info, varXYZ_no_info, varRot, varRot, varRot});
-    }
-    else
-    {
-        auto& twistCov = *state_.last_twist_cov;
-        twistCov(3, 3) = varRot;
-        twistCov(4, 4) = varRot;
-        twistCov(5, 5) = varRot;
-    }
+    const double cur_vx = state_.last_twist.has_value() ? state_.last_twist->vx : 0.0;
+    const double cur_vy = state_.last_twist.has_value() ? state_.last_twist->vy : 0.0;
+    const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
+
+    const std::array<double, 6> z = {
+        cur_vx, cur_vy, cur_vz, imuReading.wx, imuReading.wy, imuReading.wz,
+    };
+    const std::array<double, 6> R_diag = {
+        no_info, no_info, no_info, var_ang, var_ang, var_ang,
+    };
+
+    update_vel_filter(z, R_diag, imu.timestamp);
 
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
@@ -312,32 +392,28 @@ void StateEstimationSimple::fuse_pose(
     {
         // Velocity from consecutive ICP poses, uncontaminated by odometry
         // updates to the shared last_pose between scans:
-        auto&        tw       = state_.last_twist.emplace();
         const auto   incrPose = pose.mean - src.last_pose->mean;
         const auto   logRot   = mrpt::poses::Lie::SO<3>::log(incrPose.getRotationMatrix());
         const double dt2      = dt * dt;
+        const double var_lin  = mrpt::square(params.sigma_relative_pose_linear) / dt2;
+        const double var_ang  = mrpt::square(params.sigma_relative_pose_angular) / dt2;
 
-        tw.vx = incrPose.x() / dt;
-        tw.vy = incrPose.y() / dt;
-        tw.vz = incrPose.z() / dt;
-        tw.wx = logRot[0] / dt;
-        tw.wy = logRot[1] / dt;
-        tw.wz = logRot[2] / dt;
+        const std::array<double, 6> z = {
+            incrPose.x() / dt, incrPose.y() / dt, incrPose.z() / dt,
+            logRot[0] / dt,    logRot[1] / dt,    logRot[2] / dt,
+        };
+        const std::array<double, 6> R_diag = {
+            var_lin, var_lin, var_lin, var_ang, var_ang, var_ang,
+        };
 
-        auto& twistCov = state_.last_twist_cov.emplace();
-        twistCov.setDiagonal(
-            {mrpt::square(params.sigma_relative_pose_linear) / dt2,
-             mrpt::square(params.sigma_relative_pose_linear) / dt2,
-             mrpt::square(params.sigma_relative_pose_linear) / dt2,
-             mrpt::square(params.sigma_relative_pose_angular) / dt2,
-             mrpt::square(params.sigma_relative_pose_angular) / dt2,
-             mrpt::square(params.sigma_relative_pose_angular) / dt2});
+        update_vel_filter(z, R_diag, timestamp);
     }
     else
     {
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
+        state_.vel_filter_last_tim.reset();
     }
 
     if (state_.last_twist)
@@ -370,13 +446,21 @@ void enforce_planar_pose(mrpt::poses::CPose3D& p)
 }  // namespace
 
 void StateEstimationSimple::fuse_twist(
-    [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
+    const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
     auto lck = std::scoped_lock(state_mtx_);
 
-    state_.last_twist     = twist;
-    state_.last_twist_cov = twistCov;
+    std::array<double, 6> z = {
+        twist.vx, twist.vy, twist.vz, twist.wx, twist.wy, twist.wz,
+    };
+    std::array<double, 6> R_diag;
+    for (int i = 0; i < 6; i++)
+    {
+        R_diag[i] = twistCov(i, i);
+    }
+
+    update_vel_filter(z, R_diag, timestamp);
 
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist    = " << state_.last_twist->asString());
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
