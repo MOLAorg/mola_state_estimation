@@ -422,6 +422,120 @@ void test_icp_and_3d_odometry_fusion()
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// Test 8: Velocity Kalman filter
+// --------------------------------------------------------------------------
+// The filter should smooth pose-derived velocities. We feed three consecutive
+// ICP pose pairs whose finite-difference velocities are 2.0, 3.0, 2.0 m/s.
+// The middle "spike" (3.0) must be attenuated, and the estimate must then
+// converge back toward 2.0 after the consistent third measurement.
+//
+// Parameters chosen so that smoothing is clearly visible:
+//   sigma_relative_pose_linear = 1.0  -> R = 1.0  (m/s)^2 at dt=1 s
+//   sigma_random_walk_acceleration_linear = 0.1  -> process noise = 0.01/step
+//
+// Analytic values for the linear vx component (dt=1 s throughout):
+//   After t=1 (bootstrap): vx = 2.0, P = 1.0
+//   After t=2 (raw 3.0):   P_pred=1.01, K=0.5025, vx=2.502, P=0.502
+//   After t=3 (raw 2.0):   P_pred=0.512, K=0.339, vx=2.332
+void test_velocity_kalman_filter()
+{
+    std::cout << "[Test 8] Velocity Kalman filter... ";
+
+    const char* yaml_text = R"###(
+params:
+    max_time_to_use_velocity_model: 5.0
+    sigma_random_walk_acceleration_linear: 0.1
+    sigma_random_walk_acceleration_angular: 0.1
+    sigma_relative_pose_linear: 1.0
+    sigma_relative_pose_angular: 1.0
+    sigma_imu_angular_velocity: 0.05
+    velocity_filter_enabled: true
+    enforce_planar_motion: false
+)###";
+
+    // ---- Test A: filter ON -----------------------------------------------
+    {
+        mola::state_estimation_simple::StateEstimationSimple est;
+        est.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+        const auto cov = mrpt::math::CMatrixDouble66::Identity();
+
+        // t=0: origin
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(0.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov), "map");
+
+        // t=1: x=2 -> raw vx=2.0, bootstrap
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(1.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(2.0, 0, 0), cov), "map");
+
+        ASSERT_(est.get_last_twist().has_value());
+        const double vx_after_t1 = est.get_last_twist()->vx;
+        ASSERT_NEAR_(vx_after_t1, 2.0, 1e-6);
+
+        // t=2: x=5 -> raw vx=3.0, spike -- filtered result must be strictly
+        // between 2.0 and 3.0.
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(2.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(5.0, 0, 0), cov), "map");
+
+        ASSERT_(est.get_last_twist().has_value());
+        const double vx_after_spike = est.get_last_twist()->vx;
+        ASSERT_(vx_after_spike > 2.0);
+        ASSERT_(vx_after_spike < 3.0);
+        // Expected ~2.502 -- check with generous tolerance.
+        ASSERT_NEAR_(vx_after_spike, 2.502, 0.01);
+
+        // t=3: x=7 -> raw vx=2.0 -- filter must start converging back below the
+        // spike value.
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(3.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(7.0, 0, 0), cov), "map");
+
+        ASSERT_(est.get_last_twist().has_value());
+        const double vx_converging = est.get_last_twist()->vx;
+        ASSERT_(vx_converging < vx_after_spike);
+        ASSERT_(vx_converging > 2.0);
+    }
+
+    // ---- Test B: filter OFF (baseline -- raw finite-difference) ----------
+    {
+        const char*                                          yaml_no_filter = R"###(
+params:
+    max_time_to_use_velocity_model: 5.0
+    sigma_random_walk_acceleration_linear: 0.1
+    sigma_random_walk_acceleration_angular: 0.1
+    sigma_relative_pose_linear: 1.0
+    sigma_relative_pose_angular: 1.0
+    sigma_imu_angular_velocity: 0.05
+    velocity_filter_enabled: false
+    enforce_planar_motion: false
+)###";
+        mola::state_estimation_simple::StateEstimationSimple est;
+        est.initialize(mrpt::containers::yaml::FromText(yaml_no_filter));
+
+        const auto cov = mrpt::math::CMatrixDouble66::Identity();
+
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(0.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov), "map");
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(1.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(2.0, 0, 0), cov), "map");
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(2.0),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(5.0, 0, 0), cov), "map");
+
+        // Without filter the spike is passed through unchanged.
+        ASSERT_(est.get_last_twist().has_value());
+        ASSERT_NEAR_(est.get_last_twist()->vx, 3.0, 1e-6);
+    }
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -435,6 +549,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_gnss_ignored();
         test_robot_pose_observation();
         test_icp_and_3d_odometry_fusion();
+        test_velocity_kalman_filter();
 
         std::cout << "\nAll StateEstimationSimple tests passed!\n";
         return 0;

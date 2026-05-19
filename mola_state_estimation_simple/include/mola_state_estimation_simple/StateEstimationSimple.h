@@ -34,6 +34,7 @@
 #include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
+#include <array>
 #include <mutex>
 #include <optional>
 
@@ -150,6 +151,11 @@ class StateEstimationSimple : public mola::NavStateFilter
         std::optional<mrpt::math::CMatrixDouble66>     last_twist_cov;
         bool                                           pose_already_updated_with_odom = false;
 
+        // Per-component variance for the velocity Kalman filter.
+        // Indices 0-2: linear (vx,vy,vz), 3-5: angular (wx,wy,wz).
+        std::array<double, 6>                  vel_filter_P = {1e4, 1e4, 1e4, 1e4, 1e4, 1e4};
+        std::optional<mrpt::Clock::time_point> vel_filter_last_tim;
+
         // Per-source bookkeeping used by fuse_pose() to compute velocity from
         // consecutive poses of the SAME source (LiDAR ICP), independently of
         // whether odometry has since modified last_pose. Without this, fuse_pose()
@@ -177,6 +183,13 @@ class StateEstimationSimple : public mola::NavStateFilter
     // the LiDAR ICP timestamp used for dt validation and pose extrapolation.
     void fuse_odometry_3d_pose(
         const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName);
+
+    /** Applies a scalar Kalman predict+update step to each velocity component.
+     *  When velocity_filter_enabled is false this is a plain write-through.
+     *  Must be called with state_mtx_ already held. */
+    void update_vel_filter(
+        const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
+        const mrpt::Clock::time_point& tim);
 
     State                        state_;
     mutable std::recursive_mutex state_mtx_;

@@ -53,6 +53,13 @@ class Parameters
 
     double sigma_imu_angular_velocity = 0.05;  // [rad/s]
 
+    /** If true, velocity estimates are smoothed via a per-component scalar
+     *  Kalman filter. The process noise reuses
+     *  sigma_random_walk_acceleration_linear/angular [m/s^2, rad/s^2], and
+     *  measurement noise comes from the covariance already computed by each
+     *  fuse_*() call. Default: false (direct pass-through, legacy behavior). */
+    bool velocity_filter_enabled = false;
+
     bool enforce_planar_motion = false;
 
     /// regex for IMU sensor labels (ROS topics) to accept as IMU readings.
