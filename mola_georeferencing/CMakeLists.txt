@@ -52,12 +52,12 @@ mola_add_library(
     include/mola_georeferencing/simplemap_georeference.h
   PUBLIC_LINK_LIBRARIES
     gtsam
-    mola::mola_gtsam_factors
-    mola::mola_yaml
     mola::mp2p_icp
     mrpt::maps
-#	PRIVATE_LINK_LIBRARIES
+  PRIVATE_LINK_LIBRARIES
+    mola::mola_gtsam_factors
   CMAKE_DEPENDENCIES
+    GTSAM
     mp2p_icp
     mrpt-maps
 
