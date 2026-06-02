@@ -2,6 +2,13 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#32 <https://github.com/MOLAorg/mola_state_estimation/issues/32>`_ from MOLAorg/feat/1d-kalman-velocities
+  feat: new 1D kalman velocity filter
+* feat: new 1D kalman velocity filter
+* Contributors: Jose Luis Blanco-Claraco
+
 2.4.0 (2026-05-11)
 ------------------
 * Merge pull request `#30 <https://github.com/MOLAorg/mola_state_estimation/issues/30>`_ from MOLAorg/bump-cmake-version

@@ -2,6 +2,9 @@
 Changelog for package mola_state_estimation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+
 2.4.0 (2026-05-11)
 ------------------
 * Merge pull request `#30 <https://github.com/MOLAorg/mola_state_estimation/issues/30>`_ from MOLAorg/bump-cmake-version
