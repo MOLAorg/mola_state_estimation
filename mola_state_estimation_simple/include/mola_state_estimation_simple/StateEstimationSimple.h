@@ -189,7 +189,7 @@ class StateEstimationSimple : public mola::NavStateFilter
      *  Must be called with state_mtx_ already held. */
     void update_vel_filter(
         const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
-        const mrpt::Clock::time_point& tim);
+        const mrpt::Clock::time_point& tim, const std::string& caller = "");
 
     State                        state_;
     mutable std::recursive_mutex state_mtx_;
