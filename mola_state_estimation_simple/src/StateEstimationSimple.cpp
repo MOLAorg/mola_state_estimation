@@ -135,10 +135,17 @@ void StateEstimationSimple::update_vel_filter(
     const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
     const mrpt::Clock::time_point& tim, const std::string& caller)
 {
-    // For instrumentation only: dt since the previous filtered sample.
-    const double dbg_dt = state_.vel_filter_last_tim.has_value()
-                              ? mrpt::system::timeDifference(*state_.vel_filter_last_tim, tim)
-                              : 0.0;
+    // For instrumentation only: dt since the previous filtered sample, taken
+    // from the first component this call actually observes (finite R).
+    double dbg_dt = 0.0;
+    for (int i = 0; i < 6; i++)
+    {
+        if (R_diag[i] < 1e8 && state_.vel_filter_last_tim[i].has_value())
+        {
+            dbg_dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim[i], tim);
+            break;
+        }
+    }
 
     auto write_twist_and_cov = [&](const std::array<double, 6>& v, const std::array<double, 6>& P)
     {
@@ -190,21 +197,6 @@ void StateEstimationSimple::update_vel_filter(
         return;
     }
 
-    // Bootstrap on the very first call or after a twist reset.
-    if (!state_.vel_filter_last_tim.has_value() || !state_.last_twist.has_value())
-    {
-        state_.vel_filter_P        = R_diag;
-        state_.vel_filter_last_tim = tim;
-        write_twist_and_cov(z, R_diag);
-        return;
-    }
-
-    const double dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim, tim);
-    if (dt < 0)
-    {
-        return;  // ignore backwards timestamps, keep current state
-    }
-
     // Process noise: velocity random walk, one sigma per component [units/s].
     const std::array<double, 6> sigma_q = {
         params.sigma_random_walk_acceleration_linear,
@@ -215,37 +207,63 @@ void StateEstimationSimple::update_vel_filter(
         params.sigma_random_walk_acceleration_angular,
     };
 
-    // Read current filtered estimate.
-    const auto&           cur_tw = *state_.last_twist;
-    std::array<double, 6> v = {cur_tw.vx, cur_tw.vy, cur_tw.vz, cur_tw.wx, cur_tw.wy, cur_tw.wz};
-
     constexpr double kNoInfo = 1e8;  // R threshold for "unobserved" components
     constexpr double kEps    = 1e-12;
 
+    // Start from the current filtered estimate; components this call does not
+    // observe are carried over unchanged (value, covariance, and their clock).
+    std::array<double, 6> v = {0, 0, 0, 0, 0, 0};
+    if (state_.last_twist.has_value())
+    {
+        const auto& cur_tw = *state_.last_twist;
+        v                  = {cur_tw.vx, cur_tw.vy, cur_tw.vz, cur_tw.wx, cur_tw.wy, cur_tw.wz};
+    }
+
+    // Each component runs its own scalar Kalman filter on its own clock, so a
+    // high-rate source (e.g. IMU angular) cannot starve a lower-rate, mid-scan
+    // ("in the past") source (e.g. LiDAR pose linear): a component is only
+    // touched by sources that actually observe it (finite R), and a sample that
+    // is older than that component's last update is ignored for that component
+    // alone (the fresher one wins) instead of dropping the whole call.
     for (int i = 0; i < 6; i++)
     {
-        // Predict: always grow uncertainty regardless of whether a measurement
-        // arrives for this component.
-        state_.vel_filter_P[i] += mrpt::square(sigma_q[i] * dt);
-
-        // Skip update for unobserved components (large sentinel R) or when the
-        // innovation variance is non-positive (avoids 0/0 or NaN).
+        // Unobserved by this source: leave value, covariance and clock as-is.
         if (R_diag[i] >= kNoInfo)
         {
             continue;
         }
-        const double denom = state_.vel_filter_P[i] + R_diag[i];
-        if (denom <= kEps)
+
+        // Bootstrap this component on its first observation (or after a twist
+        // reset cleared the per-component clocks).
+        if (!state_.vel_filter_last_tim[i].has_value() || !state_.last_twist.has_value())
         {
+            v[i]                          = z[i];
+            state_.vel_filter_P[i]        = R_diag[i];
+            state_.vel_filter_last_tim[i] = tim;
             continue;
         }
 
+        const double dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim[i], tim);
+        if (dt < 0)
+        {
+            continue;  // out-of-order for THIS component; keep the fresher value
+        }
+
+        // Predict: grow uncertainty over this component's own elapsed time.
+        state_.vel_filter_P[i] += mrpt::square(sigma_q[i] * dt);
+
+        // Update:
+        const double denom = state_.vel_filter_P[i] + R_diag[i];
+        if (denom <= kEps)
+        {
+            continue;  // avoid 0/0 or NaN
+        }
         const double K = state_.vel_filter_P[i] / denom;
         v[i] += K * (z[i] - v[i]);
         state_.vel_filter_P[i] *= (1.0 - K);
+        state_.vel_filter_last_tim[i] = tim;
     }
 
-    state_.vel_filter_last_tim = tim;
     write_twist_and_cov(v, state_.vel_filter_P);
 }
 
@@ -507,7 +525,10 @@ void StateEstimationSimple::fuse_pose(
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
-        state_.vel_filter_last_tim.reset();
+        for (auto& t : state_.vel_filter_last_tim)
+        {
+            t.reset();
+        }
     }
 
     if (state_.last_twist)
