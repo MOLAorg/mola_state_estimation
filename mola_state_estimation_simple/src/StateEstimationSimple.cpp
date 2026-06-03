@@ -525,6 +525,7 @@ void StateEstimationSimple::fuse_pose(
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
+        state_.vel_filter_P = State().vel_filter_P;
         for (auto& t : state_.vel_filter_last_tim)
         {
             t.reset();
