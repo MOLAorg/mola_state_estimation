@@ -2,6 +2,15 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* feat(`#33 <https://github.com/MOLAorg/mola_state_estimation/issues/33>`_): velocity filter now handles multi-rate interleaved sources via per-component clocks, fixing linear velocity starvation when LiDAR pose stamps lag IMU stamps
+* feat: velocity filter enabled by default (set ``velocity_filter_enabled: false`` to restore legacy behavior)
+* feat: opt-in CSV instrumentation via ``MOLA_VEL_FILTER_DUMP`` and ``MOLA_NAVSTATE_DUMP`` env vars
+* fix: missing ``vel_filter_P`` reset
+* test: multi-rate interleaved velocity regression test
+* Contributors: Jose Luis Blanco-Claraco
+
 2.4.1 (2026-06-02)
 ------------------
 * Merge pull request `#32 <https://github.com/MOLAorg/mola_state_estimation/issues/32>`_ from MOLAorg/feat/1d-kalman-velocities
