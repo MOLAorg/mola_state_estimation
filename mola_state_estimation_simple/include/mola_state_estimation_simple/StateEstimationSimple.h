@@ -153,8 +153,15 @@ class StateEstimationSimple : public mola::NavStateFilter
 
         // Per-component variance for the velocity Kalman filter.
         // Indices 0-2: linear (vx,vy,vz), 3-5: angular (wx,wy,wz).
-        std::array<double, 6>                  vel_filter_P = {1e4, 1e4, 1e4, 1e4, 1e4, 1e4};
-        std::optional<mrpt::Clock::time_point> vel_filter_last_tim;
+        std::array<double, 6> vel_filter_P = {1e4, 1e4, 1e4, 1e4, 1e4, 1e4};
+
+        // Per-component last-update time. Each velocity component keeps its own
+        // clock so sources with very different rates and timestamp conventions
+        // do not starve each other: a source only advances the clock of the
+        // components it actually observes (finite measurement noise). This stops
+        // the high-rate IMU (angular) from rejecting the lower-rate, mid-scan
+        // (hence "in the past") LiDAR pose updates (linear) as backwards-in-time.
+        std::array<std::optional<mrpt::Clock::time_point>, 6> vel_filter_last_tim;
 
         // Per-source bookkeeping used by fuse_pose() to compute velocity from
         // consecutive poses of the SAME source (LiDAR ICP), independently of
@@ -189,7 +196,7 @@ class StateEstimationSimple : public mola::NavStateFilter
      *  Must be called with state_mtx_ already held. */
     void update_vel_filter(
         const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
-        const mrpt::Clock::time_point& tim);
+        const mrpt::Clock::time_point& tim, const std::string& caller = "");
 
     State                        state_;
     mutable std::recursive_mutex state_mtx_;

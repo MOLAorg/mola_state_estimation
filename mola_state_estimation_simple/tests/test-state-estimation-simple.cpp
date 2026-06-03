@@ -21,10 +21,13 @@
 
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mrpt/core/get_env.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/system/filesystem.h>
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 
 using namespace std::string_literals;
@@ -536,6 +539,107 @@ params:
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// Test 9: Multi-rate interleaved IMU + lagging LiDAR poses
+// --------------------------------------------------------------------------
+// Reproduces the real LIO timing: a high-rate IMU with near-real-time stamps,
+// interleaved with lower-rate LiDAR poses whose (mid-scan, post-ICP) stamps lag
+// the IMU stream. The poses encode a constant 1 m/s motion plus an alternating
+// per-scan offset, so the raw finite-difference velocity oscillates 0.5<->1.5.
+//
+// With the filter OFF the oscillation passes straight through. With the filter
+// ON and per-component clocks, the linear velocity is (a) actually updated --
+// the lagging poses are NOT rejected as backwards-in-time against the
+// IMU-advanced clock, which used to starve the linear velocity to zero -- and
+// (b) smoothed toward the true 1 m/s.
+//
+// Returns the max |vx - 1.0| over the second half of the run.
+double run_interleaved_linear_velocity(bool filter_enabled)
+{
+    const std::string yaml_text =
+        "params:\n"
+        "    max_time_to_use_velocity_model: 5.0\n"
+        "    sigma_random_walk_acceleration_linear: 0.5\n"
+        "    sigma_random_walk_acceleration_angular: 0.5\n"
+        "    sigma_relative_pose_linear: 0.1\n"
+        "    sigma_relative_pose_angular: 0.1\n"
+        "    sigma_imu_angular_velocity: 0.05\n"
+        "    velocity_filter_enabled: "s +
+        (filter_enabled ? "true" : "false") +
+        "\n"
+        "    enforce_planar_motion: false\n";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+    const auto   cov    = mrpt::math::CMatrixDouble66::Identity();
+    const double v_true = 1.0;  // [m/s] true forward speed
+    const double dt     = 0.1;  // [s]   LiDAR period
+    const double offset = 0.025;  // [m]   alternating pose noise -> +-0.5 m/s raw
+    const int    N      = 40;
+
+    double max_dev = 0.0;
+    for (int k = 0; k <= N; k++)
+    {
+        const double t_pose = k * dt;
+
+        // Fresh IMU sample slightly AHEAD of the pose stamp, so the pose is "in
+        // the past" w.r.t. the IMU clock (the starvation trigger). IMU carries
+        // angular velocity only.
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t_pose + 0.5 * dt);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        est.fuse_imu(imu);
+
+        // LiDAR pose (lagging stamp): constant 1 m/s + alternating offset.
+        const double x = v_true * t_pose + ((k % 2 == 0) ? offset : -offset);
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(t_pose),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(x, 0, 0), cov), "map");
+
+        // Assess after warm-up (second half of the run).
+        if (k > N / 2)
+        {
+            const auto tw = est.get_last_twist();
+            if (tw.has_value())
+            {
+                max_dev = std::max(max_dev, std::abs(tw->vx - v_true));
+            }
+        }
+    }
+    return max_dev;
+}
+
+void test_multirate_interleaved_velocity()
+{
+    std::cout << "[Test 9] Multi-rate interleaved IMU + lagging poses... ";
+
+    const double dev_on  = run_interleaved_linear_velocity(true);
+    const double dev_off = run_interleaved_linear_velocity(false);
+
+    if (VERBOSE)
+    {
+        std::cout << "\n  max|vx-1| filter ON=" << dev_on << " OFF=" << dev_off << "\n";
+    }
+
+    // Filter ON: linear velocity tracks ~1 m/s (smoothed), and crucially is NOT
+    // starved to ~0 despite the IMU stamps being ahead of the pose stamps.
+    // (A regression to a single shared clock would drop the lagging pose updates
+    //  and leave vx ~ 0, i.e. dev_on ~ 1.0, failing this assertion.)
+    ASSERT_LT_(dev_on, 0.2);
+
+    // Filter OFF: the raw alternating velocity (+-0.5 m/s) passes through, so the
+    // filter is doing real work here.
+    ASSERT_GT_(dev_off, 0.4);
+
+    // And ON must be clearly better than OFF.
+    ASSERT_LT_(dev_on, 0.5 * dev_off);
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -550,6 +654,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_robot_pose_observation();
         test_icp_and_3d_odometry_fusion();
         test_velocity_kalman_filter();
+        test_multirate_interleaved_velocity();
 
         std::cout << "\nAll StateEstimationSimple tests passed!\n";
         return 0;

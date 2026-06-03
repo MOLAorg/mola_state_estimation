@@ -22,8 +22,12 @@
 #include <mola_imu_preintegration/ImuIntegrator.h>
 #include <mola_state_estimation_simple/StateEstimationSimple.h>
 #include <mola_yaml/yaml_helpers.h>
+#include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservationRobotPose.h>
 #include <mrpt/poses/Lie/SO.h>
+
+#include <fstream>
+#include <memory>
 
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(StateEstimationSimple, mola::ExecutableBase, mola::state_estimation_simple)
@@ -67,10 +71,82 @@ void StateEstimationSimple::reset()
     MRPT_LOG_INFO_STREAM("reset() called");
 }
 
+namespace
+{
+// Debug instrumentation: dumps every velocity-filter call (input measurement,
+// filtered output, covariances, dt) to a CSV for offline analysis of the
+// pose-increment -> velocity -> deskew/prior feedback loop.
+// Controlled by env var MOLA_VEL_FILTER_DUMP (path to CSV). Disabled if unset.
+std::ofstream* vel_filter_dump_stream()
+{
+    static std::unique_ptr<std::ofstream> s_stream = []() -> std::unique_ptr<std::ofstream>
+    {
+        const std::string path = mrpt::get_env<std::string>("MOLA_VEL_FILTER_DUMP");
+        if (path.empty())
+        {
+            return nullptr;
+        }
+        auto st = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+        if (!st->is_open())
+        {
+            return nullptr;
+        }
+        // Header:
+        (*st) << "tim,caller,dt,filter_enabled,"
+                 "z_vx,z_vy,z_vz,z_wx,z_wy,z_wz,"
+                 "R_vx,R_vy,R_vz,R_wx,R_wy,R_wz,"
+                 "out_vx,out_vy,out_vz,out_wx,out_wy,out_wz,"
+                 "P_vx,P_vy,P_vz,P_wx,P_wy,P_wz\n";
+        return st;
+    }();
+    return s_stream.get();
+}
+
+// Debug instrumentation: dumps every estimated_navstate() result (the pose +
+// covariance that LIO uses as ICP initial guess AND prior, plus the returned
+// twist) so the prior-vs-data weighting and the velocity feedback can be
+// analyzed offline. Controlled by env var MOLA_NAVSTATE_DUMP. Disabled if unset.
+std::ofstream* navstate_dump_stream()
+{
+    static std::unique_ptr<std::ofstream> s_stream = []() -> std::unique_ptr<std::ofstream>
+    {
+        const std::string path = mrpt::get_env<std::string>("MOLA_NAVSTATE_DUMP");
+        if (path.empty())
+        {
+            return nullptr;
+        }
+        auto st = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+        if (!st->is_open())
+        {
+            return nullptr;
+        }
+        (*st) << "tim,dt,"
+                 "x,y,z,yaw,pitch,roll,"
+                 "tw_vx,tw_vy,tw_vz,tw_wx,tw_wy,tw_wz,"
+                 "cov_x,cov_y,cov_z,cov_yaw,cov_pitch,cov_roll,"
+                 "covinv_x,covinv_y,covinv_z,covinv_yaw,covinv_pitch,covinv_roll\n";
+        return st;
+    }();
+    return s_stream.get();
+}
+}  // namespace
+
 void StateEstimationSimple::update_vel_filter(
     const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
-    const mrpt::Clock::time_point& tim)
+    const mrpt::Clock::time_point& tim, const std::string& caller)
 {
+    // For instrumentation only: dt since the previous filtered sample, taken
+    // from the first component this call actually observes (finite R).
+    double dbg_dt = 0.0;
+    for (int i = 0; i < 6; i++)
+    {
+        if (R_diag[i] < 1e8 && state_.vel_filter_last_tim[i].has_value())
+        {
+            dbg_dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim[i], tim);
+            break;
+        }
+    }
+
     auto write_twist_and_cov = [&](const std::array<double, 6>& v, const std::array<double, 6>& P)
     {
         auto& tw = state_.last_twist.emplace();
@@ -87,6 +163,31 @@ void StateEstimationSimple::update_vel_filter(
         {
             cov(i, i) = P[i];
         }
+
+        // Debug instrumentation (no-op unless MOLA_VEL_FILTER_DUMP is set):
+        if (std::ofstream* st = vel_filter_dump_stream(); st)
+        {
+            (*st) << mrpt::format("%.6f", mrpt::Clock::toDouble(tim)) << "," << caller << ","
+                  << dbg_dt << "," << (params.velocity_filter_enabled ? 1 : 0);
+            for (int i = 0; i < 6; i++)
+            {
+                (*st) << "," << z[i];
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                (*st) << "," << R_diag[i];
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                (*st) << "," << v[i];
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                (*st) << "," << P[i];
+            }
+            (*st) << "\n";
+            st->flush();
+        }
     };
 
     if (!params.velocity_filter_enabled)
@@ -94,21 +195,6 @@ void StateEstimationSimple::update_vel_filter(
         // Write-through: no filtering, behaves identically to the pre-filter code.
         write_twist_and_cov(z, R_diag);
         return;
-    }
-
-    // Bootstrap on the very first call or after a twist reset.
-    if (!state_.vel_filter_last_tim.has_value() || !state_.last_twist.has_value())
-    {
-        state_.vel_filter_P        = R_diag;
-        state_.vel_filter_last_tim = tim;
-        write_twist_and_cov(z, R_diag);
-        return;
-    }
-
-    const double dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim, tim);
-    if (dt < 0)
-    {
-        return;  // ignore backwards timestamps, keep current state
     }
 
     // Process noise: velocity random walk, one sigma per component [units/s].
@@ -121,37 +207,63 @@ void StateEstimationSimple::update_vel_filter(
         params.sigma_random_walk_acceleration_angular,
     };
 
-    // Read current filtered estimate.
-    const auto&           cur_tw = *state_.last_twist;
-    std::array<double, 6> v = {cur_tw.vx, cur_tw.vy, cur_tw.vz, cur_tw.wx, cur_tw.wy, cur_tw.wz};
-
     constexpr double kNoInfo = 1e8;  // R threshold for "unobserved" components
     constexpr double kEps    = 1e-12;
 
+    // Start from the current filtered estimate; components this call does not
+    // observe are carried over unchanged (value, covariance, and their clock).
+    std::array<double, 6> v = {0, 0, 0, 0, 0, 0};
+    if (state_.last_twist.has_value())
+    {
+        const auto& cur_tw = *state_.last_twist;
+        v                  = {cur_tw.vx, cur_tw.vy, cur_tw.vz, cur_tw.wx, cur_tw.wy, cur_tw.wz};
+    }
+
+    // Each component runs its own scalar Kalman filter on its own clock, so a
+    // high-rate source (e.g. IMU angular) cannot starve a lower-rate, mid-scan
+    // ("in the past") source (e.g. LiDAR pose linear): a component is only
+    // touched by sources that actually observe it (finite R), and a sample that
+    // is older than that component's last update is ignored for that component
+    // alone (the fresher one wins) instead of dropping the whole call.
     for (int i = 0; i < 6; i++)
     {
-        // Predict: always grow uncertainty regardless of whether a measurement
-        // arrives for this component.
-        state_.vel_filter_P[i] += mrpt::square(sigma_q[i] * dt);
-
-        // Skip update for unobserved components (large sentinel R) or when the
-        // innovation variance is non-positive (avoids 0/0 or NaN).
+        // Unobserved by this source: leave value, covariance and clock as-is.
         if (R_diag[i] >= kNoInfo)
         {
             continue;
         }
-        const double denom = state_.vel_filter_P[i] + R_diag[i];
-        if (denom <= kEps)
+
+        // Bootstrap this component on its first observation (or after a twist
+        // reset cleared the per-component clocks).
+        if (!state_.vel_filter_last_tim[i].has_value() || !state_.last_twist.has_value())
         {
+            v[i]                          = z[i];
+            state_.vel_filter_P[i]        = R_diag[i];
+            state_.vel_filter_last_tim[i] = tim;
             continue;
         }
 
+        const double dt = mrpt::system::timeDifference(*state_.vel_filter_last_tim[i], tim);
+        if (dt < 0)
+        {
+            continue;  // out-of-order for THIS component; keep the fresher value
+        }
+
+        // Predict: grow uncertainty over this component's own elapsed time.
+        state_.vel_filter_P[i] += mrpt::square(sigma_q[i] * dt);
+
+        // Update:
+        const double denom = state_.vel_filter_P[i] + R_diag[i];
+        if (denom <= kEps)
+        {
+            continue;  // avoid 0/0 or NaN
+        }
         const double K = state_.vel_filter_P[i] / denom;
         v[i] += K * (z[i] - v[i]);
         state_.vel_filter_P[i] *= (1.0 - K);
+        state_.vel_filter_last_tim[i] = tim;
     }
 
-    state_.vel_filter_last_tim = tim;
     write_twist_and_cov(v, state_.vel_filter_P);
 }
 
@@ -192,7 +304,7 @@ void StateEstimationSimple::fuse_odometry(
             var_xyz, var_xyz, no_info, no_info, no_info, var_rot,
         };
 
-        update_vel_filter(z, R_diag, odom.timestamp);
+        update_vel_filter(z, R_diag, odom.timestamp, "fuse_odometry");
 
         MRPT_LOG_DEBUG_STREAM(
             "fuse_odometry: twist from velocityLocal: " << state_.last_twist->asString());
@@ -259,7 +371,7 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
                 var_lin, var_lin, var_lin, var_ang, var_ang, var_ang,
             };
 
-            update_vel_filter(z, R_diag, obs.timestamp);
+            update_vel_filter(z, R_diag, obs.timestamp, "fuse_odometry_3d_pose");
 
             MRPT_LOG_DEBUG_STREAM(
                 "fuse_odometry_3d_pose('" << odomName
@@ -328,7 +440,7 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
         no_info, no_info, no_info, var_ang, var_ang, var_ang,
     };
 
-    update_vel_filter(z, R_diag, imu.timestamp);
+    update_vel_filter(z, R_diag, imu.timestamp, "fuse_imu");
 
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
@@ -406,14 +518,18 @@ void StateEstimationSimple::fuse_pose(
             var_lin, var_lin, var_lin, var_ang, var_ang, var_ang,
         };
 
-        update_vel_filter(z, R_diag, timestamp);
+        update_vel_filter(z, R_diag, timestamp, "fuse_pose");
     }
     else
     {
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
-        state_.vel_filter_last_tim.reset();
+        state_.vel_filter_P = State().vel_filter_P;
+        for (auto& t : state_.vel_filter_last_tim)
+        {
+            t.reset();
+        }
     }
 
     if (state_.last_twist)
@@ -460,7 +576,7 @@ void StateEstimationSimple::fuse_twist(
         R_diag[i] = twistCov(i, i);
     }
 
-    update_vel_filter(z, R_diag, timestamp);
+    update_vel_filter(z, R_diag, timestamp, "fuse_twist");
 
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist    = " << state_.last_twist->asString());
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
@@ -550,6 +666,28 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     if (state_.last_twist_cov.has_value())
     {
         ret.twist_inv_cov = state_.last_twist_cov->inverse_LLt();
+    }
+
+    // Debug instrumentation (no-op unless MOLA_NAVSTATE_DUMP is set):
+    if (std::ofstream* st = navstate_dump_stream(); st)
+    {
+        const auto& m = ret.pose.mean;
+        (*st) << mrpt::format("%.6f", mrpt::Clock::toDouble(timestamp)) << "," << dt << ","  //
+              << m.x() << "," << m.y() << "," << m.z() << "," << m.yaw() << "," << m.pitch() << ","
+              << m.roll();
+        const auto& tw = ret.twist;
+        (*st) << "," << tw.vx << "," << tw.vy << "," << tw.vz << "," << tw.wx << "," << tw.wy << ","
+              << tw.wz;
+        for (int i = 0; i < 6; i++)
+        {
+            (*st) << "," << cov(i, i);
+        }
+        for (int i = 0; i < 6; i++)
+        {
+            (*st) << "," << ret.pose.cov_inv(i, i);
+        }
+        (*st) << "\n";
+        st->flush();
     }
 
     return ret;
