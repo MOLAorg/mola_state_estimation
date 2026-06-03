@@ -57,8 +57,14 @@ class Parameters
      *  Kalman filter. The process noise reuses
      *  sigma_random_walk_acceleration_linear/angular [m/s^2, rad/s^2], and
      *  measurement noise comes from the covariance already computed by each
-     *  fuse_*() call. Default: false (direct pass-through, legacy behavior). */
-    bool velocity_filter_enabled = false;
+     *  fuse_*() call. Default: true.
+     *
+     *  Enabled by default because raw velocities are obtained by differentiating
+     *  consecutive poses (pose increment / dt), which amplifies pose noise; that
+     *  velocity is then fed back into the LiDAR-odometry motion model (ICP
+     *  initial guess + prior), so without smoothing the loop can oscillate.
+     *  Set to false to recover the legacy direct pass-through behavior. */
+    bool velocity_filter_enabled = true;
 
     bool enforce_planar_motion = false;
 
