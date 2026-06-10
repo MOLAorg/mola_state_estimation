@@ -39,7 +39,8 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
     ASSERT_(!sm.empty());
 
-    const GNSSFrames smFrames = extract_gnss_frames_from_sm(sm, params.geodeticReference);
+    const GNSSFrames smFrames =
+        extract_gnss_frames_from_sm(sm, params.geodeticReference, params.minimumGNSSFixQuality);
 
     if (params.logger)
     {
@@ -165,8 +166,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
 
 mola::GNSSFrames mola::extract_gnss_frames_from_sm(
     const mrpt::maps::CSimpleMap&                           sm,
-    const std::optional<mrpt::topography::TGeodeticCoords>& refCoordIn)
+    const std::optional<mrpt::topography::TGeodeticCoords>& refCoordIn,
+    unsigned int                                            minimumFixQuality)
 {
+    thread_local bool DEBUG_PRINT_GNSS_FRAMES =
+        mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_GNSS_FRAMES", false);
+
     GNSSFrames ret;
 
     ret.refCoord = refCoordIn;
@@ -189,6 +194,16 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
             if (!obs->hasMsgType(mrpt::obs::gnss::NMEA_GGA))
             {
                 continue;
+            }
+
+            // Optional fix-quality filter (disabled when minimumFixQuality==0):
+            if (minimumFixQuality > 0)
+            {
+                const auto& ggaMsg = obs->getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+                if (ggaMsg.fields.fix_quality < minimumFixQuality)
+                {
+                    continue;  // skip low-quality fix
+                }
             }
 
             auto& f = ret.frames.emplace_back();
@@ -237,6 +252,16 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
 
             // Convert GNSS obs to ENU:
             mrpt::topography::geodeticToENU_WGS84(f.coords, f.enu, *ret.refCoord);
+
+            if (DEBUG_PRINT_GNSS_FRAMES)
+            {
+                std::cout << "gnss frame for sm[" << i << "]: " << std::fixed
+                          << std::setprecision(6) << " lat: " << f.coords.lat
+                          << " deg, lon: " << f.coords.lon << " deg, alt: " << f.coords.height
+                          << " m, ENU: " << f.enu << " m, sigmas (E/N/U): " << f.sigma_E << "/"
+                          << f.sigma_N << "/" << f.sigma_U << " m"
+                          << "\n";
+            }
         }
     }
 
