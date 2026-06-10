@@ -32,6 +32,9 @@
 #include <mola_gtsam_factors/FactorGnssEnu.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 
+#include <algorithm>
+#include <limits>
+
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
 {
@@ -262,6 +265,51 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
                           << f.sigma_N << "/" << f.sigma_U << " m"
                           << "\n";
             }
+        }
+    }
+
+    // Degeneracy check: the spatial spread of the GNSS observations must be
+    // large compared to their uncertainty, otherwise the global-attitude
+    // (roll/pitch/yaw) problem is ill-conditioned. We compare the ENU
+    // bounding-box diagonal against 3x the smallest per-axis sigma.
+    if (ret.frames.size() >= 2)
+    {
+        mrpt::math::TPoint3D bbMin    = ret.frames.front().enu;
+        mrpt::math::TPoint3D bbMax    = ret.frames.front().enu;
+        double               minSigma = std::numeric_limits<double>::max();
+
+        for (const auto& f : ret.frames)
+        {
+            bbMin.x = std::min(bbMin.x, f.enu.x);
+            bbMin.y = std::min(bbMin.y, f.enu.y);
+            bbMin.z = std::min(bbMin.z, f.enu.z);
+            bbMax.x = std::max(bbMax.x, f.enu.x);
+            bbMax.y = std::max(bbMax.y, f.enu.y);
+            bbMax.z = std::max(bbMax.z, f.enu.z);
+
+            minSigma = std::min({minSigma, f.sigma_E, f.sigma_N, f.sigma_U});
+        }
+
+        const double bboxDiagonal = (bbMax - bbMin).norm();
+
+        if (bboxDiagonal <= 3.0 * minSigma)
+        {
+            ret.possibly_degenerate = true;
+
+            std::cerr << "\n"
+                      << "############################################################\n"
+                      << "# [extract_gnss_frames_from_sm] WARNING: POSSIBLY DEGENERATE\n"
+                      << "# GNSS configuration detected.\n"
+                      << "#   ENU bounding-box diagonal: " << bboxDiagonal << " m\n"
+                      << "#   minimum per-axis sigma:    " << minSigma << " m\n"
+                      << "#   (diagonal must be > 3x the minimum sigma = " << 3.0 * minSigma
+                      << " m)\n"
+                      << "# The spatial spread of the " << ret.frames.size()
+                      << " GNSS observations is too small with respect to\n"
+                      << "# their uncertainty. The estimated global attitude (map roll/pitch/yaw)\n"
+                      << "# is likely unobservable and may take absurd values.\n"
+                      << "############################################################\n"
+                      << std::endl;
         }
     }
 
