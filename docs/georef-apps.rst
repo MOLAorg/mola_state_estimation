@@ -56,6 +56,8 @@ consume georeferencing data (e.g. ``sm2mm --georef``, ``mm-georef``,
       USAGE:
 
          mola-sm-georeferencing  [-v <INFO>] [--no-imu-gravity] [-l <foobar.so>]
+                                 [--min-gnss-fix-quality <0>]
+                                 [--min-gnss-sigma <0.20>]
                                  [--imu-gravity-sigma-deg <3.0>]
                                  [--horizontality-sigma <1.0>]
                                  [-o <(map.georef|map.yaml)>]
@@ -75,6 +77,15 @@ consume georeferencing data (e.g. ``sm2mm --georef``, ``mm-georef``,
          -l <foobar.so>,  --load-plugins <foobar.so>
          One or more (comma separated) *.so files to load as plugins, e.g.
          defining new CMetricMap classes
+
+         --min-gnss-fix-quality <0>
+         If non-zero, discard GNSS frames whose NMEA GGA fix quality is below
+         this value (1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float). Default: 0
+         (filter disabled).
+
+         --min-gnss-sigma <0.20>
+         Minimum per-axis GNSS uncertainty (meters) used as a floor for the ENU
+         noise model. Default: 0.20
 
          --imu-gravity-sigma-deg <3.0>
          IMU gravity alignment uncertainty (degrees).

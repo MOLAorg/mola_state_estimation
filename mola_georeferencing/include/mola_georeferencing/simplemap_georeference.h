@@ -60,6 +60,11 @@ struct SMGeoReferencingParams
     /// Otherwise (default), the first GNSS entry will become the reference.
     std::optional<mrpt::topography::TGeodeticCoords> geodeticReference;
 
+    /// If non-zero, GNSS frames whose NMEA GGA fix quality is below this
+    /// threshold will be discarded (e.g. 1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK
+    /// float). Default (0) disables the filter, keeping all valid frames.
+    unsigned int minimumGNSSFixQuality = 0;
+
     AddGNSSFactorParams fgParams;
 
     /// If true, use IMU acceleration data found in the simplemap to add
@@ -99,7 +104,8 @@ struct GNSSFrames
 
 GNSSFrames extract_gnss_frames_from_sm(
     const mrpt::maps::CSimpleMap&                           sm,
-    const std::optional<mrpt::topography::TGeodeticCoords>& refCoord = std::nullopt);
+    const std::optional<mrpt::topography::TGeodeticCoords>& refCoord          = std::nullopt,
+    unsigned int                                            minimumFixQuality = 0);
 
 struct FrameIMUAcc
 {

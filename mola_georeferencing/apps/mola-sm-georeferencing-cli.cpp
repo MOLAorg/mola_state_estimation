@@ -65,6 +65,27 @@ struct Cli
                                                   "3.0",
                                                   cmd};
 
+    TCLAP::ValueArg<double> argMinUncertaintyXYZ{
+        "",
+        "min-gnss-sigma",
+        "Minimum per-axis GNSS uncertainty (meters) used as a floor for the "
+        "ENU noise model. Default: 0.20",
+        false,
+        0.20,
+        "0.20",
+        cmd};
+
+    TCLAP::ValueArg<unsigned int> argMinFixQuality{
+        "",
+        "min-gnss-fix-quality",
+        "If non-zero, discard GNSS frames whose NMEA GGA fix quality is below "
+        "this value (1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float). Default: 0 "
+        "(filter disabled).",
+        false,
+        0,
+        "0",
+        cmd};
+
     TCLAP::ValueArg<std::string> argPlugins{
         "l",
         "load-plugins",
@@ -130,7 +151,15 @@ void run_sm_georef(Cli& cli)
         p.fgParams.addHorizontalityConstraints = true;
         p.fgParams.horizontalitySigmaZ         = cli.argHorz.getValue();
     }
-    // TODO: p.fgParams.minimumUncertaintyXYZ = xxx;
+    if (cli.argMinUncertaintyXYZ.isSet())
+    {
+        p.fgParams.minimumUncertaintyXYZ = cli.argMinUncertaintyXYZ.getValue();
+    }
+
+    if (cli.argMinFixQuality.isSet())
+    {
+        p.minimumGNSSFixQuality = cli.argMinFixQuality.getValue();
+    }
 
     if (cli.argNoIMUGravity.getValue())
     {
