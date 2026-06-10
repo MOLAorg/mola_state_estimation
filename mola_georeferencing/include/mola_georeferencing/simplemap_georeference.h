@@ -100,6 +100,14 @@ struct GNSSFrames
 {
     std::vector<FrameGNSS>                           frames;
     std::optional<mrpt::topography::TGeodeticCoords> refCoord;
+
+    /// Set to true by extract_gnss_frames_from_sm() when the spatial spread of
+    /// the GNSS observations is too small with respect to their uncertainty
+    /// (specifically, when the ENU bounding-box diagonal is not larger than 3x
+    /// the minimum per-axis sigma). In such a degenerate configuration, the
+    /// georeferencing/global-attitude problem is ill-conditioned (e.g. the map
+    /// roll/pitch becomes unobservable and can take absurd values).
+    bool possibly_degenerate = false;
 };
 
 GNSSFrames extract_gnss_frames_from_sm(
