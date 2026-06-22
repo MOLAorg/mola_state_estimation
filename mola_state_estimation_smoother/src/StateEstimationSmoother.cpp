@@ -728,8 +728,21 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // 3) Convert pose to the requested frame_id:
     if (frame_id != params_.reference_frame_name)
     {
+        // The requested odometry frame may not have been registered yet
+        // (e.g. the very first query, before any fuse_pose()/fuse_odometry()
+        // call has registered it via add_or_get_odom_frame_id()). Treat that
+        // the same as "not ready yet" instead of throwing.
+        const auto it = state_.known_odom_frames.find_key(frame_id);
+        if (it == state_.known_odom_frames.getDirectMap().end())
+        {
+            MRPT_LOG_THROTTLE_DEBUG_FMT(
+                5.0, "[estimated_navstate] Requested unknown odometry frame_id='%s'",
+                frame_id.c_str());
+            return {};
+        }
+
         // Transform:
-        const auto requestedFrameIdx    = state_.known_odom_frames.direct(frame_id);
+        const auto requestedFrameIdx    = it->second;
         const auto posePdfFrame_wrt_map = state_.last_estimated_frames.at(requestedFrameIdx);
 
         mrpt::poses::CPose3DPDFGaussianInf posePdfFrame_wrt_map_inf;
