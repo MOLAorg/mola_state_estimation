@@ -327,6 +327,39 @@ void test_noisy_straight()
     ASSERT_NEAR_(ret->twist.wz, .0, 0.01);
 }
 
+// --------------------------------------
+// Regression test for a crash where estimated_navstate() would throw
+// "Key not found" (instead of returning nullopt) when queried for an
+// odometry frame_id that has a keyframe nearby in time (so it passes the
+// "no nearby frame" check) but has never itself been registered via
+// fuse_pose()/fuse_odometry() for that particular frame_id -- e.g. a caller
+// asking about its own "odom" frame before ever reporting a pose in it.
+void test_unregistered_odom_frame_does_not_throw()
+{
+    const auto& _ = Data::Instance();
+
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
+
+    const auto t0 = mrpt::Clock::fromDouble(.0);
+
+    // Create a keyframe via the reference frame ("map"), never touching
+    // the "odom" odometry frame:
+    nav.fuse_pose(t0, _.pdf0, "map");
+    ASSERT_(nav.known_odometry_frame_ids().empty());
+
+    // Querying a never-registered odometry frame_id must not throw:
+    const auto ret = nav.estimated_navstate(t0, "odom");
+    ASSERT_(!ret.has_value());
+
+    // Once "odom" gets registered, the same query must succeed:
+    nav.fuse_pose(t0, _.pdf0, "odom");
+    ASSERT_(!nav.known_odometry_frame_ids().empty());
+
+    const auto ret2 = nav.estimated_navstate(t0, "odom");
+    ASSERT_(ret2.has_value());
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -339,6 +372,7 @@ int main(int argc, char** argv)
         {"test_2_poses_too_late", test_2_poses_too_late},
         {"test_3_poses", test_3_poses},
         {"test_noisy_straight", test_noisy_straight},
+        {"test_unregistered_odom_frame_does_not_throw", test_unregistered_odom_frame_does_not_throw},
     };
 
     int runOnlyIdx = -1;
