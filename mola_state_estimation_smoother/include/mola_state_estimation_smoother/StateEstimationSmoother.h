@@ -46,12 +46,21 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <atomic>
+#include <condition_variable>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <string>
+#include <thread>
 
 namespace mola::state_estimation_smoother
 {
+// Internal high-rate predictor used in async_backend mode (defined in src/).
+class FastPredictor;
+
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
  *
@@ -124,7 +133,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     StateEstimationSmoother(StateEstimationSmoother&&)                 = delete;
     StateEstimationSmoother& operator=(const StateEstimationSmoother&) = delete;
     StateEstimationSmoother& operator=(StateEstimationSmoother&&)      = delete;
-    ~StateEstimationSmoother()                                         = default;
+
+    /// Stops and joins the backend thread, if running (async_backend mode).
+    ~StateEstimationSmoother() override;
 
     /** \name Main API
      *  @{ */
@@ -179,6 +190,20 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Returns a list of known odometry frame_ids:
     [[nodiscard]] auto known_odometry_frame_ids() -> std::set<std::string>;
+
+    /// Number of keyframes currently held in the sliding window (i.e. the size
+    /// of the factor-graph variable set the batch smoother solves each update).
+    /// Mainly useful for diagnostics and tests: high-rate sensor decimation
+    /// (see Parameters::odometry_min_sample_period / imu_min_sample_period)
+    /// reduces this count and hence the per-update cost.
+    [[nodiscard]] std::size_t active_keyframe_count();
+
+    /// Number of factors committed in the current sliding window. Pending,
+    /// not-yet-applied factors are excluded, so call estimated_navstate() first
+    /// to flush them. Mainly useful for diagnostics and tests: IMU decimation
+    /// (see Parameters::imu_min_sample_period) reduces redundant attitude/gravity
+    /// factors without necessarily changing the keyframe count.
+    [[nodiscard]] std::size_t active_factor_count();
 
     /// Gets the latest estimated transform of T_enu_to_map
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map() const;
@@ -265,6 +290,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
         std::optional<std::string>          last_wheels_odometry_name;
+
+        /// Timestamp of the last wheels-odometry reading that actually produced a
+        /// keyframe/factor (i.e. was *not* dropped by odometry decimation). The
+        /// pose anchor (last_wheels_odometry) is held fixed across dropped
+        /// readings so the next kept reading fuses the *accumulated* increment
+        /// (and its accumulated motion-model covariance). See
+        /// Parameters::odometry_min_sample_period.
+        std::optional<mrpt::Clock::time_point> last_wheels_odometry_stamp;
+
+        /// Timestamp of the last IMU reading that was actually processed (not
+        /// dropped by IMU decimation). See Parameters::imu_min_sample_period.
+        std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
 
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
@@ -390,6 +427,30 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     };
 
     VizInterface::Ptr visualizer_;
+
+    // ---- Asynchronous backend + fast predictor (only used if async_backend) ----
+
+    /// High-rate predictor serving estimated_navstate() while the backend solves.
+    std::unique_ptr<FastPredictor> fastPredictor_;
+
+    std::thread             backendThread_;
+    std::atomic_bool        backendShutdown_{false};
+    std::condition_variable backendCv_;
+    std::mutex              backendCvMutex_;
+    bool                    backendPendingWork_ = false;  //!< guarded by backendCvMutex_
+
+    /// Backend worker: runs the batch solve and publishes anchors to fastPredictor_.
+    void backend_thread_loop();
+
+    /// Wakes the backend thread to process newly queued sensor data.
+    void notify_backend();
+
+    /// Builds the anchor (newest keyframe state + frame transforms) and pushes it
+    /// to fastPredictor_. Assumes stateMutex_ is held; does the predictor handoff
+    /// after releasing it internally is NOT done here (caller releases the lock).
+    [[nodiscard]] bool build_anchor_locked(
+        NavState& anchorOut, mrpt::Clock::time_point& anchorStampOut,
+        std::map<std::string, mrpt::poses::CPose3DPDFGaussian>& frameTransformsOut) const;
 };
 
 }  // namespace mola::state_estimation_smoother

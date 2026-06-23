@@ -68,6 +68,22 @@ params:
   # to use instead of "min_time_difference_to_create_new_frame". [seconds]
   imu_nearby_keyframe_stamp_tolerance: 0.10
 
+  # High-rate same-sensor decimation (cost reduction). The batch fixed-lag
+  # smoother cost grows with the number of keyframes in the sliding window;
+  # high-rate sensors would otherwise add one keyframe/factor per reading.
+  # These cap how often each stream contributes, merging several consecutive
+  # same-sensor readings into one. 0 = disabled (previous behavior).
+  #
+  # Wheel odometry: dropped readings are MERGED, not lost (the pose anchor is
+  # held fixed across the dropped span, so the next kept reading fuses the full
+  # accumulated increment + its accumulated motion-model covariance). [seconds]
+  odometry_min_sample_period: ${MOLA_NAVSTATE_ODOMETRY_MIN_SAMPLE_PERIOD|0.0}
+
+  # IMU: dropped readings (absolute attitude/gravity) are simply skipped.
+  # Typically set near imu_nearby_keyframe_stamp_tolerance so at most one IMU
+  # factor lands on each keyframe. [seconds]
+  imu_min_sample_period: ${MOLA_NAVSTATE_IMU_MIN_SAMPLE_PERIOD|0.0}
+
   # Random walk model for linear acceleration uncertainty [m/s²]
   sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
 
@@ -177,20 +193,42 @@ params:
   additional_isam2_update_steps: 3
 
   # --------------------------------------------------------------------------
+  # Asynchronous backend + fast predictor (real-time mode)
+  # --------------------------------------------------------------------------
+
+  # If true, the heavy batch factor-graph solve runs in a dedicated backend
+  # thread and estimated_navstate() is served by a lightweight "fast predictor":
+  # a tiny GTSAM graph re-anchored on the most recent backend solution, fusing
+  # the high-rate wheel-odometry observations buffered since that anchor.
+  # This keeps per-query latency bounded (sub-ms), so the smoother can run in
+  # real-time alongside a CPU-bound LiDAR-odometry front-end.
+  #
+  # If false (default), the batch solve runs synchronously inside
+  # estimated_navstate() on the caller's thread: deterministic, reproducible
+  # offline (bag) runs, but it does not keep up in real time at high keyframe
+  # density.
+  async_backend: "${MOLA_NAVSTATE_ASYNC_BACKEND|false}"
+
+  # [seconds] Only used when async_backend is true: how far back the fast
+  # predictor keeps raw high-rate observations to re-fuse on top of the latest
+  # anchor. Must comfortably exceed the backend solve latency / front-end lag.
+  fast_predictor_buffer_length: ${MOLA_NAVSTATE_FAST_PREDICTOR_BUFFER_LENGTH|1.0}
+
+  # --------------------------------------------------------------------------
   # Sensor Input Filtering (Regex Patterns)
   # --------------------------------------------------------------------------
 
   # Regular expression to filter IMU sensor labels/topics for processing
   # Default accepts all: ".*"
-  do_process_imu_labels_re: ".*"
+  do_process_imu_labels_re: "${MOLA_NAVSTATE_IMU_LABELS_RE|.*}"
 
   # Regular expression to filter odometry input labels/topics for processing
   # Default accepts all: ".*"
-  do_process_odometry_labels_re: ".*"
+  do_process_odometry_labels_re: "${MOLA_NAVSTATE_ODOMETRY_LABELS_RE|.*}"
 
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
-  do_process_gnss_labels_re: ".*"
+  do_process_gnss_labels_re: "${MOLA_NAVSTATE_GNSS_LABELS_RE|.*}"
 
 # ============================================================================
 # End of Configuration

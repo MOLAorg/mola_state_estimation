@@ -50,6 +50,11 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gnss_nearby_keyframe_stamp_tolerance);
     MCP_LOAD_OPT(cfg, imu_nearby_keyframe_stamp_tolerance);
 
+    MCP_LOAD_OPT(cfg, odometry_min_sample_period);
+    MCP_LOAD_OPT(cfg, imu_min_sample_period);
+    ASSERT_GE_(odometry_min_sample_period, .0);
+    ASSERT_GE_(imu_min_sample_period, .0);
+
     MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
     MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
 
@@ -106,6 +111,12 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // Nonlinear optimization
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, additional_isam2_update_steps);
+
+    // Asynchronous backend + fast predictor (real-time mode)
+    // -----------------------------------------------------
+    MCP_LOAD_OPT(cfg, async_backend);
+    MCP_LOAD_OPT(cfg, fast_predictor_buffer_length);
+    ASSERT_GT_(fast_predictor_buffer_length, .0);
 
     // name Sensor input names
     // -----------------------------------------------------

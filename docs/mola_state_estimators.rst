@@ -266,6 +266,49 @@ into the past or future.
 When run as a MOLA module (e.g. within a ROS 2 node), it also publishes the estimated fused pose information
 in a timely manner, for use as the high-quality, robust localization source.
 
+.. note::
+   **Asynchronous backend (real-time mode).** By default, each call to
+   ``estimated_navstate()`` runs the sliding-window iSAM2 update synchronously
+   on the caller's thread. This is deterministic (ideal for offline bag
+   processing) but, at high keyframe density, can be too slow to keep up with a
+   CPU-bound front-end such as LiDAR odometry in real time.
+
+   Setting ``async_backend: true`` moves the window solve to a dedicated
+   backend thread. ``estimated_navstate()`` is then served by a lightweight *fast
+   predictor*: a tiny factor graph re-anchored on the most recent backend solution
+   and propagated forward with constant-velocity kinematics plus the high-rate
+   wheel odometry buffered since that anchor. Per-query latency drops to
+   sub-millisecond, so the smoother can run online alongside LiDAR odometry; the
+   estimate accuracy still comes from the backend's full optimization, just
+   refreshed asynchronously.
+
+.. note::
+   **Out-of-order keyframe handling.** The incremental (iSAM2) smoother needs
+   keyframes introduced in non-decreasing timestamp order; multi-rate sensor
+   latency (for example, a CPU-bound LiDAR front-end lagging the high-rate wheel
+   odometry / IMU and fusing its poses a few hundred ms "in the past") would
+   otherwise insert keyframes out of order and corrupt the fixed-lag
+   marginalization. This is handled automatically and with no added latency: a
+   measurement whose timestamp falls before the newest keyframe is snapped to the
+   nearest existing keyframe rather than inserting a new one in the past. The
+   small timing approximation is bounded by the keyframe spacing, so keep the
+   high-rate keyframe density reasonably high (i.e. avoid over-aggressive
+   ``*_min_sample_period`` decimation) when LiDAR-pose timing fidelity matters.
+
+.. note::
+   **High-rate sensor decimation (cost reduction).** The window solve cost grows
+   with the number of keyframes in the sliding window, and high-rate sensors
+   (wheel odometry, IMU) would otherwise add one keyframe/factor per reading.
+   The optional ``odometry_min_sample_period`` and ``imu_min_sample_period``
+   parameters (both ``0`` = disabled, the default) cap how often each such stream
+   contributes, merging several consecutive same-sensor readings into one. For
+   wheel odometry, dropped readings are *merged* rather than lost: the pose anchor
+   is held fixed across the dropped span, so the next processed reading fuses the
+   full accumulated increment (with its accumulated motion-model covariance). For
+   IMU (absolute attitude / gravity-direction observations) the dropped readings
+   are simply skipped. This trades a small amount of accuracy for a large drop in
+   per-update cost, and is most useful for offline map-building on long datasets.
+
 This package follows this frame convention (see :ref:`other /tf configurations <mola_ros2_tf_frames>` when using
 MOLA LiDAR-odometry without state estimation):
 

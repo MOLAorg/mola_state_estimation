@@ -102,6 +102,33 @@ class Parameters
      */
     double imu_nearby_keyframe_stamp_tolerance = 0.10;  // [s]
 
+    /** High-rate same-sensor decimation (cost reduction).
+     *
+     * The dominant cost of the batch fixed-lag smoother grows with the number of
+     * keyframes (factor-graph variables) in the sliding window. High-rate sensors
+     * (wheel odometry, IMU) would otherwise spawn one keyframe (or, when snapping
+     * to a nearby keyframe, one extra factor) per reading. These parameters cap
+     * how often each such stream contributes, merging several consecutive
+     * same-sensor readings into a single keyframe/factor.
+     *
+     * `0` (the default) disables decimation, preserving the previous behavior.
+     *
+     * For wheel odometry, dropped readings are *merged*, not lost: the pose anchor
+     * is held fixed across the dropped span, so the next kept reading fuses the
+     * full accumulated increment with its accumulated motion-model covariance. For
+     * IMU (absolute attitude / gravity-direction observations) the dropped
+     * readings are simply skipped.
+     *
+     * [seconds] Minimum time between two *processed* wheel-odometry readings.
+     */
+    double odometry_min_sample_period = 0.0;  // [s]
+
+    /// [seconds] Minimum time between two *processed* IMU readings. See
+    /// odometry_min_sample_period for the rationale. Typically set close to
+    /// imu_nearby_keyframe_stamp_tolerance so at most one IMU factor lands on
+    /// each keyframe.
+    double imu_min_sample_period = 0.0;  // [s]
+
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
     double sigma_integrator_position              = 0.10;  // [m]
@@ -202,6 +229,33 @@ class Parameters
     /** Each new sensor will become a call to isam2.update(), plus this number of additional
      * refining steps. In theory, more steps lead to more accurate results. */
     uint32_t additional_isam2_update_steps = 3;
+
+    /** @} */
+
+    /** @name Asynchronous backend + fast predictor (real-time mode)
+     * @{ */
+
+    /** If `true`, the heavy batch factor-graph solve runs in a dedicated backend
+     *  thread, and `estimated_navstate()` is served by a lightweight "fast
+     *  predictor": a tiny GTSAM graph re-anchored on the most recent backend
+     *  solution, fusing the high-rate wheel-odometry observations buffered
+     *  since that anchor. This keeps per-query latency bounded (sub-ms) so the
+     *  smoother can be used in real-time alongside a CPU-bound LiDAR-odometry
+     *  front-end.
+     *
+     *  When `false` (the default), the batch solve runs synchronously inside
+     *  `estimated_navstate()` on the caller's thread, which yields deterministic,
+     *  reproducible offline (bag) runs but does not keep up in real time at high
+     *  keyframe density.
+     */
+    bool async_backend = false;
+
+    /** [s] Only used when `async_backend` is `true`. How far back in time the
+     *  fast predictor keeps raw high-rate observations to re-fuse on top of the
+     *  latest anchor. Must comfortably exceed the backend solve latency / sensor
+     *  front-end lag (a few hundred ms).
+     */
+    double fast_predictor_buffer_length = 1.0;  // [s]
 
     /** @} */
 

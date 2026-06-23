@@ -58,7 +58,7 @@ incremental optimization. The primary estimator for multi-sensor fusion.
 | ROS 2 launch | `mola_state_estimation_smoother/ros2-launchs/ros2-state-estimator.launch.py` |
 | MOLA-CLI launch | `mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml` |
 | CLI app | `mola_state_estimation_smoother/apps/mola-navstate-cli.cpp` |
-| Tests (6) | `mola_state_estimation_smoother/tests/test-*.cpp` |
+| Tests (9) | `mola_state_estimation_smoother/tests/test-*.cpp` |
 | Integration tests | `mola_state_estimation_smoother/test/integration/test_*.py` |
 
 Key traits:
@@ -71,6 +71,32 @@ Key traits:
 - Optional ENU-to-map georeferencing from GNSS.
 - Thread-safe (`std::recursive_mutex`).
 - Configuration via YAML with `${ENV_VAR|default}` substitution.
+- Out-of-order keyframe guard (always on, no param): iSAM2's fixed-lag
+  marginalization requires keyframes introduced in non-decreasing timestamp
+  order. Multi-rate sensor latency violates that (e.g. a CPU-bound LiDAR
+  front-end lagging the high-rate wheel/IMU by ~0.3-0.4 s, fed via direct
+  `fuse_pose()` calls), which corrupts the Bayes tree (indeterminate-system /
+  missing-key throws). The single keyframe chokepoint
+  `create_or_get_keyframe_by_timestamp_locked()` detects a request older than the
+  newest keyframe and snaps it to the nearest existing keyframe instead of
+  inserting a new one in the past (its factor is applied a bit off in time,
+  bounded by the keyframe spacing; no added latency). Covers every `fuse_*()`
+  entry point. Tests in `tests/test-out-of-order-keyframes.cpp`.
+- Optional async backend (`async_backend: true`, default `false`): the iSAM2
+  window solve runs in a dedicated thread, and `estimated_navstate()` is served by
+  a lightweight `FastPredictor` (`src/FastPredictor.{h,cpp}`) - a tiny GTSAM graph
+  re-anchored on the latest backend solution + buffered high-rate wheel odometry.
+  Keeps per-query latency sub-ms for real-time use. The default synchronous path
+  is unchanged (deterministic offline runs). Kinematic/twist factor construction
+  shared by both paths lives in `src/factor_builders.h`.
+- Optional high-rate same-sensor decimation (cost reduction; both default `0` =
+  off): `odometry_min_sample_period` and `imu_min_sample_period` cap how often
+  wheel-odom / IMU readings spawn keyframes/factors, since the solve cost grows
+  with the keyframe count. Wheel-odom drops are *merged* (the pose anchor is held
+  fixed across the dropped span so the next kept reading fuses the accumulated
+  increment + accumulated motion-model covariance); IMU drops are skipped.
+  Diagnostics: `active_keyframe_count()` / `active_factor_count()`. Tests in
+  `tests/test-keyframe-decimation.cpp`.
 
 Sensor inputs:
 - `fuse_pose()` - localization / LiDAR odometry poses

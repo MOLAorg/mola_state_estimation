@@ -41,3 +41,24 @@ mola_add_test(
     mola::mola_state_estimation_smoother
 )
 
+mola_add_test(
+  TARGET  test-fast-predictor
+  SOURCES test-fast-predictor.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
+  TARGET  test-keyframe-decimation
+  SOURCES test-keyframe-decimation.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
+  TARGET  test-out-of-order-keyframes
+  SOURCES test-out-of-order-keyframes.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+

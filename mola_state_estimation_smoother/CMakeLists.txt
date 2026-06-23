@@ -51,7 +51,10 @@ mola_add_library(
   TARGET ${PROJECT_NAME}
   SOURCES
     src/Parameters.cpp
+    src/FastPredictor.cpp
+    src/FastPredictor.h
     src/StateEstimationSmoother.cpp
+    src/factor_builders.h
     src/pose_pdf_to_string_with_sigmas.cpp
     src/register.cpp
     include/mola_state_estimation_smoother/Parameters.h
