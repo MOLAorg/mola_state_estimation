@@ -244,6 +244,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
 
+        /// The last raw pose received from each odometry source, expressed in
+        /// that source's OWN frame {odom_i} (NOT in {map}), with its timestamp.
+        /// `estimated_navstate(t, {odom_i})` extrapolates from this anchor so the
+        /// short-term prediction stays continuous in the front end's own frame,
+        /// instead of reconstructing it globally as X(kf) (-) T_map_to_odom_i
+        /// (which would leak {map} corrections -- geo-ref / loop closure /
+        /// per-solve jitter -- into the prediction; here the fixed-lag window
+        /// keeps that leak small, but anchoring on the raw pose removes it).
+        struct RawSourcePose
+        {
+            mrpt::Clock::time_point         stamp;
+            mrpt::poses::CPose3DPDFGaussian pose;  //!< in {odom_i}
+        };
+        std::map<odometry_frameid_t, RawSourcePose> last_raw_pose_by_source;
+
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
          *  last observation timestamp.

@@ -68,6 +68,18 @@ Key traits:
 - Sliding time window of keyframes (default 2.5 s).
 - Two kinematic models: `ConstantVelocity` and `Tricycle` (Ackermann).
 - Multi-frame-aware: tracks multiple odometry sources by `frame_id`.
+- `estimated_navstate(t, {odom_i})` is served **frame-local**: it anchors on the
+  source's own last raw pose in `{odom_i}` (`State::last_raw_pose_by_source`,
+  stored by `fuse_pose_locked`) and extrapolates by the body-twist increment
+  (`body_twist_delta()`, kinematic-model-aware), NOT by reconstructing
+  `X(kf) (-) T_map_to_odom_i`. This keeps a front end's short-term prediction
+  continuous in its own frame, immune to `{map}` corrections (geo-ref / loop
+  closure / per-solve jitter). The sliding window already kept that leak small
+  (the two formulations agree to <1 mm in `test-navstate-odom-gnss-fusion`), so
+  this is defensive; `mola_mapper_3d`'s NON-windowed central map is where the
+  global reconstruction actually breaks (it injected meter/degree jumps into
+  LIO's ICP guess after geo-ref). Falls back to the global conversion before a
+  source's first `fuse_pose()`.
 - Optional ENU-to-map georeferencing from GNSS.
 - Thread-safe (`std::recursive_mutex`).
 - Configuration via YAML with `${ENV_VAR|default}` substitution.

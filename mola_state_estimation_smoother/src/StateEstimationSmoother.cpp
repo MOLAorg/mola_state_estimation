@@ -83,6 +83,53 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
 namespace mola::state_estimation_smoother
 {
 
+namespace
+{
+/// Integrates a constant body-frame twist over `dt` seconds, returning the
+/// relative pose increment T_i_to_j (right-composed onto an anchor: T_j = T_i
+/// (+) delta). Branches on the configured kinematic model so the short-term
+/// extrapolation matches the motion model used to build the inter-keyframe
+/// factors: full SE(3) exp of the 6D body twist for ConstantVelocity; the planar
+/// arc from forward velocity v=vx and yaw rate w=wz for Tricycle, mirroring
+/// mola::factors::FactorTricycleKinematic exactly.
+mrpt::poses::CPose3D body_twist_delta(
+    const Parameters& params, const mrpt::math::TTwist3D& twist, double dt)
+{
+    switch (params.kinematic_model)
+    {
+        case KinematicModel::Tricycle:
+        {
+            constexpr double w_threshold = 1e-4;  // [rad/s], as FactorTricycleKinematic
+            const double     v           = twist.vx;
+            const double     w           = twist.wz;
+            if (std::abs(w) < w_threshold)
+            {
+                return mrpt::poses::CPose3D(v * dt, .0, .0, .0, .0, .0);
+            }
+            const double R     = v / w;
+            const double theta = w * dt;
+            const double dx    = R * std::sin(theta);
+            const double dy    = R * (1.0 - std::cos(theta));
+            // CPose3D(x, y, z, yaw, pitch, roll); the arc rotates about +z (yaw).
+            return mrpt::poses::CPose3D(dx, dy, .0, theta, .0, .0);
+        }
+        case KinematicModel::ConstantVelocity:
+        default:
+        {
+            mrpt::math::CVectorFixed<double, 6> twistDt;
+            twistDt[0] = twist.vx;
+            twistDt[1] = twist.vy;
+            twistDt[2] = twist.vz;
+            twistDt[3] = twist.wx;
+            twistDt[4] = twist.wy;
+            twistDt[5] = twist.wz;
+            twistDt *= dt;
+            return mrpt::poses::CPose3D(mrpt::poses::Lie::SE<3>::exp(twistDt));
+        }
+    }
+}
+}  // namespace
+
 const bool   NAVSTATE_PRINT_FG        = mrpt::get_env<bool>("NAVSTATE_PRINT_FG", false);
 const bool   NAVSTATE_PRINT_FG_ERRORS = mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERRORS", false);
 const double NAVSTATE_PRINT_FG_ERRORS_THRESHOLD =
@@ -588,6 +635,11 @@ void StateEstimationSmoother::fuse_pose_locked(
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
             gtsam::noiseModel::Gaussian::Covariance(cov_out));
+
+        // Remember this source's own last raw pose (in {odom_i}), the anchor
+        // estimated_navstate() extrapolates from to keep the short-term
+        // prediction continuous in the front end's own frame.
+        state_.last_raw_pose_by_source[frame_id_idx] = State::RawSourcePose{timestamp, poseSanitized};
     }
 }
 
@@ -700,18 +752,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // For now, approximate extrapolation only:
     NavState ret = retKf;
 
-    mrpt::math::CVectorFixed<double, 6> twistDt;
-    twistDt[0] = ret.twist.vx;
-    twistDt[1] = ret.twist.vy;
-    twistDt[2] = ret.twist.vz;
-    twistDt[3] = ret.twist.wx;
-    twistDt[4] = ret.twist.wy;
-    twistDt[5] = ret.twist.wz;
-    twistDt *= closestFrameDtSigned;
-    // SE(3) pose composition for extrapolating. TODO: Missing update cov!
-    ret.pose.mean = ret.pose.mean + mrpt::poses::Lie::SE<3>::exp(twistDt);
-
-    // Approximate uncertainty growth due to random walk:
+    // Approximate twist uncertainty growth due to random walk:
     {
         auto twist_cov = ret.twist_inv_cov.inverse_LLt();
         for (int i = 0; i < 3; i++)
@@ -725,42 +766,75 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         ret.twist_inv_cov = twist_cov.inverse_LLt();
     }
 
-    // 3) Convert pose to the requested frame_id:
-    if (frame_id != params_.reference_frame_name)
+    // 3) Produce the pose in the requested frame.
+    if (frame_id == params_.reference_frame_name)
     {
-        // The requested odometry frame may not have been registered yet
-        // (e.g. the very first query of a brand-new frame_id, before any
-        // fuse_pose()/fuse_odometry() call has registered it via
-        // add_or_get_odom_frame_id()). Treat that as "not ready yet" instead
-        // of throwing, the same as the other early-return cases above: a
-        // freshly-registered frame would only get an uninformative prior
-        // (sigma=INIT_ODOM_FRAME_POSE_SIGMA) anyway, which callers already
-        // reject as a usable motion model, so registering it here on a mere
-        // read would just leave a permanent, never-updated entry in the
-        // factor graph if frame_id never gets fused (e.g. a typo). If this
-        // persists instead of resolving after the first fuse_*() call for
-        // frame_id, it most likely indicates a frame-name mismatch between
-        // this module's configured frame names and a producer module's.
-        const auto it = state_.known_odom_frames.find_key(frame_id);
-        if (it == state_.known_odom_frames.getDirectMap().end())
+        // Reference ({map}) frame: extrapolate the closest keyframe pose forward
+        // with the configured kinematic model.
+        ret.pose.mean = ret.pose.mean + body_twist_delta(params_, ret.twist, closestFrameDtSigned);
+        return ret;
+    }
+
+    // The requested odometry frame may not have been registered yet (e.g. the
+    // very first query of a brand-new frame_id, before any fuse_pose()/
+    // fuse_odometry() call has registered it). Treat that as "not ready yet".
+    const auto it = state_.known_odom_frames.find_key(frame_id);
+    if (it == state_.known_odom_frames.getDirectMap().end())
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0, "[estimated_navstate] Requested unknown odometry frame_id='%s'", frame_id.c_str());
+        return {};
+    }
+    const auto requestedFrameIdx = it->second;
+
+    // Non-reference odometry frame {odom_i}: anchor on the source's OWN last raw
+    // pose in {odom_i} and extrapolate by the body-twist increment, instead of
+    // reconstructing it globally as X(kf) (-) T_map_to_odom_i. The fixed-lag
+    // window keeps that global reconstruction's {map}-correction leak small here,
+    // but anchoring on the raw pose removes it and keeps the prediction immune to
+    // geo-ref / loop-closure / per-solve jitter.
+    const auto itRaw = state_.last_raw_pose_by_source.find(requestedFrameIdx);
+    if (itRaw == state_.last_raw_pose_by_source.end())
+    {
+        // No raw pose received from this source yet: fall back to the global
+        // conversion (correct while {map} and {odom_i} still coincide).
+        const auto itFrame = state_.last_estimated_frames.find(requestedFrameIdx);
+        if (itFrame == state_.last_estimated_frames.end())
         {
-            MRPT_LOG_THROTTLE_WARN_FMT(
-                5.0, "[estimated_navstate] Requested unknown odometry frame_id='%s'",
-                frame_id.c_str());
             return {};
         }
-
-        // Transform:
-        const auto requestedFrameIdx    = it->second;
-        const auto posePdfFrame_wrt_map = state_.last_estimated_frames.at(requestedFrameIdx);
-
+        ret.pose.mean = ret.pose.mean + body_twist_delta(params_, ret.twist, closestFrameDtSigned);
         mrpt::poses::CPose3DPDFGaussianInf posePdfFrame_wrt_map_inf;
-        posePdfFrame_wrt_map_inf.copyFrom(posePdfFrame_wrt_map);
-
-        // Probabilistic inverse pose composition:
-        // TO-DO: Is it worth including the cross-covariances...?
+        posePdfFrame_wrt_map_inf.copyFrom(itFrame->second);
         ret.pose = ret.pose - posePdfFrame_wrt_map_inf;
+        return ret;
     }
+
+    // Frame-local extrapolation from the source's last raw pose in {odom_i}:
+    const auto&  rawAnchor = itRaw->second;
+    const double dtPred    = mrpt::system::timeDifference(rawAnchor.stamp, timestamp);
+
+    if (std::abs(dtPred) > params_.max_time_to_use_velocity_model)
+    {
+        return {};
+    }
+
+    mrpt::poses::CPose3DPDFGaussian pred;
+    pred.mean = rawAnchor.pose.mean + body_twist_delta(params_, ret.twist, dtPred);
+
+    // Frame-local covariance: the anchor is the front end's own (near-exact) pose
+    // in {odom_i}, so prediction uncertainty is dominated by the one-step
+    // extrapolation, not the absolute {map}-frame keyframe covariance.
+    pred.cov         = rawAnchor.pose.cov;
+    const double adt = std::abs(dtPred);
+    for (int i = 0; i < 3; i++)
+    {
+        pred.cov(i, i) += mrpt::square(params_.sigma_random_walk_acceleration_linear * adt * adt);
+        pred.cov(3 + i, 3 + i) +=
+            mrpt::square(params_.sigma_random_walk_acceleration_angular * adt * adt);
+    }
+
+    ret.pose.copyFrom(pred);  // NavState.pose is CPose3DPDFGaussianInf
 
     return ret;
 }
