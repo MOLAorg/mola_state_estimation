@@ -51,6 +51,7 @@ mola_add_library(
     include/mola_gtsam_factors/FactorTricycleKinematic.h
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/MapGravityFactor.h
     include/mola_gtsam_factors/MeasuredGravityFactor.h
     include/mola_gtsam_factors/Pose3RotationFactor.h
     src/FactorAngularVelocityIntegration.cpp
@@ -59,6 +60,7 @@ mola_add_library(
     src/FactorGnssMapEnu.cpp
     src/FactorTrapezoidalIntegrator.cpp
     src/FactorTricycleKinematic.cpp
+    src/MapGravityFactor.cpp
     src/MeasuredGravityFactor.cpp
     src/Pose3RotationFactor.cpp
     src/register.cpp
