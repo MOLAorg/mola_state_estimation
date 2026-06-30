@@ -31,10 +31,11 @@ modules:
   # MolaViz (optional)
   # =====================
   - name: viz
-    type: mola::MolaViz
+    type: ${MOLA_GUI_MODULE|mola::MolaVizImGui}
     enabled: ${MOLA_WITH_GUI|true}
     verbosity_level: INFO
-    params: ~
+    params:
+      imgui_app_name: demo_lidar_odom_plus_wheel_odom_fusion
 
   # =====================
   # LiDAR Odometry Front-End
