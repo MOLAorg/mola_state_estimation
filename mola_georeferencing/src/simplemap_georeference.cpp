@@ -382,6 +382,13 @@ void mola::add_gnss_factors(
     using gtsam::symbol_shorthand::P;  // P(i): each vehicle pose, in the {map} frame
     using gtsam::symbol_shorthand::T;  // T(0): the single sought transformation: {enu} -> {map}
 
+    if (!std::isfinite(params.robustParamHuberK) || params.robustParamHuberK <= 0)
+    {
+        THROW_EXCEPTION_FMT(
+            "Invalid AddGNSSFactorParams::robustParamHuberK=%f: must be finite and positive.",
+            params.robustParamHuberK);
+    }
+
     v.insert(T(0), gtsam::Pose3::Identity());
 
     // Expression to optimize (i=0...N):
