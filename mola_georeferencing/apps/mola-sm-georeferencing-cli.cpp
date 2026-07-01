@@ -212,11 +212,26 @@ void run_sm_georef(Cli& cli)
     // moving the geodetic datum accordingly (see mola::recenter_georeference).
     if (cli.argSetEnuToMapXYZ.isSet())
     {
+        if (!smGeo.has_geodetic_datum)
+        {
+            THROW_EXCEPTION(
+                "--set-t-enu-to-map-xyz requires a GNSS-derived geodetic datum, but "
+                "the input simplemap only provided IMU data (no real geo_coord to "
+                "re-datum).");
+        }
+
         std::string s = cli.argSetEnuToMapXYZ.getValue();
         std::replace(s.begin(), s.end(), ',', ' ');
-        std::istringstream    iss(s);
-        mrpt::math::TPoint3D  xyz;
+        std::istringstream   iss(s);
+        mrpt::math::TPoint3D xyz;
         if (!(iss >> xyz.x >> xyz.y >> xyz.z))
+        {
+            THROW_EXCEPTION_FMT(
+                "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",
+                cli.argSetEnuToMapXYZ.getValue().c_str());
+        }
+        iss >> std::ws;
+        if (!iss.eof())
         {
             THROW_EXCEPTION_FMT(
                 "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",

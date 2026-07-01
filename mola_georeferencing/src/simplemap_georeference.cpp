@@ -160,6 +160,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     if (smFrames.refCoord.has_value())
     {
         ret.geo_ref->geo_coord = *smFrames.refCoord;
+        ret.has_geodetic_datum = true;
     }
 
     ret.final_rmse = rmseEnd;
@@ -172,6 +173,7 @@ mp2p_icp::metric_map_t::Georeferencing mola::recenter_georeference(
     const mrpt::math::TPoint3D&                   desiredEnuToMapTranslation)
 {
     using mrpt::poses::CPose3D;
+    using mrpt::poses::CPose3DPDFGaussian;
 
     mp2p_icp::metric_map_t::Georeferencing out = in;
 
@@ -181,40 +183,45 @@ mp2p_icp::metric_map_t::Georeferencing mola::recenter_georeference(
     // curved Earth: the local ENU axes rotate as the datum moves, so keeping the
     // same T_enu_to_map rotation while shifting the datum would only be a
     // flat-Earth approximation. Instead we preserve the physical map<->ECEF
-    // placement and recompute T_enu_to_map for the new datum's ENU frame.
+    // placement and recompute T_enu_to_map for the new datum's ENU frame. Note
+    // that this means the rotation of T_enu_to_map is, in general, NOT
+    // preserved: only the map<->geodetic mapping is left exact.
 
     // ENU frame of the current datum, expressed in ECEF (rotation = ENU->ECEF,
-    // translation = datum ECEF position):
+    // translation = datum ECEF position). This is deterministic (no uncertainty).
     mrpt::math::TPose3D e0;
     mrpt::topography::ENU_axes_from_WGS84(in.geo_coord, e0, /*only_angles=*/false);
-    const CPose3D E0(e0);
+    const CPose3DPDFGaussian E0{CPose3D(e0)};
 
     // Physical placement of the map in ECEF (invariant): map -> ECEF.
     //   map -> ENU is T_enu_to_map^{-1}; ENU -> ECEF is E0.
-    const CPose3D A = E0 + (-in.T_enu_to_map.mean);
+    // Using the Gaussian PDF composition operators propagates the input
+    // covariance through this transformation (instead of just its mean).
+    const CPose3DPDFGaussian A = E0 + (-in.T_enu_to_map);
 
     // The new ENU datum is placed at the map point `t1` (T_enu_to_map maps the
-    // ENU origin to its own translation). Its ECEF position:
-    const mrpt::math::TPoint3D X1 = A.composePoint(t1);
+    // ENU origin to its own translation). Its ECEF position (mean only, `t1` is
+    // a fixed user input with no uncertainty):
+    const mrpt::math::TPoint3D X1 = A.mean.composePoint(t1);
 
     // New datum in geodetic coordinates (ECEF -> geodetic):
     mrpt::topography::TGeodeticCoords newDatum;
     mrpt::topography::geocentricToGeodetic(
         X1, newDatum, mrpt::topography::TEllipsoid::Ellipsoid_WGS84());
 
-    // ENU frame of the new datum in ECEF:
+    // ENU frame of the new datum in ECEF (deterministic):
     mrpt::math::TPose3D e1;
     mrpt::topography::ENU_axes_from_WGS84(newDatum, e1, /*only_angles=*/false);
-    const CPose3D E1(e1);
+    const CPose3DPDFGaussian E1{CPose3D(e1)};
 
     // New T_enu_to_map preserving the exact map<->ECEF placement:
     //   map -> ECEF = E1 o T1^{-1} = A   =>   T1 = A^{-1} o E1.
-    // By construction its translation equals `t1`.
-    const CPose3D T1 = (-A) + E1;
+    // By construction its mean translation equals `t1`; its covariance is the
+    // propagation of the input T_enu_to_map covariance through this chain.
+    const CPose3DPDFGaussian T1 = (-A) + E1;
 
-    out.geo_coord         = newDatum;
-    out.T_enu_to_map.mean = T1;
-    // 6D covariance kept as-is (deterministic re-parameterization).
+    out.geo_coord    = newDatum;
+    out.T_enu_to_map = T1;
 
     return out;
 }

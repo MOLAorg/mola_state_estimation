@@ -28,6 +28,7 @@
 #include <mrpt/poses/Lie/SO.h>
 #include <mrpt/topography/conversions.h>
 
+#include <Eigen/Dense>
 #include <fstream>
 #include <memory>
 
@@ -485,6 +486,16 @@ void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
         return;
     }
 
+    // Reject fixes that predate the anchor's own timestamp: fusing a delayed
+    // GNSS position into an anchor already extrapolated past that time (while
+    // leaving last_pose_obs_tim untouched) would apply the correction a second
+    // time on the next estimated_navstate() extrapolation.
+    if (state_.last_pose_obs_tim.has_value() && gps.timestamp < *state_.last_pose_obs_tim)
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored, stale GNSS fix older than last_pose_obs_tim");
+        return;
+    }
+
     if (!gps.has_GGA_datum())
     {
         MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored, no GGA datum");
@@ -554,36 +565,61 @@ void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
         vehicle_in_map -= lever_map;
     }
 
-    // Per-axis scalar Kalman correction of the anchor position. Orientation and
-    // twist are untouched (GNSS observes neither). A covariance FLOOR keeps the
-    // downstream ICP prior from collapsing below the motion-model needs.
+    // Full linear Kalman correction of the anchor pose from the GNSS position
+    // observation. The state is [x y z yaw pitch roll]; the position rows of
+    // the 6x6 covariance may be correlated with orientation (e.g. after an
+    // IMU/ICP update), so a per-axis diagonal-only correction would leave
+    // those cross terms stale and inconsistent. Twist is untouched (GNSS
+    // observes neither). A covariance FLOOR keeps the downstream ICP prior
+    // from collapsing below the motion-model needs.
     const double sigma_xy    = std::max(horiz_sigma, params.gnss_min_sigma_floor_xy);
     const double meas_var_xy = mrpt::square(sigma_xy);
+    const double meas_var_z  = mrpt::square(
+         std::max(std::sqrt(std::max(cov_enu(2, 2), .0)), params.gnss_min_sigma_floor_z));
 
-    auto&        mean       = state_.last_pose->mean;
-    auto&        cov        = state_.last_pose->cov;
-    const double meas[3]    = {vehicle_in_map.x, vehicle_in_map.y, vehicle_in_map.z};
-    const int    n_axes     = params.gnss_fuse_z ? 3 : 2;
-    double       new_xyz[3] = {mean.x(), mean.y(), mean.z()};
-    for (int i = 0; i < n_axes; i++)
+    auto&     mean   = state_.last_pose->mean;
+    auto&     cov    = state_.last_pose->cov;
+    const int n_axes = params.gnss_fuse_z ? 3 : 2;
+
+    Eigen::VectorXd innovation(n_axes);
+    innovation(0) = vehicle_in_map.x - mean.x();
+    innovation(1) = vehicle_in_map.y - mean.y();
+    if (n_axes == 3)
     {
-        const double meas_var =
-            (i < 2) ? meas_var_xy
-                    : mrpt::square(std::max(
-                          std::sqrt(std::max(cov_enu(2, 2), .0)), params.gnss_min_sigma_floor_z));
-        const double P     = cov(i, i);
-        const double denom = P + meas_var;
-        if (denom <= 0)
-        {
-            continue;
-        }
-        const double K = P / denom;
-        new_xyz[i]     = new_xyz[i] + K * (meas[i] - new_xyz[i]);
-        cov(i, i)      = (1.0 - K) * P;
+        innovation(2) = vehicle_in_map.z - mean.z();
     }
-    mean.x(new_xyz[0]);
-    mean.y(new_xyz[1]);
-    mean.z(new_xyz[2]);
+
+    Eigen::MatrixXd R = Eigen::MatrixXd::Zero(n_axes, n_axes);
+    R(0, 0)           = meas_var_xy;
+    R(1, 1)           = meas_var_xy;
+    if (n_axes == 3)
+    {
+        R(2, 2) = meas_var_z;
+    }
+
+    auto P = cov.asEigen();  // 6x6 Eigen map onto the pose covariance.
+
+    // H selects the first n_axes rows (the observed position components), so
+    // H*P is simply the top n_axes rows of P, and P*H^T its left n_axes cols.
+    const Eigen::MatrixXd HP = P.topRows(n_axes);
+    const Eigen::MatrixXd S  = P.topLeftCorner(n_axes, n_axes) + R;
+    if (S.determinant() <= 0)
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored, non-invertible innovation covariance");
+        return;
+    }
+    const Eigen::MatrixXd K  = P.leftCols(n_axes) * S.inverse();
+    const Eigen::VectorXd dx = K * innovation;
+
+    mean.x(mean.x() + dx(0));
+    mean.y(mean.y() + dx(1));
+    if (n_axes == 3)
+    {
+        mean.z(mean.z() + dx(2));
+    }
+    mean.setYawPitchRoll(mean.yaw() + dx(3), mean.pitch() + dx(4), mean.roll() + dx(5));
+
+    P -= K * HP;
 
     MRPT_LOG_DEBUG_FMT(
         "fuse_gnss(): corrected anchor to map=(%.3f,%.3f,%.3f) horiz_sigma=%.3f m", mean.x(),
