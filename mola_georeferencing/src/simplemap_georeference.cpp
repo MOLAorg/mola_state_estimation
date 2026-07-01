@@ -394,7 +394,7 @@ void mola::add_gnss_factors(
                 .max(params.minimumUncertaintyXYZ));
 
         auto robustNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(1.5), noiseOrg);
+            gtsam::noiseModel::mEstimator::Huber::Create(params.robustParamHuberK), noiseOrg);
 
         const auto observedENU = mrpt::gtsam_wrappers::toPoint3(frame.enu);
         const auto sensorPointOnVeh =

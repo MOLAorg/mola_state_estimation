@@ -45,6 +45,11 @@ struct AddGNSSFactorParams
     double horizontalitySigmaZ         = 1.0;  // [m]
 
     double minimumUncertaintyXYZ = 0.20;  // [m]
+
+    /// Parameter "k" (in whitened/normalized units) of the Huber robust kernel
+    /// applied to each GNSS position factor. Residuals below this threshold are
+    /// treated quadratically; larger ones are down-weighted linearly.
+    double robustParamHuberK = 1.5;
 };
 
 struct AddIMUGravityFactorParams

@@ -78,6 +78,16 @@ struct Cli
         "0.20",
         cmd};
 
+    TCLAP::ValueArg<double> argGnssHuberK{
+        "",
+        "gnss-huber-k",
+        "Parameter 'k' of the Huber robust kernel applied to GNSS position "
+        "factors (whitened units). Default: 1.5",
+        false,
+        1.5,
+        "1.5",
+        cmd};
+
     TCLAP::ValueArg<unsigned int> argMinFixQuality{
         "",
         "min-gnss-fix-quality",
@@ -170,6 +180,10 @@ void run_sm_georef(Cli& cli)
     if (cli.argMinUncertaintyXYZ.isSet())
     {
         p.fgParams.minimumUncertaintyXYZ = cli.argMinUncertaintyXYZ.getValue();
+    }
+    if (cli.argGnssHuberK.isSet())
+    {
+        p.fgParams.robustParamHuberK = cli.argGnssHuberK.getValue();
     }
 
     if (cli.argMinFixQuality.isSet())
