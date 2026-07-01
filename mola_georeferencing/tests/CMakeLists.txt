@@ -25,3 +25,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_georeferencing
 )
+
+mola_add_test(
+  TARGET  test_recenter_georeference
+  SOURCES test_recenter_georeference.cpp
+  LINK_LIBRARIES
+    mola::mola_georeferencing
+)

@@ -25,6 +25,7 @@
 #include <mola_state_estimation_simple/Parameters.h>
 
 // MOLA
+#include <mola_kernel/Georeferencing.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_kernel/version.h>
 #include <mrpt/containers/yaml.h>
@@ -119,6 +120,17 @@ class StateEstimationSimple : public mola::NavStateFilter
     /** Integrates new GNSS observations into the estimator */
     void fuse_gnss(const mrpt::obs::CObservationGPS& gps) override;
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+    /** Provides the fixed geo-reference (geodetic datum + ENU->map transform)
+     *  used by fuse_gnss() to convert GNSS fixes into map-frame corrections.
+     *  In map-based localization this comes from the loaded `.mm` map.
+     *  Without it (and without params.gnss_enabled) GNSS is ignored. */
+    void set_geo_reference(const mola::Georeferencing& georef) override;
+
+    /** Returns the currently set geo-reference, if any. */
+    std::optional<mola::Georeferencing> get_geo_reference() const override;
+#endif
+
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
@@ -198,7 +210,13 @@ class StateEstimationSimple : public mola::NavStateFilter
         const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
         const mrpt::Clock::time_point& tim, const std::string& caller = "");
 
-    State                        state_;
+    State state_;
+
+    // Fixed geo-reference (datum + ENU->map) for GNSS fusion. Config-like:
+    // set once via set_geo_reference() and deliberately NOT cleared by reset(),
+    // so relocalization keeps the map's geo-reference.
+    std::optional<mola::Georeferencing> geo_reference_;
+
     mutable std::recursive_mutex state_mtx_;
 };
 

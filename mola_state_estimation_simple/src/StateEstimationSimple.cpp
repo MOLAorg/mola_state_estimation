@@ -24,7 +24,9 @@
 #include <mola_yaml/yaml_helpers.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservationRobotPose.h>
+#include <mrpt/obs/gnss_messages.h>
 #include <mrpt/poses/Lie/SO.h>
+#include <mrpt/topography/conversions.h>
 
 #include <fstream>
 #include <memory>
@@ -445,15 +447,147 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+void StateEstimationSimple::set_geo_reference(const mola::Georeferencing& georef)
+{
+    auto lck       = std::scoped_lock(state_mtx_);
+    geo_reference_ = georef;
+}
+
+std::optional<mola::Georeferencing> StateEstimationSimple::get_geo_reference() const
+{
+    auto lck = std::scoped_lock(state_mtx_);
+    return geo_reference_;
+}
+#endif
+
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     auto lck = std::scoped_lock(state_mtx_);
 
-    // This estimator will just ignore GPS.
-    // Refer to the smoother for a more versatile estimator.
-    (void)gps;
+    // GNSS fusion is opt-in and needs a geo-reference to place fixes in the map
+    // frame. Without either, ignore (legacy behavior; see the smoother for a
+    // full graph-based estimator).
+    if (!params.gnss_enabled)
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored (gnss_enabled=false)");
+        return;
+    }
+    if (!geo_reference_.has_value())
+    {
+        MRPT_LOG_THROTTLE_WARN(5.0, "fuse_gnss(): ignored, no geo-reference set");
+        return;
+    }
+    // We only correct an existing anchor; the LiDAR/odometry backbone must exist.
+    if (!state_.last_pose.has_value())
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored, no last_pose yet");
+        return;
+    }
 
-    MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored in this class");
+    if (!gps.has_GGA_datum())
+    {
+        MRPT_LOG_DEBUG_STREAM("fuse_gnss(): ignored, no GGA datum");
+        return;
+    }
+    if (!gps.covariance_enu.has_value())
+    {
+        MRPT_LOG_THROTTLE_WARN(5.0, "fuse_gnss(): ignored, GNSS reading has no ENU covariance");
+        return;
+    }
+
+    // RTK gate: reject anything but low-uncertainty fixes. The larger of the
+    // east/north variances defines the horizontal sigma; this also rejects the
+    // UINT32_MAX no-fix covariance sentinel.
+    const auto&  cov_enu = *gps.covariance_enu;
+    const double var_e   = cov_enu(0, 0);
+    const double var_n   = cov_enu(1, 1);
+    // A valid position fix must report strictly positive horizontal variances.
+    // Zero or negative values are invalid (uninitialized / no-fix / corrupted)
+    // and would otherwise fabricate a spuriously confident anchor correction.
+    if (!std::isfinite(var_e) || !std::isfinite(var_n) || var_e <= 0 || var_n <= 0)
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0, "fuse_gnss(): ignored, non-positive ENU variance (var_e=%g, var_n=%g)", var_e,
+            var_n);
+        return;
+    }
+    if (params.gnss_fuse_z)
+    {
+        const double var_u = cov_enu(2, 2);
+        if (!std::isfinite(var_u) || var_u <= 0)
+        {
+            MRPT_LOG_THROTTLE_WARN_FMT(
+                5.0, "fuse_gnss(): ignored, non-positive ENU up-variance (var_u=%g)", var_u);
+            return;
+        }
+    }
+    const double horiz_var   = std::max(var_e, var_n);
+    const double horiz_sigma = std::sqrt(horiz_var);
+    if (!std::isfinite(horiz_sigma) || horiz_sigma > params.gnss_max_horizontal_sigma)
+    {
+        MRPT_LOG_DEBUG_FMT(
+            "fuse_gnss(): ignored, horiz_sigma=%.3f m > gate %.3f m", horiz_sigma,
+            params.gnss_max_horizontal_sigma);
+        return;
+    }
+
+    // Geodetic -> ENU (wrt the map datum) -> map frame.
+    const auto& gga       = gps.getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+    const auto  geoCoords = gga.getAsStruct<mrpt::topography::TGeodeticCoords>();
+
+    mrpt::math::TPoint3D enu_point;
+    mrpt::topography::geodeticToENU_WGS84(geoCoords, enu_point, geo_reference_->geo_coord);
+
+    // Antenna position in the map frame:
+    const mrpt::poses::CPose3D antenna_in_map =
+        geo_reference_->T_enu_to_map.mean +
+        mrpt::poses::CPose3D(enu_point.x, enu_point.y, enu_point.z, 0, 0, 0);
+
+    // The fix locates the ANTENNA; shift by the antenna lever arm (expressed in
+    // the vehicle frame via the current attitude) to obtain the vehicle-frame
+    // position the anchor represents.
+    mrpt::math::TPoint3D vehicle_in_map = antenna_in_map.translation();
+    if (gps.sensorPose != mrpt::poses::CPose3D())
+    {
+        const auto lever_map = state_.last_pose->mean.rotateVector(gps.sensorPose.translation());
+        vehicle_in_map -= lever_map;
+    }
+
+    // Per-axis scalar Kalman correction of the anchor position. Orientation and
+    // twist are untouched (GNSS observes neither). A covariance FLOOR keeps the
+    // downstream ICP prior from collapsing below the motion-model needs.
+    const double sigma_xy    = std::max(horiz_sigma, params.gnss_min_sigma_floor_xy);
+    const double meas_var_xy = mrpt::square(sigma_xy);
+
+    auto&        mean       = state_.last_pose->mean;
+    auto&        cov        = state_.last_pose->cov;
+    const double meas[3]    = {vehicle_in_map.x, vehicle_in_map.y, vehicle_in_map.z};
+    const int    n_axes     = params.gnss_fuse_z ? 3 : 2;
+    double       new_xyz[3] = {mean.x(), mean.y(), mean.z()};
+    for (int i = 0; i < n_axes; i++)
+    {
+        const double meas_var =
+            (i < 2) ? meas_var_xy
+                    : mrpt::square(std::max(
+                          std::sqrt(std::max(cov_enu(2, 2), .0)), params.gnss_min_sigma_floor_z));
+        const double P     = cov(i, i);
+        const double denom = P + meas_var;
+        if (denom <= 0)
+        {
+            continue;
+        }
+        const double K = P / denom;
+        new_xyz[i]     = new_xyz[i] + K * (meas[i] - new_xyz[i]);
+        cov(i, i)      = (1.0 - K) * P;
+    }
+    mean.x(new_xyz[0]);
+    mean.y(new_xyz[1]);
+    mean.z(new_xyz[2]);
+
+    MRPT_LOG_DEBUG_FMT(
+        "fuse_gnss(): corrected anchor to map=(%.3f,%.3f,%.3f) horiz_sigma=%.3f m", mean.x(),
+        mean.y(), mean.z(), horiz_sigma);
 }
 
 void StateEstimationSimple::fuse_pose(
