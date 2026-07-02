@@ -17,10 +17,13 @@
 #include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/io/CFileGZOutputStream.h>
+#include <mrpt/math/TPoint3D.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 
+#include <algorithm>
 #include <fstream>
+#include <sstream>
 
 // CLI flags:
 
@@ -75,6 +78,16 @@ struct Cli
         "0.20",
         cmd};
 
+    TCLAP::ValueArg<double> argGnssHuberK{
+        "",
+        "gnss-huber-k",
+        "Parameter 'k' of the Huber robust kernel applied to GNSS position "
+        "factors (whitened units). Default: 1.5",
+        false,
+        1.5,
+        "1.5",
+        cmd};
+
     TCLAP::ValueArg<unsigned int> argMinFixQuality{
         "",
         "min-gnss-fix-quality",
@@ -101,6 +114,19 @@ struct Cli
         "Disable using IMU acceleration data for gravity alignment "
         "(enabled by default).",
         cmd, false};
+
+    TCLAP::ValueArg<std::string> argSetEnuToMapXYZ{
+        "",
+        "set-t-enu-to-map-xyz",
+        "Instead of keeping the GNSS-derived translation of T_enu_to_map (which "
+        "may be several meters from the map origin), force it to the given "
+        "\"X,Y,Z\" (meters, map frame) and move the geodetic datum accordingly so "
+        "the map<->geodetic mapping is preserved. Use \"0,0,0\" to place the ENU "
+        "origin at the map origin. The estimated rotation is kept.",
+        false,
+        "0,0,0",
+        "X,Y,Z",
+        cmd};
 
     TCLAP::ValueArg<std::string> arg_verbosity_level{
         "v",   "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)",
@@ -155,6 +181,10 @@ void run_sm_georef(Cli& cli)
     {
         p.fgParams.minimumUncertaintyXYZ = cli.argMinUncertaintyXYZ.getValue();
     }
+    if (cli.argGnssHuberK.isSet())
+    {
+        p.fgParams.robustParamHuberK = cli.argGnssHuberK.getValue();
+    }
 
     if (cli.argMinFixQuality.isSet())
     {
@@ -170,12 +200,51 @@ void run_sm_georef(Cli& cli)
         p.imuGravityParams.imuGravitySigmaDeg = cli.argIMUGravitySigmaDeg.getValue();
     }
 
-    const mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);
+    mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);
 
     if (!smGeo.geo_ref.has_value())
     {
         std::cerr << "Georeferencing failed. No output will be generated.\n";
         return;
+    }
+
+    // Optional re-datuming: force T_enu_to_map to a user-defined translation,
+    // moving the geodetic datum accordingly (see mola::recenter_georeference).
+    if (cli.argSetEnuToMapXYZ.isSet())
+    {
+        if (!smGeo.has_geodetic_datum)
+        {
+            THROW_EXCEPTION(
+                "--set-t-enu-to-map-xyz requires a GNSS-derived geodetic datum, but "
+                "the input simplemap only provided IMU data (no real geo_coord to "
+                "re-datum).");
+        }
+
+        std::string s = cli.argSetEnuToMapXYZ.getValue();
+        std::replace(s.begin(), s.end(), ',', ' ');
+        std::istringstream   iss(s);
+        mrpt::math::TPoint3D xyz;
+        if (!(iss >> xyz.x >> xyz.y >> xyz.z))
+        {
+            THROW_EXCEPTION_FMT(
+                "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",
+                cli.argSetEnuToMapXYZ.getValue().c_str());
+        }
+        iss >> std::ws;
+        if (!iss.eof())
+        {
+            THROW_EXCEPTION_FMT(
+                "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",
+                cli.argSetEnuToMapXYZ.getValue().c_str());
+        }
+
+        smGeo.geo_ref = mola::recenter_georeference(*smGeo.geo_ref, xyz);
+
+        logger.logFmt(
+            mrpt::system::LVL_INFO,
+            "Re-centered T_enu_to_map translation to (%.3f, %.3f, %.3f) and moved datum "
+            "accordingly.",
+            xyz.x, xyz.y, xyz.z);
     }
 
     const auto& geo_ref = smGeo.geo_ref.value();

@@ -44,6 +44,12 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
+    MCP_LOAD_OPT(cfg, gnss_enabled);
+    MCP_LOAD_OPT(cfg, gnss_max_horizontal_sigma);
+    MCP_LOAD_OPT(cfg, gnss_min_sigma_floor_xy);
+    MCP_LOAD_OPT(cfg, gnss_min_sigma_floor_z);
+    MCP_LOAD_OPT(cfg, gnss_fuse_z);
+
     if (cfg.has("initial_twist"))
     {
         ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);

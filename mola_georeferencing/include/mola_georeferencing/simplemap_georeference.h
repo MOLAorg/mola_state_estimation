@@ -34,6 +34,13 @@ struct SMGeoReferencingOutput
     /// data.
     std::optional<mp2p_icp::metric_map_t::Georeferencing> geo_ref;
 
+    /// True if `geo_ref->geo_coord` was actually derived from GNSS data.
+    /// False (default) means it was left at its zero-initialized value, e.g.
+    /// because only IMU data was available for gravity alignment; in that
+    /// case, `geo_ref->geo_coord` must NOT be treated as a real geodetic
+    /// reference (e.g. for datum re-centering).
+    bool has_geodetic_datum = false;
+
     double final_rmse = .0;
 };
 
@@ -45,6 +52,11 @@ struct AddGNSSFactorParams
     double horizontalitySigmaZ         = 1.0;  // [m]
 
     double minimumUncertaintyXYZ = 0.20;  // [m]
+
+    /// Parameter "k" (in whitened/normalized units) of the Huber robust kernel
+    /// applied to each GNSS position factor. Residuals below this threshold are
+    /// treated quadratically; larger ones are down-weighted linearly.
+    double robustParamHuberK = 1.5;
 };
 
 struct AddIMUGravityFactorParams
@@ -82,6 +94,30 @@ struct SMGeoReferencingParams
  */
 SMGeoReferencingOutput simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params = {});
+
+/** Re-datums a geo-referencing so that its `T_enu_to_map` has exactly the given
+ *  translation, shifting the geodetic datum (`geo_coord`) accordingly so that
+ *  the map <-> geodetic mapping is left completely unchanged. Since the local
+ *  ENU axes rotate as the datum moves on the curved Earth, the rotation of
+ *  `T_enu_to_map` is only approximately preserved (exactly so for small datum
+ *  shifts); the 6D covariance is propagated accordingly, not just copied.
+ *
+ *  The ENU frame origin (datum) ends up placed at the map point located at
+ *  \a desiredEnuToMapTranslation (since `T_enu_to_map` maps ENU (0,0,0) to its
+ *  own translation).
+ *
+ *  This is useful to force the ENU origin to a chosen map location (e.g. the map
+ *  origin, passing {0,0,0}) instead of the arbitrary first-GNSS position, which
+ *  may be several meters from the map origin and make it awkward to pick an
+ *  initial pose for localization.
+ *
+ *  \param in The input geo-referencing (datum + T_enu_to_map).
+ *  \param desiredEnuToMapTranslation The desired translation of T_enu_to_map.
+ *  \return The re-datumed, geometrically-equivalent geo-referencing.
+ */
+mp2p_icp::metric_map_t::Georeferencing recenter_georeference(
+    const mp2p_icp::metric_map_t::Georeferencing& in,
+    const mrpt::math::TPoint3D&                   desiredEnuToMapTranslation);
 
 struct FrameGNSS
 {

@@ -76,6 +76,37 @@ class Parameters
 
     /// regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
     std::string do_process_gnss_labels_re = ".*";
+
+    /** \name GNSS (GPS/RTK) absolute-position fusion
+     *  When enabled AND a geo-reference has been provided (see
+     *  StateEstimationSimple::set_geo_reference), low-uncertainty GNSS fixes
+     *  (e.g. RTK) nudge the pose anchor toward the absolute map-frame position
+     *  to arrest slow drift, without collapsing the ICP prior below what the
+     *  motion model needs to cover the next step.
+     *  @{ */
+
+    /// Master switch. Default false preserves the legacy "GNSS ignored" behavior.
+    bool gnss_enabled = false;
+
+    /** Reject any GNSS fix whose reported horizontal sigma
+     *  (sqrt of the larger of the ENU east/north variances) exceeds this [m].
+     *  The default 0.20 m cleanly selects RTK-fixed samples and rejects
+     *  RTK-float / no-fix (and the UINT32_MAX no-fix covariance sentinel). */
+    double gnss_max_horizontal_sigma = 0.20;  // [m]
+
+    /** Lower bound on the horizontal measurement sigma actually used to correct
+     *  the anchor [m]. A 2 cm RTK fix is softened to this floor so the prior
+     *  Gaussian sent to the ICP still spans the next-step motion at speed. */
+    double gnss_min_sigma_floor_xy = 0.10;  // [m]
+
+    /// Same floor for the vertical component [m] (used only if gnss_fuse_z).
+    double gnss_min_sigma_floor_z = 0.30;  // [m]
+
+    /** If true, also correct the Z of the anchor. Default false: vehicle-frame
+     *  vertical is usually poorly observed and GNSS altitude is noisier. */
+    bool gnss_fuse_z = false;
+
+    /** @} */
 };
 
 }  // namespace mola::state_estimation_simple
