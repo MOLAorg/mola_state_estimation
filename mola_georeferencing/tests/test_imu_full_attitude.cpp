@@ -57,16 +57,19 @@ double angle_diff_deg(double a_deg, double b_deg)
 // report, before any user calibration is applied).
 mrpt::maps::CSimpleMap build_synthetic_attitude_map(
     double roll_deg, double pitch_deg, double yaw_deg, double sensor_yaw_deg,
-    double trueAzimuthOffsetDeg, double noiseSigmaDeg, size_t nKeyframes, unsigned seed)
+    double trueAzimuthOffsetDeg, double noiseSigmaDeg, size_t nKeyframes, unsigned seed,
+    bool addGravity = false, double accNoiseSigma = 0.15)
 {
     mrpt::maps::CSimpleMap sm;
 
     const mrpt::poses::CPose3D T_enu_to_map(
         0, 0, 0, mrpt::DEG2RAD(yaw_deg), mrpt::DEG2RAD(pitch_deg), mrpt::DEG2RAD(roll_deg));
-    const mrpt::poses::CPose3D T_veh_to_sensor(0, 0, 0, mrpt::DEG2RAD(sensor_yaw_deg), 0, 0);
+    const mrpt::poses::CPose3D  T_veh_to_sensor(0, 0, 0, mrpt::DEG2RAD(sensor_yaw_deg), 0, 0);
+    const mrpt::math::TVector3D g_enu(0, 0, 9.81);
 
     std::mt19937                     rng(seed);
     std::normal_distribution<double> noise(0.0, mrpt::DEG2RAD(noiseSigmaDeg));
+    std::normal_distribution<double> acc_noise(0.0, accNoiseSigma);
 
     for (size_t i = 0; i < nKeyframes; i++)
     {
@@ -81,6 +84,19 @@ mrpt::maps::CSimpleMap build_synthetic_attitude_map(
         obs_imu->sensorPose = T_veh_to_sensor;
 
         const mrpt::poses::CPose3D T_enu_to_sensor = T_enu_to_map + T_map_to_veh + T_veh_to_sensor;
+
+        if (addGravity)
+        {
+            // Noisy gravity (accelerometer) reading:
+            mrpt::math::TVector3D a_sensor = T_enu_to_sensor.inverseRotateVector(g_enu);
+            a_sensor.x += acc_noise(rng);
+            a_sensor.y += acc_noise(rng);
+            a_sensor.z += acc_noise(rng);
+            obs_imu->set(mrpt::obs::IMU_X_ACC, a_sensor.x);
+            obs_imu->set(mrpt::obs::IMU_Y_ACC, a_sensor.y);
+            obs_imu->set(mrpt::obs::IMU_Z_ACC, a_sensor.z);
+        }
+
         const gtsam::Rot3 predicted = mrpt::gtsam_wrappers::toPose3(T_enu_to_sensor).rotation();
 
         // Undo the fixed ENU convention (yaw=0 => East) plus the true azimuth
@@ -207,54 +223,9 @@ void test_gravity_and_attitude_factors_combine_without_conflict()
     const double noiseSigmaDeg = 2.0;
     const size_t nKeyframes    = 30;
 
-    mrpt::maps::CSimpleMap sm;
-
-    const mrpt::poses::CPose3D T_enu_to_map(
-        0, 0, 0, mrpt::DEG2RAD(yaw_deg), mrpt::DEG2RAD(pitch_deg), mrpt::DEG2RAD(roll_deg));
-    const mrpt::poses::CPose3D  T_veh_to_sensor(0, 0, 0, mrpt::DEG2RAD(sensor_yaw_deg), 0, 0);
-    const mrpt::math::TVector3D g_enu(0, 0, 9.81);
-
-    std::mt19937                     rng(123);
-    std::normal_distribution<double> ang_noise(0.0, mrpt::DEG2RAD(noiseSigmaDeg));
-    std::normal_distribution<double> acc_noise(0.0, 0.15);  // [m/s^2]
-
-    for (size_t i = 0; i < nKeyframes; i++)
-    {
-        const mrpt::poses::CPose3D T_map_to_veh(static_cast<double>(i) * 1.5, 0, 0, 0, 0, 0);
-
-        auto pose_pdf  = mrpt::poses::CPose3DPDFGaussian::Create();
-        pose_pdf->mean = T_map_to_veh;
-
-        auto sf = mrpt::obs::CSensoryFrame::Create();
-
-        auto obs_imu        = mrpt::obs::CObservationIMU::Create();
-        obs_imu->sensorPose = T_veh_to_sensor;
-
-        const mrpt::poses::CPose3D T_enu_to_sensor = T_enu_to_map + T_map_to_veh + T_veh_to_sensor;
-
-        // Noisy gravity (accelerometer) reading:
-        mrpt::math::TVector3D a_sensor = T_enu_to_sensor.inverseRotateVector(g_enu);
-        a_sensor.x += acc_noise(rng);
-        a_sensor.y += acc_noise(rng);
-        a_sensor.z += acc_noise(rng);
-        obs_imu->set(mrpt::obs::IMU_X_ACC, a_sensor.x);
-        obs_imu->set(mrpt::obs::IMU_Y_ACC, a_sensor.y);
-        obs_imu->set(mrpt::obs::IMU_Z_ACC, a_sensor.z);
-
-        // Noisy full-attitude (quaternion) reading, zero calibration offset:
-        const gtsam::Rot3 predicted   = mrpt::gtsam_wrappers::toPose3(T_enu_to_sensor).rotation();
-        const gtsam::Rot3 rawAttitude = gtsam::Rot3::Rz(mrpt::DEG2RAD(-90.0)) * predicted;
-        const gtsam::Rot3 noisyRaw =
-            gtsam::Rot3::Ypr(ang_noise(rng), ang_noise(rng), ang_noise(rng)) * rawAttitude;
-        const auto q = noisyRaw.toQuaternion();
-        obs_imu->set(mrpt::obs::IMU_ORI_QUAT_W, q.w());
-        obs_imu->set(mrpt::obs::IMU_ORI_QUAT_X, q.x());
-        obs_imu->set(mrpt::obs::IMU_ORI_QUAT_Y, q.y());
-        obs_imu->set(mrpt::obs::IMU_ORI_QUAT_Z, q.z());
-
-        sf->insert(obs_imu);
-        sm.insert(pose_pdf, sf);
-    }
+    const auto sm = build_synthetic_attitude_map(
+        roll_deg, pitch_deg, yaw_deg, sensor_yaw_deg, /*trueAzimuthOffsetDeg=*/0.0, noiseSigmaDeg,
+        nKeyframes, /*seed=*/123, /*addGravity=*/true, /*accNoiseSigma=*/0.15);
 
     mola::SMGeoReferencingParams params;
     params.useIMUGravityAlignment                   = true;
