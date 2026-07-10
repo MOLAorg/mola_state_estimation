@@ -1346,10 +1346,12 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             "underconstrained or ill-conditioned). Resetting smoother state. Exception:\n"
             << e.what());
 
-        // Discard pending data and reset so the node can continue operating.
-        state_.gtsam->newFactors.resize(0);
-        state_.gtsam->newValues.clear();
-        state_.gtsam->newKeyStamps.clear();
+        // smoother.update() is not strongly exception-safe: a failed call can
+        // leave the iSAM2 Bayes tree internally inconsistent, so every later
+        // update would keep throwing the same way forever. Merely discarding
+        // the pending (not-yet-applied) factors/values/stamps does not fix
+        // that. Rebuild the smoother from scratch instead.
+        reset_locked();
         return;
     }
 
@@ -1421,12 +1423,13 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     {
         MRPT_LOG_ERROR_STREAM(
             "[process_pending_gtsam_updates] GTSAM calculateEstimate() failed. "
-            "Discarding this update cycle. Exception:\n"
+            "Resetting smoother state. Exception:\n"
             << e.what());
 
-        state_.gtsam->newFactors.resize(0);
-        state_.gtsam->newValues.clear();
-        state_.gtsam->newKeyStamps.clear();
+        // Same reasoning as the update() catch above: calculateEstimate()
+        // failing after a successful update() still means the smoother is in
+        // a state we can't trust going forward, so rebuild it from scratch.
+        reset_locked();
         return;
     }
 
