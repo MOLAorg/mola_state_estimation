@@ -269,6 +269,25 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     state_.gtsam->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
 }
 
+void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& georef)
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    MRPT_LOG_INFO_STREAM(
+        "[set_geo_reference] Anchoring T_enu_to_map to a fixed, known value: "
+        << georef.T_enu_to_map.mean.asString());
+
+    params_.fixed_geo_reference = georef;
+
+    // reset_locked() clears state_ (including the gtsam pimpl's pending
+    // newValues/newFactors/newKeyStamps buffers, which already hold a
+    // symbol_T_enu_to_map entry from the load-params-time
+    // reinitialize_gtsam_locked() call) before re-running it -- calling
+    // reinitialize_gtsam_locked() directly here would try to insert that
+    // same key a second time into the still-pending newValues and throw.
+    reset_locked();
+}
+
 void StateEstimationSmoother::spinOnce()
 {
     // At the predefined module rate, publish the current estimation, if we have any subscriber:
@@ -639,7 +658,8 @@ void StateEstimationSmoother::fuse_pose_locked(
         // Remember this source's own last raw pose (in {odom_i}), the anchor
         // estimated_navstate() extrapolates from to keep the short-term
         // prediction continuous in the front end's own frame.
-        state_.last_raw_pose_by_source[frame_id_idx] = State::RawSourcePose{timestamp, poseSanitized};
+        state_.last_raw_pose_by_source[frame_id_idx] =
+            State::RawSourcePose{timestamp, poseSanitized};
     }
 }
 
@@ -746,7 +766,27 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     }
 
     // Recover the closest state *in the reference frame*:
-    const NavState retKf = get_latest_state_and_covariance(*closesFrameIdx);
+    //
+    // get_latest_state_and_covariance() can throw if the factor graph is
+    // still under-constrained (e.g. GTSAM's marginalCovariance() failing
+    // with IndeterminantLinearSystemException): expected during the first
+    // instants of any fusion (not enough diverse sensor data yet to fully
+    // observe all 6 DOF), not a fatal error. Treat it the same as the other
+    // "not ready yet" early returns above rather than letting it propagate
+    // and take down the whole module thread.
+    NavState retKf;
+    try
+    {
+        retKf = get_latest_state_and_covariance(*closesFrameIdx);
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_DEBUG_FMT(
+            "[estimated_navstate] State for KF %u not ready yet (factor graph likely still "
+            "under-constrained): %s",
+            static_cast<unsigned>(*closesFrameIdx), e.what());
+        return {};
+    }
 
     MRPT_TODO("Implement probabilistic extrapolation");
     // For now, approximate extrapolation only:
@@ -1892,15 +1932,85 @@ bool StateEstimationSmoother::has_converged_localization(
         return false;
     }
 
-    // Converged if we were told to estimate, and already have it:
-    const bool converged = params_.estimate_geo_reference && state_.geo_reference.has_value();
+    // A geo-reference is required before a pose in the reference ("map")
+    // frame is even meaningful -- either already estimated live
+    // (estimate_geo_reference=true) or fixed from a loaded geo-referenced
+    // map (relocalize mode, via set_geo_reference()).
+    if (!state_.geo_reference.has_value())
+    {
+        return false;
+    }
+
+    const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
+    const auto  latestFrameIdx = latestIt->second;
+
+    NavState ns;
+    try
+    {
+        ns = get_latest_state_and_covariance(latestFrameIdx);
+    }
+    catch (const std::exception& e)
+    {
+        // Factor graph still under-constrained: not converged yet, not a
+        // fatal error (see estimated_navstate(), which handles the same
+        // exception the same way).
+        MRPT_LOG_DEBUG_FMT(
+            "[has_converged_localization] State for KF %u not ready yet: %s",
+            static_cast<unsigned>(latestFrameIdx), e.what());
+        return false;
+    }
+
+    bool converged;
+    if (params_.estimate_geo_reference)
+    {
+        // Live-georeferencing mode: state_.geo_reference is only ever
+        // populated (see process_pending_gtsam_updates_locked()) once
+        // T_enu_to_map's OWN position+orientation sigmas already passed
+        // these same thresholds, and is sticky afterwards (a later,
+        // temporarily-worse per-frame vehicle-pose sigma -- e.g. right
+        // after a kinematics-only extrapolation past the last GNSS fix --
+        // must not un-converge an already-established geo-reference).
+        converged = true;
+    }
+    else
+    {
+        // Relocalize mode: state_.geo_reference is set up-front, before any
+        // GNSS/IMU fusion has actually happened (see set_geo_reference()),
+        // so its mere presence says nothing about whether the vehicle is
+        // actually localized yet. Use the vehicle's OWN latest pose
+        // uncertainty instead (this was the previous bug here: this
+        // function used to return `params_.estimate_geo_reference &&
+        // state_.geo_reference.has_value()`, unconditionally false in
+        // relocalize mode since estimate_geo_reference is false there by
+        // design -- so relocalization could never be reported as converged
+        // no matter how good the GNSS+IMU fix actually was).
+        const mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
+
+        const double pos_sigma_x   = std::sqrt(poseCov(0, 0));
+        const double pos_sigma_y   = std::sqrt(poseCov(1, 1));
+        const double pos_sigma_z   = std::sqrt(poseCov(2, 2));
+        const double max_pos_sigma = std::max({pos_sigma_x, pos_sigma_y, pos_sigma_z});
+
+        const double ori_sigma_yaw   = std::sqrt(poseCov(3, 3));
+        const double ori_sigma_pitch = std::sqrt(poseCov(4, 4));
+        const double ori_sigma_roll  = std::sqrt(poseCov(5, 5));
+        const double max_ori_sigma_deg =
+            mrpt::RAD2DEG(std::max({ori_sigma_yaw, ori_sigma_pitch, ori_sigma_roll}));
+
+        converged = max_pos_sigma <= params_.convergence_max_position_sigma &&
+                    max_ori_sigma_deg <= params_.convergence_max_orientation_sigma_deg;
+
+        MRPT_LOG_DEBUG_FMT(
+            "[has_converged_localization] converged=%s pos_sigmas=(%.3f,%.3f,%.3f) m "
+            "ori_sigmas=(%.2f,%.2f,%.2f) deg thresholds=(%.3f m, %.2f deg)",
+            converged ? "YES" : "NO", pos_sigma_x, pos_sigma_y, pos_sigma_z,
+            mrpt::RAD2DEG(ori_sigma_yaw), mrpt::RAD2DEG(ori_sigma_pitch),
+            mrpt::RAD2DEG(ori_sigma_roll), params_.convergence_max_position_sigma,
+            params_.convergence_max_orientation_sigma_deg);
+    }
 
     if (converged)
     {
-        const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
-        const auto  latestFrameIdx = latestIt->second;
-
-        const NavState ns = get_latest_state_and_covariance(latestFrameIdx);
         pose.copyFrom(ns.pose);
     }
 
