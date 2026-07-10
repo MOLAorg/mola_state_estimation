@@ -68,6 +68,14 @@
 using namespace std::string_literals;
 using namespace mrpt::literals;
 
+// This whole test exercises StateEstimationSmoother::set_geo_reference(),
+// which is only compiled in when the installed mola_kernel provides the
+// (optional) NavStateFilter::set_geo_reference()/get_geo_reference() virtual
+// methods -- see the same guard in StateEstimationSmoother.h/.cpp. Older
+// mola_kernel releases (pre-dating that interface addition) lack it, so skip
+// this test entirely rather than fail to compile against them.
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+
 namespace
 {
 
@@ -279,3 +287,14 @@ int main()
         return 1;
     }
 }
+
+#else
+
+int main()
+{
+    std::cout << "\nSKIPPED: installed mola_kernel lacks "
+                 "NavStateFilter::set_geo_reference()/get_geo_reference()\n";
+    return 0;
+}
+
+#endif

@@ -269,6 +269,7 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     state_.gtsam->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
 }
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
 void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& georef)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
@@ -287,6 +288,7 @@ void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& geor
     // same key a second time into the still-pending newValues and throw.
     reset_locked();
 }
+#endif
 
 void StateEstimationSmoother::spinOnce()
 {

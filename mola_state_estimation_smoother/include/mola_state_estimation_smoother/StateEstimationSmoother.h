@@ -175,7 +175,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  ever measured). Re-initializes the smoother's factor graph, so it
      *  should be called before any run-relevant sensor fusion, not mid-run.
      */
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
     void set_geo_reference(const mola::Georeferencing& georef) override;
+#endif
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
