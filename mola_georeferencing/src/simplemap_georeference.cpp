@@ -31,6 +31,8 @@
 #include <gtsam/slam/PriorFactor.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
+#include <mola_gtsam_factors/Pose3RotationFactor.h>
+#include <mola_gtsam_factors/imu_helpers.h>
 
 #include <algorithm>
 #include <limits>
@@ -70,35 +72,49 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         existingPoseKeys.insert(f.kf_index);
     }
 
-    bool hasIMUGravityFactors = false;
-    if (params.useIMUGravityAlignment)
+    bool hasIMUGravityFactors  = false;
+    bool hasIMUAttitudeFactors = false;
+    if (params.useIMUGravityAlignment || params.useIMUAttitudeAlignment)
     {
-        const IMUAccFrames imuFrames = extract_imu_acc_frames_from_sm(sm);
+        const IMUFrames imuFrames = extract_imu_frames_from_sm(sm);
 
-        if (!imuFrames.frames.empty())
-        {
-            hasIMUGravityFactors = true;
-        }
+        const auto nGravity = std::count_if(
+            imuFrames.frames.begin(), imuFrames.frames.end(),
+            [](const FrameIMU& f) { return f.normalizedAcc.has_value(); });
+        const auto nAttitude = std::count_if(
+            imuFrames.frames.begin(), imuFrames.frames.end(),
+            [](const FrameIMU& f) { return f.rawAttitude.has_value(); });
 
         if (params.logger)
         {
             std::stringstream ss;
-            ss << "[simplemap_georeference] Found: " << imuFrames.frames.size()
-               << " IMU acceleration frames";
+            ss << "[simplemap_georeference] Found: " << nGravity
+               << " IMU gravity (accelerometer) frames, " << nAttitude
+               << " IMU absolute-attitude frames";
             params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
         }
 
-        add_imu_gravity_factors(graph, v, imuFrames, existingPoseKeys, params.imuGravityParams);
+        if (params.useIMUGravityAlignment && nGravity > 0)
+        {
+            hasIMUGravityFactors = true;
+            add_imu_gravity_factors(graph, v, imuFrames, existingPoseKeys, params.imuGravityParams);
+        }
+        if (params.useIMUAttitudeAlignment && nAttitude > 0)
+        {
+            hasIMUAttitudeFactors = true;
+            add_imu_attitude_factors(
+                graph, v, imuFrames, existingPoseKeys, params.imuAttitudeParams);
+        }
     }
 
-    if (smFrames.frames.empty() && !hasIMUGravityFactors)
+    if (smFrames.frames.empty() && !hasIMUGravityFactors && !hasIMUAttitudeFactors)
     {
         if (params.logger)
         {
             params.logger->logStr(
                 mrpt::system::LVL_ERROR,
-                "The input simplemap seems not to have neither GNSS nor IMU acceleration data, so "
-                "no georeferencing/gravity alignment can be performed.");
+                "The input simplemap seems not to have neither GNSS nor IMU acceleration/attitude "
+                "data, so no georeferencing/gravity alignment can be performed.");
         }
         return ret;
     }
@@ -435,44 +451,10 @@ void mola::add_gnss_factors(
     }
 }
 
-namespace
+mola::IMUFrames mola::extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& sm)
 {
-bool imu_acceleration_seems_valid(const gtsam::Vector3& measuredGravity)
-{
-    const double norm = measuredGravity.norm();
-
-    // Accept both m/s² (~9.8) and already-normalized (~1.0) IMU outputs:
-    if (std::abs(norm - 9.8) > 2.0 && std::abs(norm - 1.0) > 0.2)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-}  // namespace
-
-mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm)
-{
-    IMUAccFrames ret;
+    IMUFrames ret;
     ret.frames.reserve(sm.size());
-
-    const auto addMeasurement = [&ret](
-                                    size_t kfIdx, const mrpt::poses::CPose3D& p,
-                                    const mrpt::poses::CPose3D& sensorPose,
-                                    const gtsam::Vector3&       measuredGravity)
-    {
-        if (!imu_acceleration_seems_valid(measuredGravity))
-        {
-            return;  // skip: not a valid gravity-like reading
-        }
-
-        auto& f               = ret.frames.emplace_back();
-        f.kf_index            = kfIdx;
-        f.vehiclePose         = p;
-        f.sensorPoseOnVehicle = sensorPose;
-        f.normalizedAcc       = measuredGravity.normalized();
-    };
 
     for (size_t kfIdx = 0; kfIdx < sm.size(); kfIdx++)
     {
@@ -483,24 +465,56 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
 
         const auto p = pose->getMeanVal();
 
-        // 1) Process direct CObservationIMU, if available:
+        // 1) Process direct CObservationIMU observations, if available. A single
+        // observation may carry a gravity (accelerometer) reading, an absolute
+        // attitude (orientation) reading, or both:
         mrpt::obs::CObservationIMU::Ptr obs;
         for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationIMU>(i)); i++)
         {
-            if (!obs->has(mrpt::obs::IMU_X_ACC) || !obs->has(mrpt::obs::IMU_Y_ACC) ||
-                !obs->has(mrpt::obs::IMU_Z_ACC))
+            std::optional<gtsam::Vector3> acc;
+            if (obs->has(mrpt::obs::IMU_X_ACC) && obs->has(mrpt::obs::IMU_Y_ACC) &&
+                obs->has(mrpt::obs::IMU_Z_ACC))
             {
-                continue;
+                const gtsam::Vector3 measuredGravity = {
+                    obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
+                    obs->get(mrpt::obs::IMU_Z_ACC)};
+
+                if (mola::factors::imu_accel_looks_like_gravity(measuredGravity))
+                {
+                    acc = measuredGravity.normalized();
+                }
             }
 
-            const gtsam::Vector3 measuredGravity = {
-                obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
-                obs->get(mrpt::obs::IMU_Z_ACC)};
+            std::optional<gtsam::Rot3> attitude;
+            if (obs->has(mrpt::obs::IMU_ORI_QUAT_W))
+            {
+                const double qw = obs->get(mrpt::obs::IMU_ORI_QUAT_W);
+                const double qx = obs->get(mrpt::obs::IMU_ORI_QUAT_X);
+                const double qy = obs->get(mrpt::obs::IMU_ORI_QUAT_Y);
+                const double qz = obs->get(mrpt::obs::IMU_ORI_QUAT_Z);
 
-            addMeasurement(kfIdx, p, obs->sensorPose, measuredGravity);
+                if (mola::factors::imu_quaternion_looks_valid(qw, qx, qy, qz))
+                {
+                    attitude = gtsam::Rot3::Quaternion(qw, qx, qy, qz);
+                }
+            }
+
+            if (!acc.has_value() && !attitude.has_value())
+            {
+                continue;  // nothing usable in this observation
+            }
+
+            auto& f               = ret.frames.emplace_back();
+            f.kf_index            = kfIdx;
+            f.vehiclePose         = p;
+            f.sensorPoseOnVehicle = obs->sensorPose;
+            f.normalizedAcc       = acc;
+            f.rawAttitude         = attitude;
         }
 
-        // 2) Process embedded IMU info embedded into the metadata:
+        // 2) Process embedded IMU acceleration info embedded into the metadata.
+        // (No absolute-attitude equivalent here: the buffered orientation is only
+        // gravity-leveled, not azimuth-referenced, so it is not usable for this.)
 #if defined(HAS_VELOCITY_BUFFER)
         mola::imu::LocalVelocityBuffer lvb;
         for (const auto& o : *sf)
@@ -516,7 +530,7 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
         for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
         {
             const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
-            if (imu_acceleration_seems_valid(acc))
+            if (mola::factors::imu_accel_looks_like_gravity(acc))
             {
                 avr_count++;
                 avr_acc += acc;
@@ -525,9 +539,11 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
 
         if (avr_count > 0)
         {
-            addMeasurement(
-                kfIdx, p, mrpt::poses::CPose3D::Identity(),
-                avr_acc / static_cast<double>(avr_count));
+            auto& f               = ret.frames.emplace_back();
+            f.kf_index            = kfIdx;
+            f.vehiclePose         = p;
+            f.sensorPoseOnVehicle = mrpt::poses::CPose3D::Identity();
+            f.normalizedAcc       = (avr_acc / static_cast<double>(avr_count)).normalized();
         }
 
 #endif
@@ -537,7 +553,7 @@ mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpl
 }
 
 void mola::add_imu_gravity_factors(
-    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUAccFrames& imuFrames,
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUFrames& imuFrames,
     const std::set<size_t>& existingPoseKeys, const AddIMUGravityFactorParams& params)
 {
     using gtsam::symbol_shorthand::P;
@@ -570,6 +586,11 @@ void mola::add_imu_gravity_factors(
 
     for (const auto& frame : imuFrames.frames)
     {
+        if (!frame.normalizedAcc.has_value())
+        {
+            continue;
+        }
+
         const auto key = P(frame.kf_index);
 
         // If this KF doesn't already have a P variable (from GNSS), create one:
@@ -584,6 +605,104 @@ void mola::add_imu_gravity_factors(
         const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
 
         fg.emplace_shared<mola::factors::MeasuredGravityFactor>(
-            T(0), key, sensorOnVehicle, frame.normalizedAcc, accNoise);
+            T(0), key, sensorOnVehicle, *frame.normalizedAcc, accNoise);
     }
 }
+
+void mola::add_imu_attitude_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUFrames& imuFrames,
+    const std::set<size_t>& existingPoseKeys, const AddIMUAttitudeFactorParams& params)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+
+    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+
+    // Roll, pitch, yaw sigmas (approximate correspondence to the Rot3 tangent-space
+    // residual near the optimum). Yaw is independently weighted since IMU-fused yaw
+    // (often magnetometer-based) is typically much noisier than roll/pitch:
+    auto attitudeNoise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(
+        mrpt::DEG2RAD(params.imuAttitudeSigmaDeg), mrpt::DEG2RAD(params.imuAttitudeSigmaDeg),
+        mrpt::DEG2RAD(params.imuAttitudeYawSigmaDeg)));
+
+    // If there were no GNSS frames, T(0) still exists in `v` (add_gnss_factors()
+    // always inserts it unconditionally), but with no prior tying down its
+    // *translation*: rotation-only factors (gravity and attitude alike) never
+    // constrain it, since composing poses and then extracting the rotation
+    // discards all translation components along the chain. Without GNSS, add a
+    // weak prior now to keep the linear system well-posed, even though attitude
+    // factors alone already observe T(0)'s full rotation (including azimuth):
+    if (existingPoseKeys.empty())
+    {
+        if (!v.exists(T(0)))
+        {
+            v.insert(T(0), gtsam::Pose3::Identity());
+        }
+
+        double weakSigma = 1.0;  // [rad] or [m], both loose enough not to bias real estimates
+
+        auto noisePriorT0 = gtsam::noiseModel::Isotropic::Sigma(6, weakSigma);
+        fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            T(0), gtsam::Pose3::Identity(), noisePriorT0);
+    }
+
+    for (const auto& frame : imuFrames.frames)
+    {
+        if (!frame.rawAttitude.has_value())
+        {
+            continue;
+        }
+
+        const auto key = P(frame.kf_index);
+
+        // If this KF doesn't already have a P variable (from GNSS or gravity), create one:
+        if (existingPoseKeys.count(frame.kf_index) == 0 && !v.exists(key))
+        {
+            const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.vehiclePose);
+            v.insert(key, vehiclePose);
+
+            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(key, vehiclePose, noisePoses);
+        }
+
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+
+        const auto correctedAttitude = mola::factors::imu_apply_enu_azimuth_correction(
+            *frame.rawAttitude, params.azimuthOffsetDeg);
+
+        fg.emplace_shared<mola::factors::Pose3RotationFactor>(
+            T(0), key, sensorOnVehicle, correctedAttitude, attitudeNoise);
+    }
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+mola::IMUAccFrames mola::extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm)
+{
+    const IMUFrames full = extract_imu_frames_from_sm(sm);
+
+    IMUAccFrames ret;
+    ret.frames.reserve(full.frames.size());
+
+    for (const auto& f : full.frames)
+    {
+        if (!f.normalizedAcc.has_value())
+        {
+            continue;
+        }
+
+        auto& out               = ret.frames.emplace_back();
+        out.kf_index            = f.kf_index;
+        out.vehiclePose         = f.vehiclePose;
+        out.sensorPoseOnVehicle = f.sensorPoseOnVehicle;
+        out.normalizedAcc       = *f.normalizedAcc;
+    }
+
+    return ret;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

@@ -51,6 +51,7 @@ mola_add_library(
     include/mola_gtsam_factors/FactorTricycleKinematic.h
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/id.h
+    include/mola_gtsam_factors/imu_helpers.h
     include/mola_gtsam_factors/MapGravityFactor.h
     include/mola_gtsam_factors/MeasuredGravityFactor.h
     include/mola_gtsam_factors/Pose3RotationFactor.h
@@ -60,6 +61,7 @@ mola_add_library(
     src/FactorGnssMapEnu.cpp
     src/FactorTrapezoidalIntegrator.cpp
     src/FactorTricycleKinematic.cpp
+    src/imu_helpers.cpp
     src/MapGravityFactor.cpp
     src/MeasuredGravityFactor.cpp
     src/Pose3RotationFactor.cpp
@@ -74,8 +76,8 @@ mola_add_library(
 
 # -----------------------
 # define tests:
-#enable_testing()
-#add_subdirectory(module/tests)
+enable_testing()
+add_subdirectory(tests)
 
 # -----------------------------------------------------------------------------
 #  ROS2

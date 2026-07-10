@@ -21,6 +21,7 @@
 #include <mrpt/system/COutputLogger.h>
 
 // GTSAM:
+#include <gtsam/geometry/Rot3.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 
@@ -64,6 +65,22 @@ struct AddIMUGravityFactorParams
     double imuGravitySigmaDeg = 3.0;  // [deg]
 };
 
+struct AddIMUAttitudeFactorParams
+{
+    /// Sigma for the roll/pitch components of the absolute-attitude factor [deg].
+    double imuAttitudeSigmaDeg = 3.0;
+
+    /// Sigma for the yaw (azimuth) component [deg]. IMU-fused yaw (often
+    /// magnetometer-based) is typically much noisier than roll/pitch, hence
+    /// this defaults higher. Set equal to imuAttitudeSigmaDeg for isotropic
+    /// noise.
+    double imuAttitudeYawSigmaDeg = 15.0;
+
+    /// Fixed calibration offset (degrees) between the IMU's zero-yaw reading
+    /// and true azimuth, e.g. due to sensor mounting or magnetic declination.
+    double azimuthOffsetDeg = 0.0;
+};
+
 struct SMGeoReferencingParams
 {
     SMGeoReferencingParams() = default;
@@ -84,6 +101,14 @@ struct SMGeoReferencingParams
     /// optimization. This helps in cases with poor Z data in GPS.
     bool                      useIMUGravityAlignment = true;
     AddIMUGravityFactorParams imuGravityParams;
+
+    /// If true, use IMU absolute-orientation data (e.g. quaternion fields
+    /// filled in by an onboard AHRS) found in the simplemap to add full
+    /// attitude constraints (Pose3RotationFactor) to the optimization. Unlike
+    /// gravity-only alignment, this also observes azimuth (yaw), so it can
+    /// remove the need for GNSS to solve for it.
+    bool                       useIMUAttitudeAlignment = true;
+    AddIMUAttitudeFactorParams imuAttitudeParams;
 
     mrpt::system::COutputLogger* logger = nullptr;
 };
@@ -151,6 +176,51 @@ GNSSFrames extract_gnss_frames_from_sm(
     const std::optional<mrpt::topography::TGeodeticCoords>& refCoord          = std::nullopt,
     unsigned int                                            minimumFixQuality = 0);
 
+struct FrameIMU
+{
+    size_t               kf_index = 0;  //!< Index in the source CSimpleMap
+    mrpt::poses::CPose3D vehiclePose;
+    mrpt::poses::CPose3D sensorPoseOnVehicle;
+
+    /// Set if this keyframe has a valid gravity (accelerometer) observation.
+    std::optional<gtsam::Vector3> normalizedAcc;
+
+    /// Set if this keyframe has a valid absolute-orientation observation.
+    /// Stored raw (not yet corrected for the ENU/azimuth convention), since
+    /// that correction depends on AddIMUAttitudeFactorParams::azimuthOffsetDeg,
+    /// only known when factors are built, not at extraction time.
+    std::optional<gtsam::Rot3> rawAttitude;
+};
+
+struct IMUFrames
+{
+    std::vector<FrameIMU> frames;
+};
+
+/// Single pass over the simplemap collecting both gravity (accelerometer)
+/// and absolute-attitude (orientation) observations per keyframe.
+IMUFrames extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& sm);
+
+/// Adds MeasuredGravityFactor factors to the graph. Creates new P(kf_index)
+/// variables for keyframes not already present in \a existingPoseKeys.
+void add_imu_gravity_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUFrames& imuFrames,
+    const std::set<size_t>& existingPoseKeys, const AddIMUGravityFactorParams& params);
+
+/// Adds Pose3RotationFactor factors to the graph. Creates new P(kf_index)
+/// variables for keyframes not already present in \a existingPoseKeys.
+void add_imu_attitude_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUFrames& imuFrames,
+    const std::set<size_t>& existingPoseKeys, const AddIMUAttitudeFactorParams& params);
+
+void add_gnss_factors(
+    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,
+    const AddGNSSFactorParams& params);
+
+/// \deprecated Use FrameIMU instead. (Not itself tagged [[deprecated]] since
+/// it is only ever referenced through IMUAccFrames, whose own tag already
+/// flags it to callers; doing so here would additionally warn on every
+/// translation unit that merely includes this header.)
 struct FrameIMUAcc
 {
     size_t               kf_index = 0;  //!< Index in the source CSimpleMap
@@ -159,21 +229,14 @@ struct FrameIMUAcc
     gtsam::Vector3       normalizedAcc;
 };
 
-struct IMUAccFrames
-{
-    std::vector<FrameIMUAcc> frames;
-};
+/// \deprecated Use IMUFrames instead.
+struct [[deprecated("Use IMUFrames instead.")]] IMUAccFrames { std::vector<FrameIMUAcc> frames; };
 
-IMUAccFrames extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm);
-
-/// Adds MeasuredGravityFactor factors to the graph. Creates new P(kf_index)
-/// variables for keyframes not already present in \a existingPoseKeys.
-void add_imu_gravity_factors(
-    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const IMUAccFrames& imuFrames,
-    const std::set<size_t>& existingPoseKeys, const AddIMUGravityFactorParams& params);
-
-void add_gnss_factors(
-    gtsam::NonlinearFactorGraph& fg, gtsam::Values& v, const GNSSFrames& frames,
-    const AddGNSSFactorParams& params);
+/// \deprecated Use extract_imu_frames_from_sm() instead, which also extracts
+/// absolute-attitude readings alongside gravity ones. This wrapper is kept
+/// for backward compatibility and simply forwards to it, returning only the
+/// gravity (accelerometer) subset.
+[[deprecated("Use extract_imu_frames_from_sm() instead.")]] IMUAccFrames
+    extract_imu_acc_frames_from_sm(const mrpt::maps::CSimpleMap& sm);
 
 }  // namespace mola

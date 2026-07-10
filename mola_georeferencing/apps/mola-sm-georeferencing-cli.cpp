@@ -68,6 +68,36 @@ struct Cli
                                                   "3.0",
                                                   cmd};
 
+    TCLAP::ValueArg<double> argIMUAttitudeSigmaDeg{
+        "",
+        "imu-attitude-sigma-deg",
+        "IMU absolute-attitude roll/pitch uncertainty (degrees).",
+        false,
+        3.0,
+        "3.0",
+        cmd};
+
+    TCLAP::ValueArg<double> argIMUAttitudeYawSigmaDeg{
+        "",
+        "imu-attitude-yaw-sigma-deg",
+        "IMU absolute-attitude yaw (azimuth) uncertainty (degrees). Defaults higher "
+        "than the roll/pitch sigma since fused yaw (often magnetometer-based) is "
+        "typically noisier.",
+        false,
+        15.0,
+        "15.0",
+        cmd};
+
+    TCLAP::ValueArg<double> argIMUAttitudeAzimuthOffsetDeg{
+        "",
+        "imu-attitude-azimuth-offset-deg",
+        "Fixed calibration offset (degrees) between the IMU's zero-yaw reading and "
+        "true azimuth, e.g. due to sensor mounting or magnetic declination.",
+        false,
+        0.0,
+        "0.0",
+        cmd};
+
     TCLAP::ValueArg<double> argMinUncertaintyXYZ{
         "",
         "min-gnss-sigma",
@@ -113,6 +143,12 @@ struct Cli
         "", "no-imu-gravity",
         "Disable using IMU acceleration data for gravity alignment "
         "(enabled by default).",
+        cmd, false};
+
+    TCLAP::SwitchArg argNoIMUAttitude{
+        "", "no-imu-attitude",
+        "Disable using IMU absolute-attitude (orientation) data for full attitude "
+        "alignment, including azimuth (enabled by default).",
         cmd, false};
 
     TCLAP::ValueArg<std::string> argSetEnuToMapXYZ{
@@ -198,6 +234,23 @@ void run_sm_georef(Cli& cli)
     if (cli.argIMUGravitySigmaDeg.isSet())
     {
         p.imuGravityParams.imuGravitySigmaDeg = cli.argIMUGravitySigmaDeg.getValue();
+    }
+
+    if (cli.argNoIMUAttitude.getValue())
+    {
+        p.useIMUAttitudeAlignment = false;
+    }
+    if (cli.argIMUAttitudeSigmaDeg.isSet())
+    {
+        p.imuAttitudeParams.imuAttitudeSigmaDeg = cli.argIMUAttitudeSigmaDeg.getValue();
+    }
+    if (cli.argIMUAttitudeYawSigmaDeg.isSet())
+    {
+        p.imuAttitudeParams.imuAttitudeYawSigmaDeg = cli.argIMUAttitudeYawSigmaDeg.getValue();
+    }
+    if (cli.argIMUAttitudeAzimuthOffsetDeg.isSet())
+    {
+        p.imuAttitudeParams.azimuthOffsetDeg = cli.argIMUAttitudeAzimuthOffsetDeg.getValue();
     }
 
     mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);

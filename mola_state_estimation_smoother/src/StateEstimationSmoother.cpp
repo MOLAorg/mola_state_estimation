@@ -52,6 +52,7 @@
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
+#include <mola_gtsam_factors/imu_helpers.h>
 
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
@@ -411,30 +412,21 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // -------------------------------------------------
     if (imu.has(mrpt::obs::IMU_ORI_QUAT_W))
     {
-        mrpt::math::CQuaternionDouble q;
-        q.w(imu.get(mrpt::obs::IMU_ORI_QUAT_W));
-        q.x(imu.get(mrpt::obs::IMU_ORI_QUAT_X));
-        q.y(imu.get(mrpt::obs::IMU_ORI_QUAT_Y));
-        q.z(imu.get(mrpt::obs::IMU_ORI_QUAT_Z));
-        if (std::isnan(q.w()) || std::isnan(q.x()) || std::isnan(q.y()) || std::isnan(q.z()))
+        const double qw = imu.get(mrpt::obs::IMU_ORI_QUAT_W);
+        const double qx = imu.get(mrpt::obs::IMU_ORI_QUAT_X);
+        const double qy = imu.get(mrpt::obs::IMU_ORI_QUAT_Y);
+        const double qz = imu.get(mrpt::obs::IMU_ORI_QUAT_Z);
+
+        if (!mola::factors::imu_quaternion_looks_valid(qw, qx, qy, qz))
         {
-            MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring IMU orientation quaternion with NaN components");
-        }
-        else if (std::abs(q.norm() - 1.0) > 0.02)
-        {
-            MRPT_LOG_THROTTLE_WARN(5.0, "Ignoring non-normalized IMU orientation quaternion");
+            MRPT_LOG_THROTTLE_WARN(
+                5.0, "Ignoring invalid (NaN or non-normalized) IMU orientation quaternion");
         }
         else
         {
-            // correct heading:
-
-            // Convert MRPT quaternion to GTSAM Rot3. (GTSAM uses w,x,y,z order)
-            auto measuredRotation = gtsam::Rot3::Quaternion(q.w(), q.x(), q.y(), q.z());
-
-            // ENU is such yaw=0 ==> East. Correct this wrt Azimuth wrt true North:
-            measuredRotation =
-                gtsam::Rot3::Rz(mrpt::DEG2RAD(90.0 + params_.imu_attitude_azimuth_offset_deg)) *
-                measuredRotation;
+            // GTSAM uses w,x,y,z quaternion order:
+            const auto measuredRotation = mola::factors::imu_apply_enu_azimuth_correction(
+                gtsam::Rot3::Quaternion(qw, qx, qy, qz), params_.imu_attitude_azimuth_offset_deg);
 
             const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
 
@@ -459,8 +451,7 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
             imu.get(mrpt::obs::IMU_Z_ACC)};
 
         // Some IMU drivers publishes normalized acc:
-        if (std::abs(measuredGravity.norm() - 9.8) < 2.0 ||
-            std::abs(measuredGravity.norm() - 1.0) < 0.2)
+        if (mola::factors::imu_accel_looks_like_gravity(measuredGravity))
         {
             const gtsam::Vector3 measuredGravityNormalized = measuredGravity.normalized();
 
@@ -639,7 +630,8 @@ void StateEstimationSmoother::fuse_pose_locked(
         // Remember this source's own last raw pose (in {odom_i}), the anchor
         // estimated_navstate() extrapolates from to keep the short-term
         // prediction continuous in the front end's own frame.
-        state_.last_raw_pose_by_source[frame_id_idx] = State::RawSourcePose{timestamp, poseSanitized};
+        state_.last_raw_pose_by_source[frame_id_idx] =
+            State::RawSourcePose{timestamp, poseSanitized};
     }
 }
 
