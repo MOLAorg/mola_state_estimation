@@ -34,6 +34,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test_gnss_sensor_pose_offset
+  SOURCES test_gnss_sensor_pose_offset.cpp
+  LINK_LIBRARIES
+    mola::mola_georeferencing
+)
+
+mola_add_test(
   TARGET  test_recenter_georeference
   SOURCES test_recenter_georeference.cpp
   LINK_LIBRARIES
