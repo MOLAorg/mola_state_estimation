@@ -87,6 +87,25 @@ jobs:
             | tee /etc/apt/sources.list.d/ros2-testing.list > /dev/null
           apt-get update
 
+      # setup-ros resolves the ROS apt source package version via an
+      # unauthenticated call to api.github.com, which occasionally hits
+      # GitHub's rate limit and fails the whole job. Pre-configuring the apt
+      # repository here makes setup-ros detect it is already present and
+      # skip that lookup.
+      - name: Pre-configure ROS apt repository
+        if: matrix.docker_image != 'ubuntu:resolute'
+        run: |
+          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg
+          ros_channel="ros2"
+          if [ "${{ matrix.use_ros_testing }}" = "true" ]; then
+            ros_channel="ros2-testing"
+          fi
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+            http://packages.ros.org/${ros_channel}/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+          apt-get update
+
       - name: setup ROS environment
         if: matrix.docker_image != 'ubuntu:resolute'
         uses: ros-tooling/setup-ros@v0.7
