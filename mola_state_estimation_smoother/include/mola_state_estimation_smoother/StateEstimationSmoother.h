@@ -164,6 +164,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /** Integrates new GNSS observations into the estimator */
     void fuse_gnss(const mrpt::obs::CObservationGPS& gps) override;
 
+    /** Anchors T_enu_to_map to a known, fixed value (equivalent to setting
+     *  the `fixed_geo_reference` YAML parameter, but at runtime): used by
+     *  localization front-ends (e.g. mola_lidar_odometry) once they load a
+     *  geo-referenced map, so GNSS fixes constrain the vehicle's position in
+     *  that map's frame without the estimator also trying to solve for
+     *  T_enu_to_map itself (that combination leaves T_enu_to_map and every
+     *  fused Pose3RotationFactor/MeasuredGravityFactor-derived orientation
+     *  jointly underconstrained, since only their *relative* rotation is
+     *  ever measured). Re-initializes the smoother's factor graph, so it
+     *  should be called before any run-relevant sensor fusion, not mid-run.
+     */
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+    void set_geo_reference(const mola::Georeferencing& georef) override;
+#endif
+
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,

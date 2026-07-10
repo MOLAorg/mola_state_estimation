@@ -58,7 +58,7 @@ incremental optimization. The primary estimator for multi-sensor fusion.
 | ROS 2 launch | `mola_state_estimation_smoother/ros2-launchs/ros2-state-estimator.launch.py` |
 | MOLA-CLI launch | `mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml` |
 | CLI app | `mola_state_estimation_smoother/apps/mola-navstate-cli.cpp` |
-| Tests (6) | `mola_state_estimation_smoother/tests/test-*.cpp` |
+| Tests (7) | `mola_state_estimation_smoother/tests/test-*.cpp` |
 | Integration tests | `mola_state_estimation_smoother/test/integration/test_*.py` |
 
 Key traits:
@@ -207,6 +207,69 @@ Major parameter groups:
 - **IMU**: attitude sigma, azimuth offset, gravity alignment sigma
 - **Georeferencing**: `estimate_geo_reference`, convergence thresholds
 - **Sensor filtering**: regex patterns to match/reject sensor labels
+
+## Relocalize mode (`estimate_geo_reference=false`, GNSS+IMU init against a known map)
+
+Found and fixed via MOLA + MVSIM end-to-end testing (loading a geo-referenced
+map, then relying purely on GNSS position + IMU attitude to recover the
+initial pose, no `FixedPose` seed):
+
+- **`set_geo_reference()` was unimplemented** (`StateEstimationSmoother` never
+  overrode `NavStateFilter`'s default no-op). Front ends (e.g.
+  `mola_lidar_odometry`) call this once a geo-referenced map is loaded, to
+  anchor `T_enu_to_map` to a known, fixed value instead of leaving it a free
+  variable. Without an override, `symbol_T_enu_to_map` kept its
+  construction-time `ENU2MAP_WEAK_SIGMA` (1e4, i.e. effectively
+  unconstrained) prior forever: every `Pose3RotationFactor`/
+  `MeasuredGravityFactor` only measures rotation *relative to*
+  `T_enu_to_map`, so with `T_enu_to_map` itself unpinned, the whole system's
+  absolute rotation was a genuine gauge freedom (a null space GTSAM can't
+  solve) -- reproduced as a `gtsam::IndeterminantLinearSystemException`
+  ("underconstrained variables") a few dozen keyframes into any run. Now
+  implemented: stores the geo-reference in `params_.fixed_geo_reference` and
+  calls `reset_locked()` (not `reinitialize_gtsam_locked()` directly --
+  that alone leaves stale pending `newValues`/`newFactors` around from the
+  load-params-time initialization, which throws "key already exists" on the
+  next `smoother.update()`).
+- **`estimated_navstate()` didn't catch exceptions** from
+  `get_latest_state_and_covariance()`'s `marginalCovariance()` calls, despite
+  its own `[[nodiscard]] std::optional<NavState>` signature promising a
+  graceful "not ready yet" for exactly this kind of case (an under-constrained
+  factor graph, expected transiently at the start of any fusion). The
+  exception propagated all the way up through the calling module's thread and
+  crashed it entirely (`MolaLauncherApp`: "thread ... ended due to an
+  exception"), killing GNSS/IMU fusion for the rest of the run. Now caught
+  and treated like the function's other early `return {};` paths.
+- **`has_converged_localization()` used the wrong criterion for relocalize
+  mode**: it returned `params_.estimate_geo_reference &&
+  state_.geo_reference.has_value()`, which is unconditionally false whenever
+  `estimate_geo_reference=false` (true by definition in relocalize mode,
+  where the geo-reference is fixed, not estimated) -- so relocalization could
+  never be reported as converged, no matter how good the GNSS+IMU fix
+  actually was. Now mode-aware: for `estimate_geo_reference=true`, unchanged
+  (sticky on `state_.geo_reference.has_value()`, since that's only ever set
+  once T_enu_to_map's own sigmas already passed the same thresholds); for
+  `estimate_geo_reference=false`, checks the vehicle's own latest pose
+  sigma (position + orientation) against `convergence_max_position_sigma`/
+  `convergence_max_orientation_sigma_deg` instead.
+- **`imu_attitude_azimuth_offset_deg` gotcha, not a bug**: `fuse_imu()`
+  unconditionally applies a `+90 deg` rotation to the IMU's reported
+  orientation, assuming raw IMU yaw is North-referenced ("yaw=0 => North",
+  common for a real magnetometer/compass) and needs that correction to
+  become ENU-referenced ("yaw=0 => East"). Simulators that report IMU
+  orientation directly in the world/ENU frame (confirmed with MVSIM) need
+  `imu_attitude_azimuth_offset_deg: -90` to cancel it out; forgetting this
+  produces a stable, self-consistent, but exactly 90 deg wrong localization
+  (high ICP goodness, high confidence -- easy to mistake for a real result).
+- **Steady-state position sigma is bounded by raw GNSS noise, not by
+  window duration**: with a real-time sliding-window filter (not a batch
+  averager), position sigma settles close to the raw single-fix GNSS noise
+  (e.g. ~1.2-2.0m steady-state for 1.5m raw noise), not indefinitely lower.
+  `convergence_max_position_sigma` and `mola_lidar_odometry`'s separate,
+  stricter `from_state_estimator_max_position_sigma` re-check both default
+  to sub-meter values tuned for better-than-1.5m GNSS; with noisier GNSS
+  they must be raised to match, or convergence will simply never be
+  reported (not wrong, just perpetually "not yet").
 
 ## Code style
 
