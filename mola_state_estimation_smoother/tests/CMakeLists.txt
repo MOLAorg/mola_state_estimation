@@ -21,6 +21,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-relocalize-set-geo-reference
+  SOURCES test-relocalize-set-geo-reference.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-two-odometries
   SOURCES test-two-odometries.cpp
   LINK_LIBRARIES
