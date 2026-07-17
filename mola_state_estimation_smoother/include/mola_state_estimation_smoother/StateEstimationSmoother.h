@@ -49,6 +49,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace mola::state_estimation_smoother
 {
@@ -212,6 +213,26 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Returns the current georeferencing, if available
     [[nodiscard]] std::optional<mola::Georeferencing> current_georeferencing() const;
 
+    /** Number of constant-velocity kinematic factors currently live in the
+     *  underlying factor graph (2 per kinematic link).
+     *
+     *  For tests only. It counts the real GTSAM graph rather than this class's own
+     *  link bookkeeping, so that a test can tell whether a factor removal actually
+     *  reached the solver. Returns a plain count so GTSAM stays out of this header.
+     */
+    [[nodiscard]] size_t count_const_vel_factors_for_testing() const;
+
+    /** Identifies each constant-velocity kinematic link currently live in the
+     *  underlying factor graph by its endpoint timestamps, one entry per link
+     *  (not per factor: each link emits two factors, linear and angular).
+     *
+     *  For tests only, to check the graph topology survives a splice as expected
+     *  (e.g. that the direct a->b link was replaced by a->n and n->b, not left
+     *  alongside them).
+     */
+    [[nodiscard]] std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
+        const_vel_factor_links_for_testing() const;
+
     /** @} */
 
     // Implementation of RawDataConsumer
@@ -371,6 +392,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const mrpt::Clock::time_point&       stamp) const;
 
     void add_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
+
+    /** Withdraws the kinematic link between two keyframes, undoing
+     *  add_kinematic_factor_between(). Needed when a new keyframe is spliced
+     *  between them: the direct link they used to share must go away, or its
+     *  constraint would be counted a second time alongside the two links that now
+     *  replace it. Cheap if the link has not reached the solver yet; otherwise its
+     *  factors are queued for removal at the next update().
+     */
+    void remove_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
 
     /// Gets the latest state of a pose wrt the reference frame ("map")
     [[nodiscard]] NavState get_latest_state_and_covariance(const frame_index_t idx) const;

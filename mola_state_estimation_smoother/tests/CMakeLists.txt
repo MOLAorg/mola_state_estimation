@@ -48,3 +48,10 @@ mola_add_test(
     mola::mola_state_estimation_smoother
 )
 
+mola_add_test(
+  TARGET  test-kinematic-splice-no-triangle
+  SOURCES test-kinematic-splice-no-triangle.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
