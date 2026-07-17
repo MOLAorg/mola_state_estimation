@@ -227,6 +227,25 @@ class Parameters
 
     /** @} */
 
+    /** @name Real-time async backend
+     * @{ */
+
+    /** If `true`, the iSAM2 window solve runs in a dedicated backend thread and
+     * `estimated_navstate()` is served by a lock-free FastPredictor re-anchored
+     * on the latest backend solution, so a query never runs a solve nor blocks
+     * on `stateMutex_` (per-query latency stays sub-millisecond). If `false`
+     * (default) the solve runs inline on the caller's thread, which is
+     * deterministic and is what the unit tests and offline batch runs use.
+     */
+    bool async_backend = false;
+
+    /** [s] Only used when `async_backend` is `true`: how far back the
+     * FastPredictor keeps high-rate observations to extrapolate from the anchor.
+     */
+    double fast_predictor_buffer_length = 1.0;  // [s]
+
+    /** @} */
+
     /** @name Sensor input names
      * @{  */
 

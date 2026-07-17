@@ -54,6 +54,10 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#include "FastPredictor.h"
+#include "Snapshot.h"
+#include "extrapolation.h"
+
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
@@ -83,53 +87,6 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
 
 namespace mola::state_estimation_smoother
 {
-
-namespace
-{
-/// Integrates a constant body-frame twist over `dt` seconds, returning the
-/// relative pose increment T_i_to_j (right-composed onto an anchor: T_j = T_i
-/// (+) delta). Branches on the configured kinematic model so the short-term
-/// extrapolation matches the motion model used to build the inter-keyframe
-/// factors: full SE(3) exp of the 6D body twist for ConstantVelocity; the planar
-/// arc from forward velocity v=vx and yaw rate w=wz for Tricycle, mirroring
-/// mola::factors::FactorTricycleKinematic exactly.
-mrpt::poses::CPose3D body_twist_delta(
-    const Parameters& params, const mrpt::math::TTwist3D& twist, double dt)
-{
-    switch (params.kinematic_model)
-    {
-        case KinematicModel::Tricycle:
-        {
-            constexpr double w_threshold = 1e-4;  // [rad/s], as FactorTricycleKinematic
-            const double     v           = twist.vx;
-            const double     w           = twist.wz;
-            if (std::abs(w) < w_threshold)
-            {
-                return mrpt::poses::CPose3D(v * dt, .0, .0, .0, .0, .0);
-            }
-            const double R     = v / w;
-            const double theta = w * dt;
-            const double dx    = R * std::sin(theta);
-            const double dy    = R * (1.0 - std::cos(theta));
-            // CPose3D(x, y, z, yaw, pitch, roll); the arc rotates about +z (yaw).
-            return mrpt::poses::CPose3D(dx, dy, .0, theta, .0, .0);
-        }
-        case KinematicModel::ConstantVelocity:
-        default:
-        {
-            mrpt::math::CVectorFixed<double, 6> twistDt;
-            twistDt[0] = twist.vx;
-            twistDt[1] = twist.vy;
-            twistDt[2] = twist.vz;
-            twistDt[3] = twist.wx;
-            twistDt[4] = twist.wy;
-            twistDt[5] = twist.wz;
-            twistDt *= dt;
-            return mrpt::poses::CPose3D(mrpt::poses::Lie::SE<3>::exp(twistDt));
-        }
-    }
-}
-}  // namespace
 
 const bool   NAVSTATE_PRINT_FG        = mrpt::get_env<bool>("NAVSTATE_PRINT_FG", false);
 const bool   NAVSTATE_PRINT_FG_ERRORS = mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERRORS", false);
@@ -200,7 +157,10 @@ StateEstimationSmoother::StateEstimationSmoother()
 {  //
     profiler_.setName("StateEstimationSmoother");
     ExecutableBase::setModuleInstanceName("StateEstimationSmoother");
+    fastPredictor_ = std::make_unique<FastPredictor>();
 }
+
+StateEstimationSmoother::~StateEstimationSmoother() = default;
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
@@ -374,6 +334,10 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::reset_locked()
 {
     state_ = State();
+    if (fastPredictor_)
+    {
+        fastPredictor_->clear();
+    }
     if (params_loaded_)
     {
         reinitialize_gtsam_locked();
@@ -1727,6 +1691,17 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
 
+    // Publish an immutable snapshot for the lock-free read path. Only built in
+    // async mode: the synchronous path reads state_ directly and building the
+    // snapshot would add marginals to every solve for no benefit.
+    if (params_.async_backend)
+    {
+        if (auto snap = build_snapshot_locked())
+        {
+            fastPredictor_->set_snapshot(std::move(snap));
+        }
+    }
+
     // Check convergence for initialization from GNSS / georeferencing.
     // If we just converged and should publish geo-ref, do it now:
     if (params_.estimate_geo_reference && params_.publish_estimated_georef_on_convergence &&
@@ -2071,6 +2046,74 @@ void StateEstimationSmoother::remove_kinematic_factor_between(
         rm.insert(rm.end(), it->second.begin(), it->second.end());
         state_.gtsam->flushedKinematic.erase(it);
     }
+}
+
+std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked() const
+{
+    if (state_.stamp2frame_index.empty())
+    {
+        return nullptr;
+    }
+
+    auto snap = std::make_shared<Snapshot>();
+
+    // Anchor: the newest keyframe's optimized state + covariance.
+    const auto& latestIt      = state_.stamp2frame_index.getDirectMap().rbegin();
+    const auto  latestStamp   = latestIt->first;
+    const auto  latestFrameId = latestIt->second;
+    try
+    {
+        snap->anchor = get_latest_state_and_covariance(latestFrameId);
+    }
+    catch (const std::exception&)
+    {
+        // Graph still under-constrained: no usable snapshot yet.
+        return nullptr;
+    }
+    snap->anchorStamp = latestStamp;
+
+    // Odometry-frame transforms (numeric id >= 1) and the name<->id mapping.
+    snap->frameNames = state_.known_odom_frames;
+    for (const auto& [id, pdf] : state_.last_estimated_frames)
+    {
+        if (id == REFERENCE_FRAME_ID)
+        {
+            continue;
+        }
+        snap->frameTransforms[id] = pdf;
+    }
+
+    // Each source's own last raw pose in {odom_i}, for the frame-local path.
+    for (const auto& [id, raw] : state_.last_raw_pose_by_source)
+    {
+        snap->lastRawPoseBySource[id] = Snapshot::RawSourcePose{raw.stamp, raw.pose};
+    }
+
+    snap->geoReference = state_.geo_reference;
+
+    // Convergence flag, mode-aware, mirroring has_converged_localization().
+    bool converged = false;
+    if (state_.geo_reference.has_value())
+    {
+        if (params_.estimate_geo_reference)
+        {
+            converged = true;
+        }
+        else
+        {
+            const mrpt::math::CMatrixDouble66 poseCov = snap->anchor.pose.cov_inv.inverse_LLt();
+            const double                      maxPos =
+                std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
+            const double maxOriDeg =
+                mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
+            converged = maxPos <= params_.convergence_max_position_sigma &&
+                        maxOriDeg <= params_.convergence_max_orientation_sigma_deg;
+        }
+    }
+    snap->localizationConverged = converged;
+
+    snap->valid = true;
+    return snap;
 }
 
 NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_index_t idx) const

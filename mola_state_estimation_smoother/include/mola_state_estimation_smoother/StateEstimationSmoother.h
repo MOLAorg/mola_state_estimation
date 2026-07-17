@@ -46,6 +46,7 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -53,6 +54,10 @@
 
 namespace mola::state_estimation_smoother
 {
+// Defined in src/, kept out of the public API (used only via pointer here):
+struct Snapshot;
+class FastPredictor;
+
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
  *
@@ -125,7 +130,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     StateEstimationSmoother(StateEstimationSmoother&&)                 = delete;
     StateEstimationSmoother& operator=(const StateEstimationSmoother&) = delete;
     StateEstimationSmoother& operator=(StateEstimationSmoother&&)      = delete;
-    ~StateEstimationSmoother()                                         = default;
+    // Out-of-line: fastPredictor_ is a unique_ptr to an incomplete type here.
+    ~StateEstimationSmoother();
 
     /** \name Main API
      *  @{ */
@@ -353,6 +359,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     State      state_;
     std::mutex stateMutex_;
     bool       params_loaded_ = false;
+
+    /// Lock-free read model for async_backend mode. Populated at the end of each
+    /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
+    std::unique_ptr<FastPredictor> fastPredictor_;
+
+    /// Builds an immutable Snapshot of the current solution (newest keyframe
+    /// anchor + frame transforms + georef). Assumes stateMutex_ is held.
+    /// Returns nullptr if there is no keyframe/state to snapshot yet.
+    [[nodiscard]] std::shared_ptr<const Snapshot> build_snapshot_locked() const;
 
     /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
     /// This also is in charge of the complex task of finding nearby existing frames and adding the
