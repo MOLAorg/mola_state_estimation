@@ -8,6 +8,11 @@ Localization and mApping) framework. It fuses odometry, IMU, GNSS and pose
 measurements to estimate a vehicle's pose, velocity and orientation over time.
 It also provides offline georeferencing of keyframe-based maps.
 
+Rules: keep this AGENTS.md in sync with architecture/code changes. Use American
+spelling. Don't use en/em dashes. Don't sign commits as an AI agent. Keep 
+explanations short and general, not "this fixes the problem we had with XXX".
+Use clang-format-14 before commiting.
+
 License: GNU GPL v3 (commercial options available upon request).
 
 ## Repository layout

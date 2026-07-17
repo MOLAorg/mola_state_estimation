@@ -1940,6 +1940,42 @@ size_t StateEstimationSmoother::count_const_vel_factors_for_testing() const
     return n;
 }
 
+std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
+    StateEstimationSmoother::const_vel_factor_links_for_testing() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>> links;
+
+    if (!state_.gtsam->smoother.has_value())
+    {
+        return links;
+    }
+
+    for (const auto& f : state_.gtsam->smoother->getFactors())
+    {
+        // findUnusedFactorSlots=true leaves null slots behind for removed factors.
+        if (!f)
+        {
+            continue;
+        }
+        const auto* fc = dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(f.get());
+        if (fc == nullptr)
+        {
+            continue;
+        }
+        // keys() layout is {kTi, kWi, kTj, kWj}: pose keys are at indices 0 and 2,
+        // shared with both the linear- and angular-velocity factor of the same link.
+        const auto& keys    = fc->keys();
+        const auto  idxFrom = static_cast<frame_index_t>(gtsam::Symbol(keys.at(0)).index());
+        const auto  idxTo   = static_cast<frame_index_t>(gtsam::Symbol(keys.at(2)).index());
+
+        links.emplace(
+            state_.stamp2frame_index.inverse(idxFrom), state_.stamp2frame_index.inverse(idxTo));
+    }
+    return links;
+}
+
 void StateEstimationSmoother::remove_kinematic_factor_between(
     const frame_index_t from, const frame_index_t to)  // NOLINT
 {

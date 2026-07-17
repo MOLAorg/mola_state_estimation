@@ -26,18 +26,24 @@
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
 #include <iostream>
+#include <set>
+#include <string>
+#include <utility>
 
 namespace
 {
 const bool VERBOSE = mrpt::get_env<bool>("VERBOSE", false);
 
-const char* navStateParams =
-    R"###(# Config for Parameters
+std::string navStateParams(const char* kinematicModel)
+{
+    return std::string(
+               R"###(# Config for Parameters
 params:
     vehicle_frame_name: "base_link"
     reference_frame_name: "map"
     max_time_to_use_velocity_model: 2.0
-    kinematic_model: KinematicModel::ConstantVelocity
+    kinematic_model: )###") +
+           kinematicModel + R"###(
     sliding_window_length: 60.0
     min_time_difference_to_create_new_frame: 0.05
     sigma_random_walk_acceleration_linear: 1.0
@@ -48,6 +54,7 @@ params:
     sigma_twist_from_consecutive_poses_angular: 1.0
     estimate_geo_reference: false
 )###";
+}
 
 mrpt::poses::CPose3DPDFGaussian pose_at(double x)
 {
@@ -64,19 +71,41 @@ size_t count_const_vel_factors(
     return stateEst.count_const_vel_factors_for_testing();
 }
 
+using link_set_t = std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>;
+
+void assert_link_present(const link_set_t& links, double from, double to)
+{
+    const bool present =
+        links.count({mrpt::Clock::fromDouble(from), mrpt::Clock::fromDouble(to)}) != 0;
+    std::cout << "[no-triangle] link " << from << "->" << to << " present=" << present
+              << " (expected: true)\n";
+    ASSERT_(present);
+}
+
+void assert_link_absent(const link_set_t& links, double from, double to)
+{
+    const bool present =
+        links.count({mrpt::Clock::fromDouble(from), mrpt::Clock::fromDouble(to)}) != 0;
+    std::cout << "[no-triangle] link " << from << "->" << to << " present=" << present
+              << " (expected: false)\n";
+    ASSERT_(!present);
+}
+
 // A keyframe spliced between two already-linked keyframes must not leave the
 // original direct link in the graph: `a->b` plus the `a->n` and `n->b` that
 // replace it would count the constant-velocity model twice over that span,
 // over-stiffening the window and making the covariance over-confident.
-void test_splice_does_not_leave_a_triangle()
+void test_splice_does_not_leave_a_triangle(const char* kinematicModel)
 {
+    std::cout << "[no-triangle] kinematic_model=" << kinematicModel << "\n";
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     if (VERBOSE)
     {
         stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
 
-    auto cfgYaml = mrpt::containers::yaml::FromText(navStateParams);
+    auto cfgYaml = mrpt::containers::yaml::FromText(navStateParams(kinematicModel));
     stateEst.initialize(cfgYaml);
 
     const auto& mapFrame = stateEst.parameters().reference_frame_name;
@@ -98,6 +127,9 @@ void test_splice_does_not_leave_a_triangle()
               << "-keyframe chain: " << nBefore << " (expected " << 2 * (kNumInOrder - 1) << ")\n";
     ASSERT_EQUAL_(nBefore, static_cast<size_t>(2 * (kNumInOrder - 1)));
 
+    const auto linksBefore = stateEst.const_vel_factor_links_for_testing();
+    assert_link_present(linksBefore, 0.4, 0.6);
+
     // Now splice: t=0.5 lands between the keyframes at 0.4 and 0.6, 0.1 s from
     // either, so it creates a keyframe in the past rather than snapping.
     stateEst.fuse_pose(mrpt::Clock::fromDouble(0.5), pose_at(0.5), mapFrame);
@@ -112,6 +144,14 @@ void test_splice_does_not_leave_a_triangle()
     std::cout << "[no-triangle] after splicing one keyframe: " << nAfter << " (expected "
               << nExpected << "; a surviving stale link would give " << nExpected + 2 << ")\n";
     ASSERT_EQUAL_(nAfter, nExpected);
+
+    // Same check at the graph-topology level, not just the factor count: the
+    // 0.4->0.6 link must be gone, replaced by 0.4->0.5 and 0.5->0.6, so a
+    // count-only check can't be fooled by e.g. a stale link plus a missing new one.
+    const auto linksAfter = stateEst.const_vel_factor_links_for_testing();
+    assert_link_absent(linksAfter, 0.4, 0.6);
+    assert_link_present(linksAfter, 0.4, 0.5);
+    assert_link_present(linksAfter, 0.5, 0.6);
 }
 }  // namespace
 
@@ -121,7 +161,8 @@ int main(int argc, char** argv)
     (void)argv;
     try
     {
-        test_splice_does_not_leave_a_triangle();
+        test_splice_does_not_leave_a_triangle("KinematicModel::ConstantVelocity");
+        test_splice_does_not_leave_a_triangle("KinematicModel::Tricycle");
         std::cout << "Test passed." << std::endl;
         return 0;
     }

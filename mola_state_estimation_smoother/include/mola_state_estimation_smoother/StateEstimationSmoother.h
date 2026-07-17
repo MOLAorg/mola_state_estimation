@@ -49,6 +49,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace mola::state_estimation_smoother
 {
@@ -220,6 +221,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  reached the solver. Returns a plain count so GTSAM stays out of this header.
      */
     [[nodiscard]] size_t count_const_vel_factors_for_testing() const;
+
+    /** Identifies each constant-velocity kinematic link currently live in the
+     *  underlying factor graph by its endpoint timestamps, one entry per link
+     *  (not per factor: each link emits two factors, linear and angular).
+     *
+     *  For tests only, to check the graph topology survives a splice as expected
+     *  (e.g. that the direct a->b link was replaced by a->n and n->b, not left
+     *  alongside them).
+     */
+    [[nodiscard]] std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
+        const_vel_factor_links_for_testing() const;
 
     /** @} */
 
