@@ -46,10 +46,15 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <thread>
 #include <utility>
 
 namespace mola::state_estimation_smoother
@@ -369,6 +374,27 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Returns nullptr if there is no keyframe/state to snapshot yet.
     [[nodiscard]] std::shared_ptr<const Snapshot> build_snapshot_locked() const;
 
+    // ---- async backend (only used when params_.async_backend) ----
+    std::thread                                                           backendThread_;
+    std::mutex                                                            queueMutex_;
+    std::condition_variable                                               queueCv_;
+    std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> ingestQueue_;
+    std::atomic<bool>                                                     backendStop_{false};
+    bool                                                                  backendRunning_ = false;
+
+    /// Appends a work item to the backend queue and wakes the backend thread.
+    void enqueue_async(const mrpt::Clock::time_point& stamp, std::function<void()> fn);
+
+    /// Backend thread body: drains the queue, applies measurements in timestamp
+    /// order under stateMutex_, runs one solve, and publishes a snapshot.
+    void backend_loop();
+
+    /// Starts the backend thread if async mode is on and it is not running yet.
+    void start_backend_thread();
+
+    /// Signals the backend thread to stop and joins it.
+    void stop_backend_thread();
+
     /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
     /// This also is in charge of the complex task of finding nearby existing frames and adding the
     /// kinematic factors to ensure smooth motion estimation.
@@ -385,6 +411,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_pose_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id);
+    void fuse_odometry_locked(
+        const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);
+    void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);
+    void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
+    void fuse_twist_locked(
+        const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
+        const mrpt::math::CMatrixDouble66& twistCov);
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
         const std::optional<double>&   overrideCloseEnough = std::nullopt);

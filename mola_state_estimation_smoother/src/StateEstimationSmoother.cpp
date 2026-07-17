@@ -58,6 +58,10 @@
 #include "Snapshot.h"
 #include "extrapolation.h"
 
+// std:
+#include <algorithm>
+#include <utility>
+
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
@@ -160,7 +164,11 @@ StateEstimationSmoother::StateEstimationSmoother()
     fastPredictor_ = std::make_unique<FastPredictor>();
 }
 
-StateEstimationSmoother::~StateEstimationSmoother() = default;
+StateEstimationSmoother::~StateEstimationSmoother()
+{
+    // Join the backend thread before any member it touches is destroyed.
+    stop_backend_thread();
+}
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
@@ -216,6 +224,10 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     params_loaded_ = true;
     reinitialize_gtsam_locked();
+
+    // In async mode, spin up the backend solver thread. It immediately waits on
+    // an empty queue, so starting it while stateMutex_ is held is safe.
+    start_backend_thread();
 }
 
 void StateEstimationSmoother::reinitialize_gtsam_locked()
@@ -285,6 +297,12 @@ void StateEstimationSmoother::spinOnce()
     // Read the extrapolated stamp under the lock, then release before calling estimated_navstate()
     // to avoid recursive locking (estimated_navstate() acquires the mutex internally).
     std::optional<mrpt::Clock::time_point> tNowOpt;
+    if (params_.async_backend)
+    {
+        // Lock-free: the fast predictor tracks the freshest observation stamp.
+        tNowOpt = fastPredictor_->get_current_extrapolated_stamp();
+    }
+    else
     {
         auto lck = mrpt::lockHelper(stateMutex_);
         tNowOpt  = state_.get_current_extrapolated_stamp();
@@ -344,11 +362,93 @@ void StateEstimationSmoother::reset_locked()
     }
 }
 
+void StateEstimationSmoother::enqueue_async(
+    const mrpt::Clock::time_point& stamp, std::function<void()> fn)
+{
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        ingestQueue_.emplace_back(stamp, std::move(fn));
+    }
+    queueCv_.notify_one();
+}
+
+void StateEstimationSmoother::backend_loop()
+{
+    while (!backendStop_.load())
+    {
+        std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> batch;
+        {
+            std::unique_lock<std::mutex> lk(queueMutex_);
+            queueCv_.wait(lk, [this] { return backendStop_.load() || !ingestQueue_.empty(); });
+            if (backendStop_.load())
+            {
+                break;
+            }
+            batch.swap(ingestQueue_);
+        }
+
+        // Apply in timestamp order, so most residual out-of-order arrivals become
+        // in-order; cross-batch stragglers still splice, handled by the graph.
+        std::stable_sort(
+            batch.begin(), batch.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        auto lck = mrpt::lockHelper(stateMutex_);
+        for (auto& [stamp, fn] : batch)
+        {
+            fn();
+        }
+        // Runs the solve and, in async mode, publishes a fresh snapshot to the
+        // fast predictor.
+        process_pending_gtsam_updates_locked();
+    }
+}
+
+void StateEstimationSmoother::start_backend_thread()
+{
+    if (!params_.async_backend || backendRunning_)
+    {
+        return;
+    }
+    backendStop_.store(false);
+    backendRunning_ = true;
+    backendThread_  = std::thread(&StateEstimationSmoother::backend_loop, this);
+}
+
+void StateEstimationSmoother::stop_backend_thread()
+{
+    if (!backendRunning_)
+    {
+        return;
+    }
+    backendStop_.store(true);
+    queueCv_.notify_all();
+    if (backendThread_.joinable())
+    {
+        backendThread_.join();
+    }
+    backendRunning_ = false;
+}
+
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(odom.timestamp);
+        const auto odomCopy = odom;
+        enqueue_async(
+            odom.timestamp,
+            [this, odomCopy, odomName] { fuse_odometry_locked(odomCopy, odomName); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_odometry_locked(odom, odomName);
+}
 
+void StateEstimationSmoother::fuse_odometry_locked(
+    const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
+{
     // Integrates new wheels-based odometry observations into the estimator.
     //  This is a convenience method that internally ends up calling
     //  fuse_pose(), but computing the uncertainty of odometry increments
@@ -424,8 +524,19 @@ void StateEstimationSmoother::fuse_odometry(
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(imu.timestamp);
+        const auto imuCopy = imu;
+        enqueue_async(imu.timestamp, [this, imuCopy] { fuse_imu_locked(imuCopy); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_imu_locked(imu);
+}
 
+void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& imu)
+{
     // High-rate decimation: skip IMU readings arriving too soon after the last
     // processed one. IMU attitude/gravity are absolute observations, so dropping
     // intermediate readings just lowers the redundant-factor rate (unlike wheel
@@ -511,8 +622,19 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(gps.timestamp);
+        const auto gpsCopy = gps;
+        enqueue_async(gps.timestamp, [this, gpsCopy] { fuse_gnss_locked(gpsCopy); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_gnss_locked(gps);
+}
 
+void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps)
+{
     if (!gps.has_GGA_datum())
     {
         MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since it has no GGA data.");
@@ -600,6 +722,14 @@ void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     const std::string& frame_id)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(timestamp);
+        enqueue_async(
+            timestamp,
+            [this, timestamp, pose, frame_id] { fuse_pose_locked(timestamp, pose, frame_id); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
     fuse_pose_locked(timestamp, pose, frame_id);
 }
@@ -680,8 +810,22 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(timestamp);
+        enqueue_async(
+            timestamp,
+            [this, timestamp, twist, twistCov] { fuse_twist_locked(timestamp, twist, twistCov); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_twist_locked(timestamp, twist, twistCov);
+}
 
+void StateEstimationSmoother::fuse_twist_locked(
+    const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
+    const mrpt::math::CMatrixDouble66& twistCov)
+{
     const gtsam::Vector3 v    = {twist.vx, twist.vy, twist.vz};
     const gtsam::Vector3 w    = {twist.wx, twist.wy, twist.wz};
     gtsam::Matrix3       vCov = twistCov.asEigen().block<3, 3>(0, 0);
@@ -737,6 +881,13 @@ void StateEstimationSmoother::fuse_twist(
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
+    // Async mode: served sub-ms by the lock-free fast predictor, without running
+    // a solve or taking stateMutex_ (the backend thread may be holding it).
+    if (params_.async_backend)
+    {
+        return fastPredictor_->predict(timestamp, frame_id, params_);
+    }
+
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // 1) Make sure we processed all pending sensor data, and have updated the cached values from
