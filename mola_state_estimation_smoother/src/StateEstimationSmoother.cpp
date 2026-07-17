@@ -1778,12 +1778,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
         pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
 
-        // Convergence check: only meaningful until the geo-reference is
-        // finalized. Once state_.geo_reference is set it is sticky, so
-        // re-evaluating it every solve just burns a marginalCovariance() on the
-        // latest keyframe and needlessly re-finalizes/re-publishes the same
-        // reference. Skip it once converged.
-        if (!state_.geo_reference.has_value() && !state_.stamp2frame_index.empty())
+        // Convert info matrix to covariance
+        if (!state_.stamp2frame_index.empty())
         {
             const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
             const auto  latestFrameIdx = latestIt->second;

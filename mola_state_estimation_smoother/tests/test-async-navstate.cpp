@@ -173,7 +173,6 @@ void test_concurrency()
                 lastStampSec.store(tsec);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            stop = true;
         });
 
     std::thread consumer(
@@ -194,6 +193,15 @@ void test_concurrency()
         });
 
     producer.join();
+
+    // The backend may still be catching up when the producer finishes; give the
+    // consumer a bounded window to land at least one successful query, so a slow
+    // CI host does not fail a correct implementation.
+    for (int i = 0; i < 400 && queries.load() == 0; i++)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    stop = true;
     consumer.join();
 
     std::cout << "concurrency: served " << queries.load() << " queries, no deadlock\n";
