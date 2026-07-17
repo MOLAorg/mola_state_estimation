@@ -50,6 +50,12 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gnss_nearby_keyframe_stamp_tolerance);
     MCP_LOAD_OPT(cfg, imu_nearby_keyframe_stamp_tolerance);
 
+    MCP_LOAD_OPT(cfg, odometry_min_sample_period);
+    MCP_LOAD_OPT(cfg, imu_min_sample_period);
+
+    MCP_LOAD_OPT(cfg, async_backend);
+    MCP_LOAD_OPT(cfg, fast_predictor_buffer_length);
+
     MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
     MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
 

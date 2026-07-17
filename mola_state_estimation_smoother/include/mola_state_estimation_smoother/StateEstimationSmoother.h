@@ -46,13 +46,23 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <thread>
 #include <utility>
 
 namespace mola::state_estimation_smoother
 {
+// Defined in src/, kept out of the public API (used only via pointer here):
+struct Snapshot;
+class FastPredictor;
+
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
  *
@@ -125,7 +135,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     StateEstimationSmoother(StateEstimationSmoother&&)                 = delete;
     StateEstimationSmoother& operator=(const StateEstimationSmoother&) = delete;
     StateEstimationSmoother& operator=(StateEstimationSmoother&&)      = delete;
-    ~StateEstimationSmoother()                                         = default;
+    // Out-of-line: fastPredictor_ is a unique_ptr to an incomplete type here.
+    ~StateEstimationSmoother();
 
     /** \name Main API
      *  @{ */
@@ -317,6 +328,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
         std::optional<std::string>          last_wheels_odometry_name;
 
+        /// Stamp of the last wheel-odometry reading that was actually KEPT
+        /// (turned into a keyframe/factor). Used by odometry_min_sample_period
+        /// to merge higher-rate readings: while a reading arrives within that
+        /// period of this stamp it is dropped without advancing the pose anchor
+        /// (last_wheels_odometry), so the next kept reading fuses the whole
+        /// accumulated increment.
+        std::optional<mrpt::Clock::time_point> last_wheels_odometry_stamp;
+
+        /// Stamp of the last IMU reading that was actually processed. Used by
+        /// imu_min_sample_period to skip higher-rate readings.
+        std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
+
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
          * georeferencing parameters.
@@ -342,6 +365,41 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::mutex stateMutex_;
     bool       params_loaded_ = false;
 
+    /// Lock-free read model for async_backend mode. Populated at the end of each
+    /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
+    std::unique_ptr<FastPredictor> fastPredictor_;
+
+    /// Builds an immutable Snapshot of the current solution (newest keyframe
+    /// anchor + frame transforms + georef). Assumes stateMutex_ is held.
+    /// Returns nullptr if there is no keyframe/state to snapshot yet.
+    [[nodiscard]] std::shared_ptr<const Snapshot> build_snapshot_locked() const;
+
+    // ---- async backend (only used when params_.async_backend) ----
+    std::thread                                                           backendThread_;
+    std::mutex                                                            queueMutex_;
+    std::condition_variable                                               queueCv_;
+    std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> ingestQueue_;
+    std::atomic<bool>                                                     backendStop_{false};
+    bool                                                                  backendRunning_ = false;
+
+    /// Bumped by reset_locked() so a batch already detached by backend_loop()
+    /// (pre-reset) is discarded instead of repopulating the fresh graph with
+    /// stale measurements (e.g. across set_geo_reference()).
+    std::atomic<uint64_t> resetEpoch_{0};
+
+    /// Appends a work item to the backend queue and wakes the backend thread.
+    void enqueue_async(const mrpt::Clock::time_point& stamp, std::function<void()> fn);
+
+    /// Backend thread body: drains the queue, applies measurements in timestamp
+    /// order under stateMutex_, runs one solve, and publishes a snapshot.
+    void backend_loop();
+
+    /// Starts the backend thread if async mode is on and it is not running yet.
+    void start_backend_thread();
+
+    /// Signals the backend thread to stop and joins it.
+    void stop_backend_thread();
+
     /// Creates a new frame index for timestamp t, or returns the existing one if close enough.
     /// This also is in charge of the complex task of finding nearby existing frames and adding the
     /// kinematic factors to ensure smooth motion estimation.
@@ -358,6 +416,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_pose_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id);
+    void fuse_odometry_locked(
+        const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);
+    void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);
+    void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
+    void fuse_twist_locked(
+        const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
+        const mrpt::math::CMatrixDouble66& twistCov);
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
         const std::optional<double>&   overrideCloseEnough = std::nullopt);

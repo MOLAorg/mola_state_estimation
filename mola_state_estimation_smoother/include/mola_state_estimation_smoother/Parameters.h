@@ -102,6 +102,28 @@ class Parameters
      */
     double imu_nearby_keyframe_stamp_tolerance = 0.10;  // [s]
 
+    /** High-rate same-sensor decimation for wheel odometry. If > 0, wheel
+     * odometry readings arriving less than this many seconds after the last
+     * *kept* one are MERGED rather than turned into their own keyframe: the
+     * reading is dropped without advancing the pose anchor, so the next kept
+     * reading fuses the accumulated pose increment together with its
+     * accumulated motion-model covariance. This caps the keyframe/factor rate
+     * a high-rate odometry stream imposes on the solver without discarding any
+     * motion. 0 disables it (every reading creates/updates a keyframe as
+     * before). This is independent of, and coarser than,
+     * min_time_difference_to_create_new_frame (which only merges
+     * near-simultaneous readings from different sensors). [seconds]
+     */
+    double odometry_min_sample_period = 0.0;  // [s]
+
+    /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
+     * less than this many seconds after the last *processed* one are skipped.
+     * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so
+     * dropping intermediate readings simply lowers the redundant-factor rate;
+     * there is nothing to accumulate. 0 disables it. [seconds]
+     */
+    double imu_min_sample_period = 0.0;  // [s]
+
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
     double sigma_integrator_position              = 0.10;  // [m]
@@ -202,6 +224,25 @@ class Parameters
     /** Each new sensor will become a call to isam2.update(), plus this number of additional
      * refining steps. In theory, more steps lead to more accurate results. */
     uint32_t additional_isam2_update_steps = 3;
+
+    /** @} */
+
+    /** @name Real-time async backend
+     * @{ */
+
+    /** If `true`, the iSAM2 window solve runs in a dedicated backend thread and
+     * `estimated_navstate()` is served by a lock-free FastPredictor re-anchored
+     * on the latest backend solution, so a query never runs a solve nor blocks
+     * on `stateMutex_` (per-query latency stays sub-millisecond). If `false`
+     * (default) the solve runs inline on the caller's thread, which is
+     * deterministic and is what the unit tests and offline batch runs use.
+     */
+    bool async_backend = false;
+
+    /** [s] Only used when `async_backend` is `true`: how far back the
+     * FastPredictor keeps high-rate observations to extrapolate from the anchor.
+     */
+    double fast_predictor_buffer_length = 1.0;  // [s]
 
     /** @} */
 

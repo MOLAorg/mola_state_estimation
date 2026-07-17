@@ -54,6 +54,14 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#include "FastPredictor.h"
+#include "Snapshot.h"
+#include "extrapolation.h"
+
+// std:
+#include <algorithm>
+#include <utility>
+
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
@@ -83,53 +91,6 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
 
 namespace mola::state_estimation_smoother
 {
-
-namespace
-{
-/// Integrates a constant body-frame twist over `dt` seconds, returning the
-/// relative pose increment T_i_to_j (right-composed onto an anchor: T_j = T_i
-/// (+) delta). Branches on the configured kinematic model so the short-term
-/// extrapolation matches the motion model used to build the inter-keyframe
-/// factors: full SE(3) exp of the 6D body twist for ConstantVelocity; the planar
-/// arc from forward velocity v=vx and yaw rate w=wz for Tricycle, mirroring
-/// mola::factors::FactorTricycleKinematic exactly.
-mrpt::poses::CPose3D body_twist_delta(
-    const Parameters& params, const mrpt::math::TTwist3D& twist, double dt)
-{
-    switch (params.kinematic_model)
-    {
-        case KinematicModel::Tricycle:
-        {
-            constexpr double w_threshold = 1e-4;  // [rad/s], as FactorTricycleKinematic
-            const double     v           = twist.vx;
-            const double     w           = twist.wz;
-            if (std::abs(w) < w_threshold)
-            {
-                return mrpt::poses::CPose3D(v * dt, .0, .0, .0, .0, .0);
-            }
-            const double R     = v / w;
-            const double theta = w * dt;
-            const double dx    = R * std::sin(theta);
-            const double dy    = R * (1.0 - std::cos(theta));
-            // CPose3D(x, y, z, yaw, pitch, roll); the arc rotates about +z (yaw).
-            return mrpt::poses::CPose3D(dx, dy, .0, theta, .0, .0);
-        }
-        case KinematicModel::ConstantVelocity:
-        default:
-        {
-            mrpt::math::CVectorFixed<double, 6> twistDt;
-            twistDt[0] = twist.vx;
-            twistDt[1] = twist.vy;
-            twistDt[2] = twist.vz;
-            twistDt[3] = twist.wx;
-            twistDt[4] = twist.wy;
-            twistDt[5] = twist.wz;
-            twistDt *= dt;
-            return mrpt::poses::CPose3D(mrpt::poses::Lie::SE<3>::exp(twistDt));
-        }
-    }
-}
-}  // namespace
 
 const bool   NAVSTATE_PRINT_FG        = mrpt::get_env<bool>("NAVSTATE_PRINT_FG", false);
 const bool   NAVSTATE_PRINT_FG_ERRORS = mrpt::get_env<bool>("NAVSTATE_PRINT_FG_ERRORS", false);
@@ -200,6 +161,13 @@ StateEstimationSmoother::StateEstimationSmoother()
 {  //
     profiler_.setName("StateEstimationSmoother");
     ExecutableBase::setModuleInstanceName("StateEstimationSmoother");
+    fastPredictor_ = std::make_unique<FastPredictor>();
+}
+
+StateEstimationSmoother::~StateEstimationSmoother()
+{
+    // Join the backend thread before any member it touches is destroyed.
+    stop_backend_thread();
 }
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
@@ -256,6 +224,10 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     params_loaded_ = true;
     reinitialize_gtsam_locked();
+
+    // In async mode, spin up the backend solver thread. It immediately waits on
+    // an empty queue, so starting it while stateMutex_ is held is safe.
+    start_backend_thread();
 }
 
 void StateEstimationSmoother::reinitialize_gtsam_locked()
@@ -325,6 +297,12 @@ void StateEstimationSmoother::spinOnce()
     // Read the extrapolated stamp under the lock, then release before calling estimated_navstate()
     // to avoid recursive locking (estimated_navstate() acquires the mutex internally).
     std::optional<mrpt::Clock::time_point> tNowOpt;
+    if (params_.async_backend)
+    {
+        // Lock-free: the fast predictor tracks the freshest observation stamp.
+        tNowOpt = fastPredictor_->get_current_extrapolated_stamp();
+    }
+    else
     {
         auto lck = mrpt::lockHelper(stateMutex_);
         tNowOpt  = state_.get_current_extrapolated_stamp();
@@ -374,17 +352,146 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::reset_locked()
 {
     state_ = State();
+    if (fastPredictor_)
+    {
+        fastPredictor_->clear();
+    }
+    // Drop any queued (and any already-detached) async work: it targets the old
+    // graph and must not repopulate the fresh one (required across
+    // set_geo_reference(), see coding guidelines).
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        ingestQueue_.clear();
+        resetEpoch_.fetch_add(1, std::memory_order_relaxed);
+    }
     if (params_loaded_)
     {
         reinitialize_gtsam_locked();
     }
 }
 
+void StateEstimationSmoother::enqueue_async(
+    const mrpt::Clock::time_point& stamp, std::function<void()> fn)
+{
+    // Safety bound: the backend coalesces (drains all pending each iteration), so
+    // in normal operation the queue holds only one solve's worth of arrivals.
+    // This cap only trips if the backend stalls; dropping the oldest keeps memory
+    // bounded and is visible via the throttled warning.
+    constexpr size_t kMaxIngestQueue = 10000;
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        if (ingestQueue_.size() >= kMaxIngestQueue)
+        {
+            ingestQueue_.pop_front();
+            MRPT_LOG_THROTTLE_WARN(
+                5.0,
+                "[async] ingest queue full: backend not keeping up, dropping oldest measurement");
+        }
+        ingestQueue_.emplace_back(stamp, std::move(fn));
+    }
+    queueCv_.notify_one();
+}
+
+void StateEstimationSmoother::backend_loop()
+{
+    while (!backendStop_.load())
+    {
+        std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> batch;
+        uint64_t                                                              batchEpoch = 0;
+        {
+            std::unique_lock<std::mutex> lk(queueMutex_);
+            queueCv_.wait(lk, [this] { return backendStop_.load() || !ingestQueue_.empty(); });
+            if (backendStop_.load())
+            {
+                break;
+            }
+            batch.swap(ingestQueue_);
+            batchEpoch = resetEpoch_.load(std::memory_order_relaxed);
+        }
+
+        // Apply in timestamp order, so most residual out-of-order arrivals become
+        // in-order; cross-batch stragglers still splice, handled by the graph.
+        std::stable_sort(
+            batch.begin(), batch.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        auto lck = mrpt::lockHelper(stateMutex_);
+
+        // If a reset happened after this batch was detached, it targets a graph
+        // that no longer exists: discard it rather than corrupt the fresh one.
+        if (resetEpoch_.load(std::memory_order_relaxed) != batchEpoch)
+        {
+            continue;
+        }
+
+        // A measurement callback or the solve can throw (e.g. an
+        // under-constrained marginal). In the backend thread that would escape
+        // to std::terminate, so contain it: log and rebuild the smoother.
+        try
+        {
+            for (auto& [stamp, fn] : batch)
+            {
+                fn();
+            }
+            // Runs the solve and, in async mode, publishes a fresh snapshot to
+            // the fast predictor.
+            process_pending_gtsam_updates_locked();
+        }
+        catch (const std::exception& e)
+        {
+            MRPT_LOG_ERROR_STREAM(
+                "[backend_loop] Exception while applying a batch; resetting smoother:\n"
+                << e.what());
+            reset_locked();
+        }
+    }
+}
+
+void StateEstimationSmoother::start_backend_thread()
+{
+    if (!params_.async_backend || backendRunning_)
+    {
+        return;
+    }
+    backendStop_.store(false);
+    backendRunning_ = true;
+    backendThread_  = std::thread(&StateEstimationSmoother::backend_loop, this);
+}
+
+void StateEstimationSmoother::stop_backend_thread()
+{
+    if (!backendRunning_)
+    {
+        return;
+    }
+    backendStop_.store(true);
+    queueCv_.notify_all();
+    if (backendThread_.joinable())
+    {
+        backendThread_.join();
+    }
+    backendRunning_ = false;
+}
+
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(odom.timestamp);
+        const auto odomCopy = odom;
+        enqueue_async(
+            odom.timestamp,
+            [this, odomCopy, odomName] { fuse_odometry_locked(odomCopy, odomName); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_odometry_locked(odom, odomName);
+}
 
+void StateEstimationSmoother::fuse_odometry_locked(
+    const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
+{
     // Integrates new wheels-based odometry observations into the estimator.
     //  This is a convenience method that internally ends up calling
     //  fuse_pose(), but computing the uncertainty of odometry increments
@@ -399,14 +506,31 @@ void StateEstimationSmoother::fuse_odometry(
 
         ASSERT_(state_.last_wheels_odometry.has_value());
         lastOdom = *state_.last_wheels_odometry;
+
+        // High-rate decimation/merge: if this reading arrives too soon after
+        // the last *kept* one, drop it WITHOUT advancing the pose anchor
+        // (last_wheels_odometry) nor the kept stamp. The next kept reading then
+        // fuses the accumulated increment (lastOdom -> current) with its
+        // accumulated motion-model covariance, merging several consecutive
+        // odometry readings into a single keyframe/factor without losing motion.
+        if (params_.odometry_min_sample_period > 0 && state_.last_wheels_odometry_stamp.has_value())
+        {
+            const double dt =
+                mrpt::system::timeDifference(*state_.last_wheels_odometry_stamp, odom.timestamp);
+            if (dt < params_.odometry_min_sample_period)
+            {
+                return;
+            }
+        }
     }
     else
     {
         // This is the first time we have wheels odometry.
         // Store the pose but skip factor creation: the increment is zero,
         // which would produce a stiff near-zero BetweenFactor.
-        state_.last_wheels_odometry_name = odomName;
-        state_.last_wheels_odometry      = odom.odometry;
+        state_.last_wheels_odometry_name  = odomName;
+        state_.last_wheels_odometry       = odom.odometry;
+        state_.last_wheels_odometry_stamp = odom.timestamp;
         return;
     }
     // Use a probabilistic motion model:
@@ -432,9 +556,10 @@ void StateEstimationSmoother::fuse_odometry(
         mrpt::Clock::toDouble(odom.timestamp), odomName.c_str(), odom.odometry.asString().c_str(),
         odoAct.poseChange->getMeanVal().asString().c_str());
 
-    // Save for next iteration:
-    state_.last_wheels_odometry_name = odomName;
-    state_.last_wheels_odometry      = odom.odometry;
+    // Save for next iteration (advance the anchor: this reading was kept):
+    state_.last_wheels_odometry_name  = odomName;
+    state_.last_wheels_odometry       = odom.odometry;
+    state_.last_wheels_odometry_stamp = odom.timestamp;
 
     // Fuse this new probabilistic pose observation:
     fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
@@ -442,7 +567,45 @@ void StateEstimationSmoother::fuse_odometry(
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(imu.timestamp);
+        const auto imuCopy = imu;
+        enqueue_async(imu.timestamp, [this, imuCopy] { fuse_imu_locked(imuCopy); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_imu_locked(imu);
+}
+
+void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& imu)
+{
+    // Ignore an IMU reading with no usable content up front, before touching the
+    // decimation stamp or creating a keyframe: otherwise an empty sample would
+    // consume the decimation interval (skipping the next, useful one) and add a
+    // factor-less keyframe.
+    const bool hasAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W);
+    const bool hasGravity =
+        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    if (!hasAttitude && !hasGravity)
+    {
+        return;
+    }
+
+    // High-rate decimation: skip IMU readings arriving too soon after the last
+    // processed one. IMU attitude/gravity are absolute observations, so dropping
+    // intermediate readings just lowers the redundant-factor rate (unlike wheel
+    // odometry, there is no increment to accumulate).
+    if (params_.imu_min_sample_period > 0 && state_.last_processed_imu_stamp.has_value())
+    {
+        const double dt =
+            mrpt::system::timeDifference(*state_.last_processed_imu_stamp, imu.timestamp);
+        if (dt < params_.imu_min_sample_period)
+        {
+            return;
+        }
+    }
+    state_.last_processed_imu_stamp = imu.timestamp;
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
@@ -514,8 +677,19 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(gps.timestamp);
+        const auto gpsCopy = gps;
+        enqueue_async(gps.timestamp, [this, gpsCopy] { fuse_gnss_locked(gpsCopy); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_gnss_locked(gps);
+}
 
+void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps)
+{
     if (!gps.has_GGA_datum())
     {
         MRPT_LOG_DEBUG("[fuse_gnss]: Ignoring reading since it has no GGA data.");
@@ -603,6 +777,14 @@ void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     const std::string& frame_id)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(timestamp);
+        enqueue_async(
+            timestamp,
+            [this, timestamp, pose, frame_id] { fuse_pose_locked(timestamp, pose, frame_id); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
     fuse_pose_locked(timestamp, pose, frame_id);
 }
@@ -683,8 +865,22 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    if (params_.async_backend)
+    {
+        fastPredictor_->note_observation_stamp(timestamp);
+        enqueue_async(
+            timestamp,
+            [this, timestamp, twist, twistCov] { fuse_twist_locked(timestamp, twist, twistCov); });
+        return;
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
+    fuse_twist_locked(timestamp, twist, twistCov);
+}
 
+void StateEstimationSmoother::fuse_twist_locked(
+    const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
+    const mrpt::math::CMatrixDouble66& twistCov)
+{
     const gtsam::Vector3 v    = {twist.vx, twist.vy, twist.vz};
     const gtsam::Vector3 w    = {twist.wx, twist.wy, twist.wz};
     gtsam::Matrix3       vCov = twistCov.asEigen().block<3, 3>(0, 0);
@@ -740,6 +936,13 @@ void StateEstimationSmoother::fuse_twist(
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
+    // Async mode: served sub-ms by the lock-free fast predictor, without running
+    // a solve or taking stateMutex_ (the backend thread may be holding it).
+    if (params_.async_backend)
+    {
+        return fastPredictor_->predict(timestamp, frame_id, params_);
+    }
+
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // 1) Make sure we processed all pending sensor data, and have updated the cached values from
@@ -793,7 +996,8 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     NavState retKf;
     try
     {
-        retKf = get_latest_state_and_covariance(*closesFrameIdx);
+        const auto tleMarg = mola::ProfilerEntry(profiler_, "estimated_navstate.marginals.anchor");
+        retKf              = get_latest_state_and_covariance(*closesFrameIdx);
     }
     catch (const std::exception& e)
     {
@@ -1414,6 +1618,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
             !state_.gtsam->newKeyStamps.empty() || !state_.gtsam->factorsToRemove.empty())
         {
+            const auto tleUpd = mola::ProfilerEntry(profiler_, "process_pending.iSAM2.update");
             smoother.update(
                 state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps,
                 state_.gtsam->factorsToRemove);
@@ -1435,9 +1640,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         }
 
         // Optional: Perform extra internal iterations for better accuracy
-        for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+        if (params_.additional_isam2_update_steps > 1)
         {
-            smoother.update();
+            const auto tleExtra =
+                mola::ProfilerEntry(profiler_, "process_pending.iSAM2.extra_updates");
+            for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+            {
+                smoother.update();
+            }
         }
     }
     catch (const std::exception& e)
@@ -1518,7 +1728,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     gtsam::Values optValues;
     try
     {
-        optValues = smoother.calculateEstimate();
+        const auto tleCalc = mola::ProfilerEntry(profiler_, "process_pending.calculateEstimate");
+        optValues          = smoother.calculateEstimate();
     }
     catch (const std::exception& e)
     {
@@ -1535,25 +1746,30 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
-    for (auto& [kfIdx, kf] : state_.last_estimated_states)
     {
-        const auto pose = optValues.at<gtsam::Pose3>(T(kfIdx));
-        const auto linV = optValues.at<gtsam::Vector3>(V(kfIdx));
-        const auto angV = optValues.at<gtsam::Vector3>(W(kfIdx));
-
-        kf.pose  = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(pose));
-        kf.twist = {linV.x(), linV.y(), linV.z(), angV.x(), angV.y(), angV.z()};
-
-        if (params_.enforce_planar_motion)
+        const auto tleWriteback = mola::ProfilerEntry(profiler_, "process_pending.writeback");
+        for (auto& [kfIdx, kf] : state_.last_estimated_states)
         {
-            enforce_planar_pose(kf.pose);
-            enforce_planar_twist(kf.twist);
+            const auto pose = optValues.at<gtsam::Pose3>(T(kfIdx));
+            const auto linV = optValues.at<gtsam::Vector3>(V(kfIdx));
+            const auto angV = optValues.at<gtsam::Vector3>(W(kfIdx));
+
+            kf.pose  = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(pose));
+            kf.twist = {linV.x(), linV.y(), linV.z(), angV.x(), angV.y(), angV.z()};
+
+            if (params_.enforce_planar_motion)
+            {
+                enforce_planar_pose(kf.pose);
+                enforce_planar_twist(kf.twist);
+            }
         }
     }
 
     // Retrieve latest enu_to_map for geo-referencing:
     if (params_.estimate_geo_reference)
     {
+        const auto tleGeoref = mola::ProfilerEntry(profiler_, "process_pending.marginals.georef");
+
         const auto T_enu_to_map     = optValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
         const auto T_enu_to_map_cov = smoother.marginalCovariance(symbol_T_enu_to_map);
 
@@ -1633,16 +1849,20 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     // retrieve odometry frames:
-    for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
     {
-        const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
-        const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
-        const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
+        const auto tleOdomMarg =
+            mola::ProfilerEntry(profiler_, "process_pending.marginals.odom_frames");
+        for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
+        {
+            const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
+            const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
+            const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
 
-        auto& pdf = state_.last_estimated_frames[odomFrameIdx];
+            auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
-        pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
-        pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+            pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
+            pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+        }
     }
 
     if (NAVSTATE_PRINT_FG)
@@ -1672,6 +1892,17 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     state_.gtsam->newFactors.resize(0);
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
+
+    // Publish an immutable snapshot for the lock-free read path. Only built in
+    // async mode: the synchronous path reads state_ directly and building the
+    // snapshot would add marginals to every solve for no benefit.
+    if (params_.async_backend)
+    {
+        if (auto snap = build_snapshot_locked())
+        {
+            fastPredictor_->set_snapshot(std::move(snap));
+        }
+    }
 
     // Check convergence for initialization from GNSS / georeferencing.
     // If we just converged and should publish geo-ref, do it now:
@@ -2017,6 +2248,74 @@ void StateEstimationSmoother::remove_kinematic_factor_between(
         rm.insert(rm.end(), it->second.begin(), it->second.end());
         state_.gtsam->flushedKinematic.erase(it);
     }
+}
+
+std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked() const
+{
+    if (state_.stamp2frame_index.empty())
+    {
+        return nullptr;
+    }
+
+    auto snap = std::make_shared<Snapshot>();
+
+    // Anchor: the newest keyframe's optimized state + covariance.
+    const auto& latestIt      = state_.stamp2frame_index.getDirectMap().rbegin();
+    const auto  latestStamp   = latestIt->first;
+    const auto  latestFrameId = latestIt->second;
+    try
+    {
+        snap->anchor = get_latest_state_and_covariance(latestFrameId);
+    }
+    catch (const std::exception&)
+    {
+        // Graph still under-constrained: no usable snapshot yet.
+        return nullptr;
+    }
+    snap->anchorStamp = latestStamp;
+
+    // Odometry-frame transforms (numeric id >= 1) and the name<->id mapping.
+    snap->frameNames = state_.known_odom_frames;
+    for (const auto& [id, pdf] : state_.last_estimated_frames)
+    {
+        if (id == REFERENCE_FRAME_ID)
+        {
+            continue;
+        }
+        snap->frameTransforms[id] = pdf;
+    }
+
+    // Each source's own last raw pose in {odom_i}, for the frame-local path.
+    for (const auto& [id, raw] : state_.last_raw_pose_by_source)
+    {
+        snap->lastRawPoseBySource[id] = Snapshot::RawSourcePose{raw.stamp, raw.pose};
+    }
+
+    snap->geoReference = state_.geo_reference;
+
+    // Convergence flag, mode-aware, mirroring has_converged_localization().
+    bool converged = false;
+    if (state_.geo_reference.has_value())
+    {
+        if (params_.estimate_geo_reference)
+        {
+            converged = true;
+        }
+        else
+        {
+            const mrpt::math::CMatrixDouble66 poseCov = snap->anchor.pose.cov_inv.inverse_LLt();
+            const double                      maxPos =
+                std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
+            const double maxOriDeg =
+                mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
+            converged = maxPos <= params_.convergence_max_position_sigma &&
+                        maxOriDeg <= params_.convergence_max_orientation_sigma_deg;
+        }
+    }
+    snap->localizationConverged = converged;
+
+    snap->valid = true;
+    return snap;
 }
 
 NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_index_t idx) const

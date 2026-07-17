@@ -62,3 +62,17 @@ mola_add_test(
     mola::mola_state_estimation_smoother
 )
 
+mola_add_test(
+  TARGET  test-keyframe-decimation
+  SOURCES test-keyframe-decimation.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
+  TARGET  test-async-navstate
+  SOURCES test-async-navstate.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+

@@ -63,7 +63,7 @@ incremental optimization. The primary estimator for multi-sensor fusion.
 | ROS 2 launch | `mola_state_estimation_smoother/ros2-launchs/ros2-state-estimator.launch.py` |
 | MOLA-CLI launch | `mola_state_estimation_smoother/mola-cli-launchs/state_estimator_ros2.yaml` |
 | CLI app | `mola_state_estimation_smoother/apps/mola-navstate-cli.cpp` |
-| Tests (7) | `mola_state_estimation_smoother/tests/test-*.cpp` |
+| Tests (11) | `mola_state_estimation_smoother/tests/test-*.cpp` |
 | Integration tests | `mola_state_estimation_smoother/test/integration/test_*.py` |
 
 Key traits:
@@ -88,6 +88,23 @@ Key traits:
 - Optional ENU-to-map georeferencing from GNSS.
 - Thread-safe (`std::recursive_mutex`).
 - Configuration via YAML with `${ENV_VAR|default}` substitution.
+- Optional high-rate same-sensor decimation (both default `0` = off):
+  `odometry_min_sample_period` and `imu_min_sample_period` cap how often a
+  high-rate stream spawns keyframes/factors (solve cost grows with keyframe
+  count). Wheel-odom drops are *merged* (the pose anchor is held across the
+  dropped span, so the next kept reading fuses the accumulated increment +
+  covariance -- no motion lost); IMU drops are skipped (attitude/gravity are
+  absolute). Distinct from `min_time_difference_to_create_new_frame`, which only
+  merges near-simultaneous readings from different sensors.
+- Optional async backend (`async_backend: true`, default `false`): the iSAM2
+  window solve runs in a dedicated thread and `estimated_navstate()` is served
+  by a lock-free `FastPredictor` (`src/FastPredictor.{h,cpp}`) that extrapolates
+  the latest solved Snapshot (`src/Snapshot.h`) with the configured kinematic
+  model (shared with the backend via `src/extrapolation.h`). A query then runs
+  no solve and never takes `stateMutex_`, so its latency stays sub-millisecond;
+  the frame-local `{odom_i}` hardening is preserved (a query anchors on that
+  source's own last raw pose in the Snapshot). The default synchronous path is
+  byte-for-byte unchanged (deterministic offline/unit-test runs).
 
 Sensor inputs:
 - `fuse_pose()` - localization / LiDAR odometry poses
