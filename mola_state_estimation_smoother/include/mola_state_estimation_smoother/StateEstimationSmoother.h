@@ -443,6 +443,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     void publishEstimatedGeoreferencing();
 
+    /// Advertises the REP-105 correction reference_frame -> {odom} from the
+    /// estimator's own T_map_to_odom_i (see publish_map_to_odom_tf).
+    void publishMapToOdom(const mrpt::Clock::time_point& stamp, const std::string& methodLabel);
+
     using pair_nearby_frame_iterators_t = std::pair<
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator>;

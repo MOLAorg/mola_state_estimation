@@ -208,8 +208,27 @@ colcon test-result --verbose
 ## ROS 2 integration
 
 The smoother integrates with ROS 2 via the `mola_launcher` node and a ROS 2
-bridge. It publishes `map -> base_link` on `/tf` (does **not** follow REP 105's
-`map -> odom -> base_link` chain by default).
+bridge. By default it advertises the fused `map -> base_link` pose (the bridge
+publishes it to `/tf`, either directly or, in its REP-105 mode, composed into
+`map -> odom`).
+
+Optional additional TF outputs (both default off, additive, distinct
+`method` suffixes so the bridge's TF/odometry source filters route them
+independently):
+
+- `publish_map_to_odom_tf`: advertise `map -> odom` (method `/map_odom`) taken
+  directly from the estimator's own `T_map_to_odom` graph variable. It is smooth
+  and time-consistent, so the bridge forwards it to `/tf` verbatim (its
+  `child_frame != base_link` path), avoiding the stale
+  `(map->base_link)*(odom->base_link)^-1` composition that otherwise injects
+  motion-correlated jitter. Point the bridge's TF source filter at the
+  `/map_odom` method. `map_to_odom_frame_name` selects the odometry frame
+  (auto if exactly one is known).
+- `publish_fused_vehicle_tf`: advertise the fused vehicle pose in a distinct
+  child frame `fused_vehicle_frame_name` (default `base_link_fused`, method
+  `/fused`) at the module rate. A distinct child never collides with an
+  `odom -> base_link` chain, giving consumers a high-rate fused pose outside the
+  canonical robot tree.
 
 ROS 2 launch file:
 `mola_state_estimation_smoother/ros2-launchs/ros2-state-estimator.launch.py`
