@@ -255,6 +255,45 @@ Major parameter groups:
 - **IMU**: attitude sigma, azimuth offset, gravity alignment sigma
 - **Georeferencing**: `estimate_geo_reference`, convergence thresholds
 - **Sensor filtering**: regex patterns to match/reject sensor labels
+- **Real-time path**: `async_backend`, `odometry_min_sample_period`,
+  `imu_min_sample_period`, `publish_map_to_odom_tf` + `map_to_odom_frame_name` +
+  `map_to_odom_child_frame`, `publish_fused_vehicle_tf` + `fused_vehicle_frame_name`
+
+### Real-time setup (shipped defaults) and REP-105 `map -> odom`
+
+The shipped `params/state-estimation-smoother.yaml` targets real-time use, so
+these are **on by default** (each also settable via the shown env var):
+
+| feature | param / env var | default | notes |
+|---|---|---|---|
+| async backend | `async_backend` / `MOLA_ASYNC_BACKEND` | **true** | sub-ms queries; solve off the caller's thread. **Set false for offline/reproducible batch runs** (mola-navstate-cli) - async serving is non-deterministic. The C++ `Parameters` default stays `false`, so unit tests (inline YAML) remain deterministic. |
+| odom keyframe merge | `odometry_min_sample_period` / `MOLA_ODOMETRY_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz keyframes; merges (no motion lost). Deterministic. |
+| IMU keyframe skip | `imu_min_sample_period` / `MOLA_IMU_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz attitude/gravity factors. |
+
+REP-105 `map -> odom` published from the graph variable (default **off**,
+enable per deployment because it needs the routing + frame wiring below):
+
+- `publish_map_to_odom_tf: true` (`MOLA_PUBLISH_MAP_TO_ODOM_TF`) advertises
+  `map -> odom` from `T_map_to_odom` under method `<label>/map_odom`.
+- `map_to_odom_frame_name` (`MOLA_MAP_TO_ODOM_FRAME`) selects which fused
+  odometry SOURCE to read; its frame_id is that source's sensor label (from the
+  bridge subscription's `output_sensor_label`, e.g. `odom_wheels`), NOT the ROS
+  odom /tf frame.
+- `map_to_odom_child_frame` (`MOLA_MAP_TO_ODOM_CHILD_FRAME`) is the published
+  `/tf` child; it MUST equal the REP-105 odom frame the external driver
+  publishes `odom -> base_link` for (usually `odom`). Empty = the source
+  frame_id, which only works when the label already is that frame. Mismatch =>
+  `map -> <label>` does not connect to `odom -> base_link` (tf2 "two
+  unconnected trees").
+- Route the bridge's TF source to the `<label>/map_odom` method via
+  mola_lidar_odometry's `localization_publish_tf_source` launch argument, so the
+  bridge forwards it verbatim instead of composing (and jittering) `map -> odom`.
+  See `mola_lidar_odometry/agents.md`.
+
+Example (single wheel-odom source labeled `odom_wheels`, ROS odom frame `odom`):
+`MOLA_PUBLISH_MAP_TO_ODOM_TF=true MOLA_MAP_TO_ODOM_FRAME=odom_wheels
+MOLA_MAP_TO_ODOM_CHILD_FRAME=odom`, plus
+`localization_publish_tf_source:=state_estimation/map_odom`.
 
 ## Relocalize mode (`estimate_geo_reference=false`, GNSS+IMU init against a known map)
 

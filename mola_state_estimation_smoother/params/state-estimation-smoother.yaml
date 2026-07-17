@@ -97,17 +97,25 @@ params:
   # without advancing the pose anchor, so the next kept reading fuses the whole
   # accumulated increment + covariance). Caps the keyframe rate a high-rate
   # odometry stream imposes on the solver without losing motion. 0 = disabled.
-  odometry_min_sample_period: ${MOLA_ODOMETRY_MIN_SAMPLE_PERIOD|0.0}
+  # Default 0.1 (~10 Hz keyframes): a raw 30-50 Hz odom stream otherwise packs
+  # the sliding window with hundreds of variables. Merging is deterministic, so
+  # this is safe for both real-time and offline/reproducible runs.
+  odometry_min_sample_period: ${MOLA_ODOMETRY_MIN_SAMPLE_PERIOD|0.1}
 
   # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
   # arriving less than this after the last processed one are skipped (attitude/
-  # gravity are absolute, so nothing is accumulated). 0 = disabled.
-  imu_min_sample_period: ${MOLA_IMU_MIN_SAMPLE_PERIOD|0.0}
+  # gravity are absolute, so nothing is accumulated). 0 = disabled. Default 0.1.
+  imu_min_sample_period: ${MOLA_IMU_MIN_SAMPLE_PERIOD|0.1}
 
   # If true, run the iSAM2 window solve in a dedicated backend thread and serve
-  # estimated_navstate() from a lock-free fast predictor (sub-ms queries). The
-  # default synchronous path is deterministic and used by offline/unit runs.
-  async_backend: ${MOLA_ASYNC_BACKEND|false}
+  # estimated_navstate() from a lock-free fast predictor (sub-ms queries),
+  # instead of running the solve synchronously on the caller's thread. Default
+  # true here, since this shipped config targets real-time deployments (e.g.
+  # mola_lidar_odometry). NOTE: async serving is NON-deterministic (the result
+  # depends on how far the backend has solved when a query lands). For OFFLINE /
+  # reproducible batch runs (e.g. mola-navstate-cli over a rawlog) set this to
+  # false (MOLA_ASYNC_BACKEND=false) to get the deterministic synchronous path.
+  async_backend: ${MOLA_ASYNC_BACKEND|true}
 
   # Random walk model for linear acceleration uncertainty [m/s²]
   sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
