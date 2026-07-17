@@ -157,6 +157,15 @@ struct StateEstimationSmoother::GtsamImpl
 {
     GtsamImpl() = default;
 
+    /// Identifies the kinematic link between two keyframes. Links are undirected,
+    /// so the pair is normalized and (a,b) and (b,a) name the same link.
+    using frame_pair_t = std::pair<frame_index_t, frame_index_t>;
+
+    static frame_pair_t link_key(const frame_index_t a, const frame_index_t b)
+    {
+        return {std::min(a, b), std::max(a, b)};
+    }
+
     // This is initialized in initialize(), once we have the parameters
     std::optional<gtsam::IncrementalFixedLagSmoother> smoother;
 
@@ -164,6 +173,20 @@ struct StateEstimationSmoother::GtsamImpl
     gtsam::NonlinearFactorGraph              newFactors;
     gtsam::Values                            newValues;
     gtsam::FixedLagSmoother::KeyTimestampMap newKeyStamps;
+
+    /** Kinematic links built but not yet handed to iSAM2, keyed by the keyframe
+     *  pair they connect. Keeping them keyed, instead of appending straight into
+     *  newFactors, is what allows a link to be withdrawn again before it ever
+     *  reaches the solver, when a keyframe gets spliced between its endpoints.
+     */
+    std::map<frame_pair_t, gtsam::NonlinearFactorGraph> pendingKinematic;
+
+    /** iSAM2 factor indices of the kinematic links already inside the smoother,
+     *  so a link can be removed on a later splice. */
+    std::map<frame_pair_t, gtsam::FactorIndices> flushedKinematic;
+
+    /** Queued for removal at the next update(). */
+    gtsam::FactorIndices factorsToRemove;
 };
 
 // -------- StateEstimationSmoother::State -------
@@ -1022,6 +1045,11 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
         MRPT_LOG_WARN_FMT("Constant-velocity kinematics factor added for large dT=%.03f s.", dt);
     }
 
+    // Emit into this link's own graph rather than straight into newFactors, so the
+    // whole link can be withdrawn as a unit if a keyframe is later spliced between
+    // its endpoints. Flushed into newFactors at the next update.
+    auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(f.from_kf, f.to_kf)];
+
     // 1) Add GTSAM factors for constant velocity model
     // -------------------------------------------------
     const auto kTi  = T(f.from_kf);
@@ -1034,12 +1062,12 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // See line 3 of eq (4) in the MOLA RSS2019 paper
     // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
     // here too:
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+    sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
         kTi, kbVi, kTj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_lin_vel * dt));
 
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+    sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
         kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
 
     // 2) Add kinematics / numerical integration factor
@@ -1051,11 +1079,11 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
         gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_orientation);
 
     // Impl. line 2 of eq (1) in the MOLA RSS2019 paper
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTrapezoidalIntegratorPose>(
+    sink.emplace_shared<mola::factors::FactorTrapezoidalIntegratorPose>(
         kTi, kbVi, kTj, kbVj, dt, noise_kinematicsPosition);
 
     // Impl. line 1 of eq (4) in the MOLA RSS2019 paper.
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorAngularVelocityIntegrationPose>(
+    sink.emplace_shared<mola::factors::FactorAngularVelocityIntegrationPose>(
         kTi, kbWi, kTj, dt, noise_kinematicsOrientation);
 }
 
@@ -1085,6 +1113,10 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
         MRPT_LOG_WARN_FMT("Tricycle kinematics factor added for large dT=%.03f s.", dt);
     }
 
+    // See the note in the ConstantVelocity overload: emit into this link's own
+    // graph so it can be withdrawn as a unit on a later splice.
+    auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(f.from_kf, f.to_kf)];
+
     // 1) Add GTSAM factors for constant velocity model
     // -------------------------------------------------
     const auto kTi  = T(f.from_kf);
@@ -1097,12 +1129,12 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     // See line 3 of eq (4) in the MOLA RSS2019 paper
     // Modify to use velocity in local frame: reuse FactorConstLocalVelocity
     // here too:
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+    sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
         kTi, kbVi, kTj, kbVj, gtsam::noiseModel::Isotropic::Sigma(3, std_lin_vel * dt));
 
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
+    sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
         kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
 
     // In the tricycle model, body v_y must be zero:
@@ -1110,14 +1142,14 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
         const Eigen::Vector3d sigmas = {
             TRICYCLE_LARGE_SIGMAS, std_lin_vel * dt, TRICYCLE_LARGE_SIGMAS};
 
-        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+        sink.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
             kbVj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
     }
     // In the tricycle model, body w_x,w_y must be zero:
     {
         const Eigen::Vector3d sigmas = {std_ang_vel * dt, std_ang_vel * dt, TRICYCLE_LARGE_SIGMAS};
 
-        state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
+        sink.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
             kbWj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));
     }
 
@@ -1131,7 +1163,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     auto noise_kinematics = gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 
     // (To be written in a report/paper!)
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorTricycleKinematic>(
+    sink.emplace_shared<mola::factors::FactorTricycleKinematic>(
         kTi, kbVi, kbWi, kTj, dt, noise_kinematics);
 }
 
@@ -1162,6 +1194,24 @@ void StateEstimationSmoother::delete_too_old_entries()
     for (const auto& idx : ids_to_erase)
     {
         state_.last_estimated_states.erase(idx);
+    }
+
+    // Forget the kinematic bookkeeping of links touching a marginalized keyframe.
+    // The fixed-lag smoother drops those factors itself, so their indices must
+    // never be queued for removal again (they would refer to slots GTSAM has
+    // already reused or freed). This also bounds the maps' growth.
+    const auto touchesErased = [&ids_to_erase](const GtsamImpl::frame_pair_t& k)
+    { return ids_to_erase.count(k.first) != 0 || ids_to_erase.count(k.second) != 0; };
+
+    for (auto it = state_.gtsam->flushedKinematic.begin();
+         it != state_.gtsam->flushedKinematic.end();)
+    {
+        it = touchesErased(it->first) ? state_.gtsam->flushedKinematic.erase(it) : std::next(it);
+    }
+    for (auto it = state_.gtsam->pendingKinematic.begin();
+         it != state_.gtsam->pendingKinematic.end();)
+    {
+        it = touchesErased(it->first) ? state_.gtsam->pendingKinematic.erase(it) : std::next(it);
     }
 }
 
@@ -1215,6 +1265,17 @@ StateEstimationSmoother::frame_index_t
 
     // Create new GTSAM symbols for this keyframe:
     initialize_new_frame(newFrameIdx, closestPost);
+
+    // If this keyframe is being spliced BETWEEN two existing ones, the direct link
+    // those two share must be withdrawn first. Otherwise its constraint stays in
+    // the graph alongside the two links that replace it below, so the motion model
+    // over that span is counted twice: it over-stiffens the window, biases the
+    // states and makes the covariance over-confident.
+    const auto& stamp2frameEnd = state_.stamp2frame_index.getDirectMap().end();
+    if (closestPost.first != stamp2frameEnd && closestPost.second != stamp2frameEnd)
+    {
+        remove_kinematic_factor_between(closestPost.first->second, closestPost.second->second);
+    }
 
     if (closestPost.first != state_.stamp2frame_index.getDirectMap().end())
     {
@@ -1323,14 +1384,44 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
     auto& smoother = *state_.gtsam->smoother;
 
+    // Flush the per-link kinematic factors into newFactors, remembering the range
+    // each link occupies so its iSAM2 indices can be recovered below.
+    std::vector<std::pair<GtsamImpl::frame_pair_t, std::pair<size_t, size_t>>> flushedRanges;
+    for (const auto& [linkKey, linkFactors] : state_.gtsam->pendingKinematic)
+    {
+        const size_t start = state_.gtsam->newFactors.size();
+        for (const auto& f : linkFactors)
+        {
+            state_.gtsam->newFactors.push_back(f);
+        }
+        flushedRanges.emplace_back(linkKey, std::make_pair(start, state_.gtsam->newFactors.size()));
+    }
+    state_.gtsam->pendingKinematic.clear();
+
     // Update the smoother with pending factors/values:
     try
     {
         if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
-            !state_.gtsam->newKeyStamps.empty())
+            !state_.gtsam->newKeyStamps.empty() || !state_.gtsam->factorsToRemove.empty())
         {
             smoother.update(
-                state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps);
+                state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps,
+                state_.gtsam->factorsToRemove);
+
+            // newFactorsIndices is 1-to-1 with the factors just passed in, so each
+            // link's range maps straight onto the indices it was given. Keep them:
+            // that is what makes a later splice able to remove this link again.
+            const auto& newIdx = smoother.getISAM2Result().newFactorsIndices;
+            for (const auto& [linkKey, range] : flushedRanges)
+            {
+                gtsam::FactorIndices indices;
+                for (size_t i = range.first; i < range.second && i < newIdx.size(); i++)
+                {
+                    indices.push_back(newIdx[i]);
+                }
+                state_.gtsam->flushedKinematic[linkKey] = indices;
+            }
+            state_.gtsam->factorsToRemove.clear();
         }
 
         // Optional: Perform extra internal iterations for better accuracy
@@ -1715,6 +1806,12 @@ void StateEstimationSmoother::initialize_new_frame(
 
         // And initialize the state struct too:
         newKfState = kfState;
+
+        // ...but seed only the pose/twist from the neighbor: this keyframe is brand
+        // new and not connected to anything yet. Inheriting the neighbor's link set
+        // would make add_kinematic_factor_between() believe a link already exists
+        // and silently skip it, leaving this keyframe under-constrained.
+        newKfState.kinematic_links_to.clear();
     }
     else
     {
@@ -1815,6 +1912,64 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
         default:
             THROW_EXCEPTION("Invalid kinematic_model value");
+    }
+}
+
+size_t StateEstimationSmoother::count_const_vel_factors_for_testing() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    if (!state_.gtsam->smoother.has_value())
+    {
+        return 0;
+    }
+
+    size_t n = 0;
+    for (const auto& f : state_.gtsam->smoother->getFactors())
+    {
+        // findUnusedFactorSlots=true leaves null slots behind for removed factors.
+        if (!f)
+        {
+            continue;
+        }
+        if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(f.get()) != nullptr)
+        {
+            n++;
+        }
+    }
+    return n;
+}
+
+void StateEstimationSmoother::remove_kinematic_factor_between(
+    const frame_index_t from, const frame_index_t to)  // NOLINT
+{
+    // Undo the link bookkeeping, so the pair can legitimately be re-linked later.
+    if (auto it = state_.last_estimated_states.find(from); it != state_.last_estimated_states.end())
+    {
+        it->second.kinematic_links_to.erase(to);
+    }
+    if (auto it = state_.last_estimated_states.find(to); it != state_.last_estimated_states.end())
+    {
+        it->second.kinematic_links_to.erase(from);
+    }
+
+    const auto key = GtsamImpl::link_key(from, to);
+
+    // Still pending: it never reached the solver, so dropping it costs nothing.
+    if (auto it = state_.gtsam->pendingKinematic.find(key);
+        it != state_.gtsam->pendingKinematic.end())
+    {
+        state_.gtsam->pendingKinematic.erase(it);
+        return;
+    }
+
+    // Already inside the smoother: queue its factors for removal at the next update.
+    if (auto it = state_.gtsam->flushedKinematic.find(key);
+        it != state_.gtsam->flushedKinematic.end())
+    {
+        auto& rm = state_.gtsam->factorsToRemove;
+        rm.insert(rm.end(), it->second.begin(), it->second.end());
+        state_.gtsam->flushedKinematic.erase(it);
     }
 }
 
