@@ -222,8 +222,15 @@ independently):
   `child_frame != base_link` path), avoiding the stale
   `(map->base_link)*(odom->base_link)^-1` composition that otherwise injects
   motion-correlated jitter. Point the bridge's TF source filter at the
-  `/map_odom` method. `map_to_odom_frame_name` selects the odometry frame
-  (auto if exactly one is known).
+  `/map_odom` method. `map_to_odom_frame_name` selects which odometry *source*
+  to read (auto if exactly one is known); `map_to_odom_child_frame` sets the
+  published `/tf` child (empty = the source frame_id). These differ in practice:
+  a source's frame_id is its sensor label (e.g. `odom_wheels`), which is usually
+  NOT the REP-105 odom `/tf` frame the external driver publishes
+  `odom -> base_link` for; they must match for `map -> odom -> base_link` to
+  connect, so set `map_to_odom_child_frame` (or rename the source label). A
+  `map_to_odom_frame_name` naming no known source logs the known-frame list and
+  publishes nothing, rather than silently emitting a disconnected TF.
 - `publish_fused_vehicle_tf`: advertise the fused vehicle pose in a distinct
   child frame `fused_vehicle_frame_name` (default `base_link_fused`, method
   `/fused`) at the module rate. A distinct child never collides with an

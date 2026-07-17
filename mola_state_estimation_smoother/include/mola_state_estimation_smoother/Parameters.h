@@ -74,11 +74,22 @@ class Parameters
      * TF/odometry source filters can route it independently. Default off. */
     bool publish_map_to_odom_tf = false;
 
-    /** The odometry frame_id whose `T_map_to_odom` is published when
+    /** The odometry frame_id (source) whose `T_map_to_odom` is published when
      * `publish_map_to_odom_tf` is true. Empty = auto-select when exactly one
      * odometry source is known (the common single-wheel-odometry case);
-     * required if several odometry sources exist. */
+     * required if several odometry sources exist. This selects which fused
+     * source to read; it is NOT necessarily the ROS `/tf` child frame name (see
+     * `map_to_odom_child_frame`). */
     std::string map_to_odom_frame_name;
+
+    /** The `/tf` child frame the `map -> odom` correction is published under
+     * when `publish_map_to_odom_tf` is true. Empty = use `map_to_odom_frame_name`
+     * (the source's own frame_id). Set this when the fused source's internal
+     * frame_id differs from the REP-105 odom `/tf` frame the external wheel
+     * driver publishes `odom -> base_link` for: the two must match for the tree
+     * `map -> odom -> base_link` to connect, and an odometry source's sensor
+     * label (e.g. `odom_wheels`) is often not that ROS frame (`odom`). */
+    std::string map_to_odom_child_frame;
 
     /** If true, `spinOnce()` additionally advertises the fused vehicle pose in a
      * separate child frame `fused_vehicle_frame_name` (default `base_link_fused`)

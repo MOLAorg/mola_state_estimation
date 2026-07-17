@@ -59,10 +59,15 @@ params:
 
 using LU = mola::LocalizationSourceBase::LocalizationUpdate;
 
-std::vector<LU> feed_and_spin(bool mapToOdom, bool fused)
+// Feeds NUM_POSES of odometry (under `sourceFrame`) and returns every
+// LocalizationUpdate spinOnce() advertised. `extraYaml` appends map->odom
+// routing params (map_to_odom_frame_name / map_to_odom_child_frame).
+std::vector<LU> feed_and_spin_cfg(
+    bool mapToOdom, bool fused, const std::string& sourceFrame, const std::string& extraYaml)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
-    est.initialize(mrpt::containers::yaml::FromText(params_yaml(mapToOdom, fused)));
+    est.initialize(
+        mrpt::containers::yaml::FromText(params_yaml(mapToOdom, fused) + extraYaml + "\n"));
 
     std::vector<LU> got;
     est.subscribeToLocalizationUpdates([&got](const LU& l) { got.push_back(l); });
@@ -71,12 +76,12 @@ std::vector<LU> feed_and_spin(bool mapToOdom, bool fused)
     {
         const auto stamp = mrpt::Clock::fromDouble(POSE_DT * static_cast<double>(i));
 
-        // Feed odometry via fuse_pose in the {odom} frame, so an odometry frame
-        // and its T_map_to_odom estimate exist.
+        // Feed odometry via fuse_pose in an odometry frame, so that odometry
+        // source and its T_map_to_odom estimate exist.
         mrpt::poses::CPose3DPDFGaussian p;
         p.mean = mrpt::poses::CPose3D(VELOCITY_X * POSE_DT * static_cast<double>(i), 0, 0, 0, 0, 0);
         p.cov.setDiagonal(0.01);
-        est.fuse_pose(stamp, p, ODOM_FRAME);
+        est.fuse_pose(stamp, p, sourceFrame);
     }
 
     // spinOnce publishes only when it has a "now" stamp and a subscriber (both
@@ -86,6 +91,11 @@ std::vector<LU> feed_and_spin(bool mapToOdom, bool fused)
         est.spinOnce();
     }
     return got;
+}
+
+std::vector<LU> feed_and_spin(bool mapToOdom, bool fused)
+{
+    return feed_and_spin_cfg(mapToOdom, fused, ODOM_FRAME, "");
 }
 
 size_t count_child(const std::vector<LU>& v, const std::string& child)
@@ -148,6 +158,34 @@ void run_test()
             }
         }
         ASSERT_(sawMethod);
+    }
+
+    // map_to_odom_child_frame decouples the published /tf child from the source
+    // frame_id: the source is "odom_wheels" but the correction must be published
+    // as map->odom to connect to an external odom->base_link.
+    {
+        const auto got = feed_and_spin_cfg(
+            true, false, "odom_wheels",
+            "    map_to_odom_frame_name: \"odom_wheels\"\n"
+            "    map_to_odom_child_frame: \"odom\"");
+        std::cout << "child-override updates: " << got.size() << "\n";
+        ASSERT_GT_(count_child(got, "base_link"), 0U);
+        // Published under the ROS odom frame, NOT the source's sensor label:
+        ASSERT_GT_(count_child(got, "odom"), 0U);
+        ASSERT_EQUAL_(count_child(got, "odom_wheels"), 0U);
+    }
+
+    // A map_to_odom_frame_name that names no known source must NOT silently
+    // publish a bogus map->odom (which would leave {map} disconnected); the
+    // primary base_link update is still advertised.
+    {
+        const auto got = feed_and_spin_cfg(
+            true, false, "odom_wheels", "    map_to_odom_frame_name: \"does_not_exist\"");
+        std::cout << "unknown-frame updates: " << got.size() << "\n";
+        ASSERT_GT_(count_child(got, "base_link"), 0U);
+        ASSERT_EQUAL_(count_child(got, "does_not_exist"), 0U);
+        ASSERT_EQUAL_(count_child(got, "odom"), 0U);
+        ASSERT_EQUAL_(count_child(got, "odom_wheels"), 0U);
     }
 }
 

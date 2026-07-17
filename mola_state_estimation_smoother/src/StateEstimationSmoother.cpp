@@ -367,37 +367,72 @@ void StateEstimationSmoother::spinOnce()
 void StateEstimationSmoother::publishMapToOdom(
     const mrpt::Clock::time_point& stamp, const std::string& methodLabel)
 {
-    // Resolve which odometry frame is the REP-105 {odom}: the configured one, or
-    // the single known source when unambiguous.
+    // Resolve which odometry SOURCE frame's T_map_to_odom to publish: the
+    // configured one, or the single known source when unambiguous.
+    const auto knownFrames = known_odometry_frame_ids();
+
+    const auto knownFramesList = [&knownFrames]()
+    {
+        std::string s;
+        for (const auto& f : knownFrames)
+        {
+            s += (s.empty() ? "" : ", ") + f;
+        }
+        return s;
+    };
+
     std::string odomFrame = params_.map_to_odom_frame_name;
     if (odomFrame.empty())
     {
-        const auto frames = known_odometry_frame_ids();
-        if (frames.size() == 1)
+        if (knownFrames.size() == 1)
         {
-            odomFrame = *frames.begin();
+            odomFrame = *knownFrames.begin();
         }
         else
         {
             MRPT_LOG_THROTTLE_WARN_FMT(
                 5.0,
                 "[publishMapToOdom] map_to_odom_frame_name is empty and %zu odometry frames are "
-                "known; cannot pick one. Set the parameter explicitly.",
-                frames.size());
+                "known [%s]; cannot pick one. Set the parameter explicitly.",
+                knownFrames.size(), knownFramesList().c_str());
             return;
         }
+    }
+    else if (knownFrames.count(odomFrame) == 0)
+    {
+        // Distinguish a misconfigured/unknown source from a known-but-unsolved
+        // one: this is the silent failure mode that publishes NO map->odom and
+        // leaves {map} disconnected from the odom /tf subtree. The source's
+        // frame_id is its sensor label, which is often NOT the ROS odom frame.
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0,
+            "[publishMapToOdom] map_to_odom_frame_name='%s' is not a known odometry source frame; "
+            "known: [%s]. No map->odom will be published. Note the source frame is its sensor "
+            "label (e.g. 'odom_wheels'), not necessarily the ROS odom /tf frame.",
+            odomFrame.c_str(), knownFramesList().c_str());
+        return;
     }
 
     const auto T_map_to_odom = estimated_T_map_to_odometry_frame(odomFrame);
     if (!T_map_to_odom.has_value())
     {
+        // Known source, but no solved estimate yet: transient at startup.
         MRPT_LOG_THROTTLE_WARN_FMT(
-            5.0, "[publishMapToOdom] No estimate yet for odometry frame '%s'", odomFrame.c_str());
+            5.0,
+            "[publishMapToOdom] odometry source '%s' is known but has no estimate yet (waiting for "
+            "the first solve).",
+            odomFrame.c_str());
         return;
     }
 
+    // The published /tf child frame is independent of the source frame_id: it
+    // must equal the REP-105 odom frame the external driver publishes
+    // odom->base_link for, which is often not the source's sensor label.
+    const std::string childFrame =
+        params_.map_to_odom_child_frame.empty() ? odomFrame : params_.map_to_odom_child_frame;
+
     LocalizationUpdate lu;
-    lu.child_frame     = odomFrame;
+    lu.child_frame     = childFrame;
     lu.reference_frame = params_.reference_frame_name;
     lu.method          = methodLabel + "/map_odom";
     lu.quality         = 1;

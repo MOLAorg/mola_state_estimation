@@ -34,9 +34,16 @@ params:
   # extra update uses the method suffix "/map_odom" for independent routing.
   # Requires the bridge's TF source filter to point at that method. Default off.
   publish_map_to_odom_tf: ${MOLA_PUBLISH_MAP_TO_ODOM_TF|false}
-  # Which odometry frame_id's T_map_to_odom to publish. Empty = auto-select when
-  # exactly one odometry source is known; required if there are several.
+  # Which odometry SOURCE frame_id's T_map_to_odom to publish (selects the fused
+  # source to read). Empty = auto-select when exactly one odometry source is
+  # known; required if there are several. A source's frame_id is its sensor
+  # label, not necessarily the ROS odom /tf frame.
   map_to_odom_frame_name: "${MOLA_MAP_TO_ODOM_FRAME|}"
+  # The /tf child frame the map->odom correction is published under. Empty = use
+  # map_to_odom_frame_name. Set this when the source's frame_id differs from the
+  # REP-105 odom /tf frame the external wheel driver publishes odom->base_link
+  # for (they must match for map->odom->base_link to connect).
+  map_to_odom_child_frame: "${MOLA_MAP_TO_ODOM_CHILD_FRAME|}"
 
   # If true, also advertise the fused vehicle pose in a distinct child frame
   # (below) at the module rate: a high-rate fused pose that never collides with

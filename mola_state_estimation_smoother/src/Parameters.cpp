@@ -33,6 +33,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, enu_frame_name);
     MCP_LOAD_OPT(cfg, publish_map_to_odom_tf);
     MCP_LOAD_OPT(cfg, map_to_odom_frame_name);
+    MCP_LOAD_OPT(cfg, map_to_odom_child_frame);
     MCP_LOAD_OPT(cfg, publish_fused_vehicle_tf);
     MCP_LOAD_OPT(cfg, fused_vehicle_frame_name);
 
