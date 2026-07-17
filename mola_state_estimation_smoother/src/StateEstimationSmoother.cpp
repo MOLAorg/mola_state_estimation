@@ -356,6 +356,14 @@ void StateEstimationSmoother::reset_locked()
     {
         fastPredictor_->clear();
     }
+    // Drop any queued (and any already-detached) async work: it targets the old
+    // graph and must not repopulate the fresh one (required across
+    // set_geo_reference(), see coding guidelines).
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        ingestQueue_.clear();
+        resetEpoch_.fetch_add(1, std::memory_order_relaxed);
+    }
     if (params_loaded_)
     {
         reinitialize_gtsam_locked();
@@ -365,8 +373,20 @@ void StateEstimationSmoother::reset_locked()
 void StateEstimationSmoother::enqueue_async(
     const mrpt::Clock::time_point& stamp, std::function<void()> fn)
 {
+    // Safety bound: the backend coalesces (drains all pending each iteration), so
+    // in normal operation the queue holds only one solve's worth of arrivals.
+    // This cap only trips if the backend stalls; dropping the oldest keeps memory
+    // bounded and is visible via the throttled warning.
+    constexpr size_t kMaxIngestQueue = 10000;
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
+        if (ingestQueue_.size() >= kMaxIngestQueue)
+        {
+            ingestQueue_.pop_front();
+            MRPT_LOG_THROTTLE_WARN(
+                5.0,
+                "[async] ingest queue full: backend not keeping up, dropping oldest measurement");
+        }
         ingestQueue_.emplace_back(stamp, std::move(fn));
     }
     queueCv_.notify_one();
@@ -377,6 +397,7 @@ void StateEstimationSmoother::backend_loop()
     while (!backendStop_.load())
     {
         std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> batch;
+        uint64_t                                                              batchEpoch = 0;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
             queueCv_.wait(lk, [this] { return backendStop_.load() || !ingestQueue_.empty(); });
@@ -385,6 +406,7 @@ void StateEstimationSmoother::backend_loop()
                 break;
             }
             batch.swap(ingestQueue_);
+            batchEpoch = resetEpoch_.load(std::memory_order_relaxed);
         }
 
         // Apply in timestamp order, so most residual out-of-order arrivals become
@@ -394,13 +416,34 @@ void StateEstimationSmoother::backend_loop()
             [](const auto& a, const auto& b) { return a.first < b.first; });
 
         auto lck = mrpt::lockHelper(stateMutex_);
-        for (auto& [stamp, fn] : batch)
+
+        // If a reset happened after this batch was detached, it targets a graph
+        // that no longer exists: discard it rather than corrupt the fresh one.
+        if (resetEpoch_.load(std::memory_order_relaxed) != batchEpoch)
         {
-            fn();
+            continue;
         }
-        // Runs the solve and, in async mode, publishes a fresh snapshot to the
-        // fast predictor.
-        process_pending_gtsam_updates_locked();
+
+        // A measurement callback or the solve can throw (e.g. an
+        // under-constrained marginal). In the backend thread that would escape
+        // to std::terminate, so contain it: log and rebuild the smoother.
+        try
+        {
+            for (auto& [stamp, fn] : batch)
+            {
+                fn();
+            }
+            // Runs the solve and, in async mode, publishes a fresh snapshot to
+            // the fast predictor.
+            process_pending_gtsam_updates_locked();
+        }
+        catch (const std::exception& e)
+        {
+            MRPT_LOG_ERROR_STREAM(
+                "[backend_loop] Exception while applying a batch; resetting smoother:\n"
+                << e.what());
+            reset_locked();
+        }
     }
 }
 
@@ -537,6 +580,18 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& imu)
 {
+    // Ignore an IMU reading with no usable content up front, before touching the
+    // decimation stamp or creating a keyframe: otherwise an empty sample would
+    // consume the decimation interval (skipping the next, useful one) and add a
+    // factor-less keyframe.
+    const bool hasAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W);
+    const bool hasGravity =
+        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    if (!hasAttitude && !hasGravity)
+    {
+        return;
+    }
+
     // High-rate decimation: skip IMU readings arriving too soon after the last
     // processed one. IMU attitude/gravity are absolute observations, so dropping
     // intermediate readings just lowers the redundant-factor rate (unlike wheel

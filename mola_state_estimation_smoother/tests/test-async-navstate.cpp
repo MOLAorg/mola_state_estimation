@@ -200,6 +200,51 @@ void test_concurrency()
     ASSERT_GT_(queries.load(), static_cast<size_t>(0));
 }
 
+// reset() while the async backend is running (and may have work in flight) must
+// discard the stale queue and rebuild cleanly, then track a fresh trajectory.
+void test_reset_during_async()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother est;
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(true)));
+
+    // Phase A: feed some poses, then immediately reset (Phase A work may still be
+    // queued / in flight in the backend when the reset lands).
+    for (size_t i = 0; i < 30; i++)
+    {
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(POSE_DT * static_cast<double>(i)), pose_at(i), ODOM_FRAME);
+    }
+    est.reset();
+
+    // Phase B: a fresh trajectory (restarting at the origin) at later timestamps.
+    constexpr double        PHASE_B_T0 = 100.0;
+    mrpt::Clock::time_point last;
+    for (size_t i = 0; i < NUM_POSES; i++)
+    {
+        const auto stamp = mrpt::Clock::fromDouble(PHASE_B_T0 + POSE_DT * static_cast<double>(i));
+        last             = stamp;
+        est.fuse_pose(stamp, pose_at(i), ODOM_FRAME);
+    }
+
+    double mapX = std::nan("");
+    for (int iter = 0; iter < 800; iter++)
+    {
+        const auto nav = est.estimated_navstate(last, "map");
+        if (nav.has_value())
+        {
+            mapX = nav->pose.mean.x();
+            if (std::abs(mapX - EXPECTED_X) < 0.05)
+            {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    std::cout << "reset-during-async map x: " << mapX << " (expected " << EXPECTED_X << ")\n";
+    ASSERT_(std::isfinite(mapX));
+    ASSERT_LT_(std::abs(mapX - EXPECTED_X), 0.05);
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -208,6 +253,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     {
         test_equivalence();
         test_concurrency();
+        test_reset_during_async();
         std::cout << "✅ SUCCESS\n";
         return 0;
     }

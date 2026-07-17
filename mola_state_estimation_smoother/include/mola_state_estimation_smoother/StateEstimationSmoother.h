@@ -382,6 +382,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::atomic<bool>                                                     backendStop_{false};
     bool                                                                  backendRunning_ = false;
 
+    /// Bumped by reset_locked() so a batch already detached by backend_loop()
+    /// (pre-reset) is discarded instead of repopulating the fresh graph with
+    /// stale measurements (e.g. across set_geo_reference()).
+    std::atomic<uint64_t> resetEpoch_{0};
+
     /// Appends a work item to the backend queue and wakes the backend thread.
     void enqueue_async(const mrpt::Clock::time_point& stamp, std::function<void()> fn);
 
