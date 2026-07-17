@@ -55,3 +55,10 @@ mola_add_test(
     mola::mola_state_estimation_smoother
 )
 
+mola_add_test(
+  TARGET  test-navstate-stamp-monotonic
+  SOURCES test-navstate-stamp-monotonic.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
