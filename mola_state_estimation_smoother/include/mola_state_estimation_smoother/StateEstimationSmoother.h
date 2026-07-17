@@ -317,6 +317,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
         std::optional<std::string>          last_wheels_odometry_name;
 
+        /// Stamp of the last wheel-odometry reading that was actually KEPT
+        /// (turned into a keyframe/factor). Used by odometry_min_sample_period
+        /// to merge higher-rate readings: while a reading arrives within that
+        /// period of this stamp it is dropped without advancing the pose anchor
+        /// (last_wheels_odometry), so the next kept reading fuses the whole
+        /// accumulated increment.
+        std::optional<mrpt::Clock::time_point> last_wheels_odometry_stamp;
+
+        /// Stamp of the last IMU reading that was actually processed. Used by
+        /// imu_min_sample_period to skip higher-rate readings.
+        std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
+
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
          * georeferencing parameters.

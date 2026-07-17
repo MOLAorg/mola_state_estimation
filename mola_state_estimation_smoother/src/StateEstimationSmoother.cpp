@@ -399,14 +399,31 @@ void StateEstimationSmoother::fuse_odometry(
 
         ASSERT_(state_.last_wheels_odometry.has_value());
         lastOdom = *state_.last_wheels_odometry;
+
+        // High-rate decimation/merge: if this reading arrives too soon after
+        // the last *kept* one, drop it WITHOUT advancing the pose anchor
+        // (last_wheels_odometry) nor the kept stamp. The next kept reading then
+        // fuses the accumulated increment (lastOdom -> current) with its
+        // accumulated motion-model covariance, merging several consecutive
+        // odometry readings into a single keyframe/factor without losing motion.
+        if (params_.odometry_min_sample_period > 0 && state_.last_wheels_odometry_stamp.has_value())
+        {
+            const double dt =
+                mrpt::system::timeDifference(*state_.last_wheels_odometry_stamp, odom.timestamp);
+            if (dt < params_.odometry_min_sample_period)
+            {
+                return;
+            }
+        }
     }
     else
     {
         // This is the first time we have wheels odometry.
         // Store the pose but skip factor creation: the increment is zero,
         // which would produce a stiff near-zero BetweenFactor.
-        state_.last_wheels_odometry_name = odomName;
-        state_.last_wheels_odometry      = odom.odometry;
+        state_.last_wheels_odometry_name  = odomName;
+        state_.last_wheels_odometry       = odom.odometry;
+        state_.last_wheels_odometry_stamp = odom.timestamp;
         return;
     }
     // Use a probabilistic motion model:
@@ -432,9 +449,10 @@ void StateEstimationSmoother::fuse_odometry(
         mrpt::Clock::toDouble(odom.timestamp), odomName.c_str(), odom.odometry.asString().c_str(),
         odoAct.poseChange->getMeanVal().asString().c_str());
 
-    // Save for next iteration:
-    state_.last_wheels_odometry_name = odomName;
-    state_.last_wheels_odometry      = odom.odometry;
+    // Save for next iteration (advance the anchor: this reading was kept):
+    state_.last_wheels_odometry_name  = odomName;
+    state_.last_wheels_odometry       = odom.odometry;
+    state_.last_wheels_odometry_stamp = odom.timestamp;
 
     // Fuse this new probabilistic pose observation:
     fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
@@ -443,6 +461,21 @@ void StateEstimationSmoother::fuse_odometry(
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     auto lck = mrpt::lockHelper(stateMutex_);
+
+    // High-rate decimation: skip IMU readings arriving too soon after the last
+    // processed one. IMU attitude/gravity are absolute observations, so dropping
+    // intermediate readings just lowers the redundant-factor rate (unlike wheel
+    // odometry, there is no increment to accumulate).
+    if (params_.imu_min_sample_period > 0 && state_.last_processed_imu_stamp.has_value())
+    {
+        const double dt =
+            mrpt::system::timeDifference(*state_.last_processed_imu_stamp, imu.timestamp);
+        if (dt < params_.imu_min_sample_period)
+        {
+            return;
+        }
+    }
+    state_.last_processed_imu_stamp = imu.timestamp;
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
@@ -1575,8 +1608,12 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
         pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
 
-        // Convert info matrix to covariance
-        if (!state_.stamp2frame_index.empty())
+        // Convergence check: only meaningful until the geo-reference is
+        // finalized. Once state_.geo_reference is set it is sticky, so
+        // re-evaluating it every solve just burns a marginalCovariance() on the
+        // latest keyframe and needlessly re-finalizes/re-publishes the same
+        // reference. Skip it once converged.
+        if (!state_.geo_reference.has_value() && !state_.stamp2frame_index.empty())
         {
             const auto& latestIt       = state_.stamp2frame_index.getDirectMap().rbegin();
             const auto  latestFrameIdx = latestIt->second;

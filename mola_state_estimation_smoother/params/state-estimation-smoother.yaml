@@ -68,6 +68,18 @@ params:
   # to use instead of "min_time_difference_to_create_new_frame". [seconds]
   imu_nearby_keyframe_stamp_tolerance: 0.10
 
+  # High-rate same-sensor decimation for wheel odometry [seconds]. If > 0,
+  # readings arriving less than this after the last KEPT one are MERGED (dropped
+  # without advancing the pose anchor, so the next kept reading fuses the whole
+  # accumulated increment + covariance). Caps the keyframe rate a high-rate
+  # odometry stream imposes on the solver without losing motion. 0 = disabled.
+  odometry_min_sample_period: ${MOLA_ODOMETRY_MIN_SAMPLE_PERIOD|0.0}
+
+  # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
+  # arriving less than this after the last processed one are skipped (attitude/
+  # gravity are absolute, so nothing is accumulated). 0 = disabled.
+  imu_min_sample_period: ${MOLA_IMU_MIN_SAMPLE_PERIOD|0.0}
+
   # Random walk model for linear acceleration uncertainty [m/s²]
   sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
 
