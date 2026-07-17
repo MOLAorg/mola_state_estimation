@@ -793,7 +793,8 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     NavState retKf;
     try
     {
-        retKf = get_latest_state_and_covariance(*closesFrameIdx);
+        const auto tleMarg = mola::ProfilerEntry(profiler_, "estimated_navstate.marginals.anchor");
+        retKf              = get_latest_state_and_covariance(*closesFrameIdx);
     }
     catch (const std::exception& e)
     {
@@ -1414,6 +1415,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
             !state_.gtsam->newKeyStamps.empty() || !state_.gtsam->factorsToRemove.empty())
         {
+            const auto tleUpd = mola::ProfilerEntry(profiler_, "process_pending.iSAM2.update");
             smoother.update(
                 state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps,
                 state_.gtsam->factorsToRemove);
@@ -1435,9 +1437,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         }
 
         // Optional: Perform extra internal iterations for better accuracy
-        for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+        if (params_.additional_isam2_update_steps > 1)
         {
-            smoother.update();
+            const auto tleExtra =
+                mola::ProfilerEntry(profiler_, "process_pending.iSAM2.extra_updates");
+            for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+            {
+                smoother.update();
+            }
         }
     }
     catch (const std::exception& e)
@@ -1518,7 +1525,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     gtsam::Values optValues;
     try
     {
-        optValues = smoother.calculateEstimate();
+        const auto tleCalc = mola::ProfilerEntry(profiler_, "process_pending.calculateEstimate");
+        optValues          = smoother.calculateEstimate();
     }
     catch (const std::exception& e)
     {
@@ -1535,25 +1543,30 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
-    for (auto& [kfIdx, kf] : state_.last_estimated_states)
     {
-        const auto pose = optValues.at<gtsam::Pose3>(T(kfIdx));
-        const auto linV = optValues.at<gtsam::Vector3>(V(kfIdx));
-        const auto angV = optValues.at<gtsam::Vector3>(W(kfIdx));
-
-        kf.pose  = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(pose));
-        kf.twist = {linV.x(), linV.y(), linV.z(), angV.x(), angV.y(), angV.z()};
-
-        if (params_.enforce_planar_motion)
+        const auto tleWriteback = mola::ProfilerEntry(profiler_, "process_pending.writeback");
+        for (auto& [kfIdx, kf] : state_.last_estimated_states)
         {
-            enforce_planar_pose(kf.pose);
-            enforce_planar_twist(kf.twist);
+            const auto pose = optValues.at<gtsam::Pose3>(T(kfIdx));
+            const auto linV = optValues.at<gtsam::Vector3>(V(kfIdx));
+            const auto angV = optValues.at<gtsam::Vector3>(W(kfIdx));
+
+            kf.pose  = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(pose));
+            kf.twist = {linV.x(), linV.y(), linV.z(), angV.x(), angV.y(), angV.z()};
+
+            if (params_.enforce_planar_motion)
+            {
+                enforce_planar_pose(kf.pose);
+                enforce_planar_twist(kf.twist);
+            }
         }
     }
 
     // Retrieve latest enu_to_map for geo-referencing:
     if (params_.estimate_geo_reference)
     {
+        const auto tleGeoref = mola::ProfilerEntry(profiler_, "process_pending.marginals.georef");
+
         const auto T_enu_to_map     = optValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
         const auto T_enu_to_map_cov = smoother.marginalCovariance(symbol_T_enu_to_map);
 
@@ -1633,16 +1646,20 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     // retrieve odometry frames:
-    for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
     {
-        const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
-        const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
-        const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
+        const auto tleOdomMarg =
+            mola::ProfilerEntry(profiler_, "process_pending.marginals.odom_frames");
+        for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
+        {
+            const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
+            const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
+            const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
 
-        auto& pdf = state_.last_estimated_frames[odomFrameIdx];
+            auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
-        pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
-        pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+            pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
+            pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+        }
     }
 
     if (NAVSTATE_PRINT_FG)
