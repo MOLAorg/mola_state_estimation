@@ -65,7 +65,7 @@ Key traits:
 - Inherits `mola::NavStateFilter`, `mola::LocalizationSourceBase`,
   `mola::MapSourceBase`.
 - Uses Pimpl pattern (`GtsamImpl`) to hide GTSAM details.
-- Sliding time window of keyframes (default 2.5 s).
+- Sliding time window of keyframes (default 6.0 s, `sliding_window_length`).
 - Two kinematic models: `ConstantVelocity` and `Tricycle` (Ackermann).
 - Multi-frame-aware: tracks multiple odometry sources by `frame_id`.
 - `estimated_navstate(t, {odom_i})` is served **frame-local**: it anchors on the
