@@ -321,24 +321,89 @@ void StateEstimationSmoother::spinOnce()
         return;
     }
 
-    LocalizationUpdate lu;
-    lu.child_frame     = params_.vehicle_frame_name;
-    lu.reference_frame = params_.reference_frame_name;
-
     // Use just the YAML label part of the module instance name
     // (e.g. "state_estimation" from "FullClassName:state_estimation"),
     // since this string is used as a ROS topic prefix and filter key:
-    const auto& fullName = getModuleInstanceName();
-    const auto  colonPos = fullName.rfind(':');
-    lu.method    = (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
-    lu.quality   = 1;
-    lu.timestamp = *tNowOpt;
-    lu.pose      = nv->pose.getPoseMean().asTPose();
-    lu.cov       = nv->pose.cov_inv.inverse();
+    const auto&       fullName = getModuleInstanceName();
+    const auto        colonPos = fullName.rfind(':');
+    const std::string methodLabel =
+        (colonPos != std::string::npos) ? fullName.substr(colonPos + 1) : fullName;
+
+    // Primary output: the fused vehicle pose in the reference ({map}) frame.
+    LocalizationUpdate lu;
+    lu.child_frame     = params_.vehicle_frame_name;
+    lu.reference_frame = params_.reference_frame_name;
+    lu.method          = methodLabel;
+    lu.quality         = 1;
+    lu.timestamp       = *tNowOpt;
+    lu.pose            = nv->pose.getPoseMean().asTPose();
+    lu.cov             = nv->pose.cov_inv.inverse();
 
     MRPT_LOG_DEBUG_FMT(
         "[spinOnce] Publishing timely pose estimate: t=%f pose=%s", mrpt::Clock::toDouble(*tNowOpt),
         lu.pose.asString().c_str());
+
+    advertiseUpdatedLocalization(lu);
+
+    // Optional REP-105 output: publish map->odom directly from the estimator's
+    // own T_map_to_odom_i, so the bridge forwards it verbatim (no stale-odom
+    // composition). Distinct method suffix so TF/odom source filters route it.
+    if (params_.publish_map_to_odom_tf)
+    {
+        publishMapToOdom(*tNowOpt, methodLabel);
+    }
+
+    // Optional high-rate fused pose in a distinct child frame (never collides
+    // with an odom->base_link chain on /tf).
+    if (params_.publish_fused_vehicle_tf)
+    {
+        LocalizationUpdate fu = lu;
+        fu.child_frame        = params_.fused_vehicle_frame_name;
+        fu.method             = methodLabel + "/fused";
+        advertiseUpdatedLocalization(fu);
+    }
+}
+
+void StateEstimationSmoother::publishMapToOdom(
+    const mrpt::Clock::time_point& stamp, const std::string& methodLabel)
+{
+    // Resolve which odometry frame is the REP-105 {odom}: the configured one, or
+    // the single known source when unambiguous.
+    std::string odomFrame = params_.map_to_odom_frame_name;
+    if (odomFrame.empty())
+    {
+        const auto frames = known_odometry_frame_ids();
+        if (frames.size() == 1)
+        {
+            odomFrame = *frames.begin();
+        }
+        else
+        {
+            MRPT_LOG_THROTTLE_WARN_FMT(
+                5.0,
+                "[publishMapToOdom] map_to_odom_frame_name is empty and %zu odometry frames are "
+                "known; cannot pick one. Set the parameter explicitly.",
+                frames.size());
+            return;
+        }
+    }
+
+    const auto T_map_to_odom = estimated_T_map_to_odometry_frame(odomFrame);
+    if (!T_map_to_odom.has_value())
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            5.0, "[publishMapToOdom] No estimate yet for odometry frame '%s'", odomFrame.c_str());
+        return;
+    }
+
+    LocalizationUpdate lu;
+    lu.child_frame     = odomFrame;
+    lu.reference_frame = params_.reference_frame_name;
+    lu.method          = methodLabel + "/map_odom";
+    lu.quality         = 1;
+    lu.timestamp       = stamp;
+    lu.pose            = T_map_to_odom->mean.asTPose();
+    lu.cov             = T_map_to_odom->cov;
 
     advertiseUpdatedLocalization(lu);
 }

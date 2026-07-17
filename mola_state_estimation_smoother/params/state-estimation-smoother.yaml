@@ -27,6 +27,23 @@ params:
   # The ENU geo-reference frame
   enu_frame_name: "enu"
 
+  # If true, also advertise the REP-105 correction map->odom taken directly from
+  # the estimator's own T_map_to_odom graph variable (smooth, time-consistent),
+  # so the ROS bridge forwards it to /tf verbatim instead of composing it from
+  # (map->base_link)*(odom->base_link)^-1 (that composition injects jitter). The
+  # extra update uses the method suffix "/map_odom" for independent routing.
+  # Requires the bridge's TF source filter to point at that method. Default off.
+  publish_map_to_odom_tf: ${MOLA_PUBLISH_MAP_TO_ODOM_TF|false}
+  # Which odometry frame_id's T_map_to_odom to publish. Empty = auto-select when
+  # exactly one odometry source is known; required if there are several.
+  map_to_odom_frame_name: "${MOLA_MAP_TO_ODOM_FRAME|}"
+
+  # If true, also advertise the fused vehicle pose in a distinct child frame
+  # (below) at the module rate: a high-rate fused pose that never collides with
+  # an odom->base_link chain on /tf. Default off.
+  publish_fused_vehicle_tf: ${MOLA_PUBLISH_FUSED_VEHICLE_TF|false}
+  fused_vehicle_frame_name: "${MOLA_TF_BASE_LINK_FUSED|base_link_fused}"
+
   # --------------------------------------------------------------------------
   # Kinematic Model & Motion Factors
   # --------------------------------------------------------------------------

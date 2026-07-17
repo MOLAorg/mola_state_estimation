@@ -61,6 +61,36 @@ class Parameters
     /// The ENU geo-reference frame. See the docs online.
     std::string enu_frame_name = "enu";
 
+    /** If true, `spinOnce()` additionally advertises the REP-105 correction
+     * `reference_frame -> map_to_odom_frame_name` (i.e. `map -> odom`), taken
+     * directly from the estimator's own `T_map_to_odom_i` graph variable. This
+     * is time-consistent and smooth by construction, so the ROS bridge can
+     * forward it to `/tf` verbatim instead of composing it from
+     * `(map->base_link) * (odom->base_link)^-1` (that composition samples the
+     * two factors at mismatched timestamps and injects motion-correlated
+     * jitter). The primary `reference_frame -> vehicle_frame` update is still
+     * advertised, so the high-rate vehicle-pose topic is unchanged. The extra
+     * update carries a distinct `method` suffix (`/map_odom`) so the bridge's
+     * TF/odometry source filters can route it independently. Default off. */
+    bool publish_map_to_odom_tf = false;
+
+    /** The odometry frame_id whose `T_map_to_odom` is published when
+     * `publish_map_to_odom_tf` is true. Empty = auto-select when exactly one
+     * odometry source is known (the common single-wheel-odometry case);
+     * required if several odometry sources exist. */
+    std::string map_to_odom_frame_name;
+
+    /** If true, `spinOnce()` additionally advertises the fused vehicle pose in a
+     * separate child frame `fused_vehicle_frame_name` (default `base_link_fused`)
+     * at the module rate. Because it is a distinct child frame it never collides
+     * with a `odom -> base_link` chain on `/tf`, so it gives consumers a
+     * high-rate fused pose without touching the canonical robot tree (no sensor
+     * frames hang off it). Default off. */
+    bool publish_fused_vehicle_tf = false;
+
+    /// Child frame name for `publish_fused_vehicle_tf`.
+    std::string fused_vehicle_frame_name = "base_link_fused";
+
     /** @}  */
 
     /** @name Kinematic factors and keyframe creation (motion model)

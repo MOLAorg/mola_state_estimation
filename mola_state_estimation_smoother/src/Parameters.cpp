@@ -31,6 +31,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_REQ(cfg, vehicle_frame_name);
     MCP_LOAD_REQ(cfg, reference_frame_name);
     MCP_LOAD_OPT(cfg, enu_frame_name);
+    MCP_LOAD_OPT(cfg, publish_map_to_odom_tf);
+    MCP_LOAD_OPT(cfg, map_to_odom_frame_name);
+    MCP_LOAD_OPT(cfg, publish_fused_vehicle_tf);
+    MCP_LOAD_OPT(cfg, fused_vehicle_frame_name);
 
     // Kinematic factors and keyframe creation (motion model)
     // -------------------------------------------------------

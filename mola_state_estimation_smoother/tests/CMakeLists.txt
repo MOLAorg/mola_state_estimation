@@ -76,3 +76,10 @@ mola_add_test(
     mola::mola_state_estimation_smoother
 )
 
+mola_add_test(
+  TARGET  test-publish-map-to-odom
+  SOURCES test-publish-map-to-odom.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
