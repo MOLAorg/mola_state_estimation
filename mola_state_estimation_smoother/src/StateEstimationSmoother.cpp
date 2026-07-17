@@ -1256,9 +1256,19 @@ StateEstimationSmoother::frame_index_t
     const auto newFrameIdx = state_.next_frame_index++;
     state_.stamp2frame_index.insert(t, newFrameIdx);
 
-    // As we create a new timely keyframe, update what's the last time we created such new frame:
-    state_.last_observation_stamp           = t;
-    state_.last_observation_wallclock_stamp = mrpt::Clock::now();
+    // Advance the real-time extrapolation reference only when this keyframe is
+    // actually the newest one.
+    //
+    // A late (out-of-order) measurement must not drag the reference backwards:
+    // get_current_extrapolated_stamp() would then jump into the past and creep
+    // forward again, so the stamp of every published pose would sawtooth. Keeping
+    // it at the newest stamp seen also means the reference follows the
+    // lowest-latency source, instead of whichever source happened to arrive last.
+    if (!state_.last_observation_stamp.has_value() || t > *state_.last_observation_stamp)
+    {
+        state_.last_observation_stamp           = t;
+        state_.last_observation_wallclock_stamp = mrpt::Clock::now();
+    }
 
     // Look for the closest existing frames, and create kinematic pairs if they don't exist yet:
     const auto closestPost = find_before_after(t, false);
