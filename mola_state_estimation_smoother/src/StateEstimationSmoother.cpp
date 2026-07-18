@@ -2506,11 +2506,12 @@ void StateEstimationSmoother::update_predict_twist_filter_locked(
 
     const double dt = mrpt::system::timeDifference(*state_.filtered_predict_twist_stamp, stamp);
 
-    // Out-of-order or same-stamp solve: just refresh, don't run the filter.
+    // Out-of-order or same-stamp solve (the solver can re-run several times
+    // while the newest keyframe stamp is unchanged): keep the smoothed state as
+    // is. Overwriting it with rawTwist here would wipe the EMA history and let
+    // the raw boundary twist through, i.e. exactly the jitter this filter damps.
     if (dt <= 0)
     {
-        state_.filtered_predict_twist       = rawTwist;
-        state_.filtered_predict_twist_stamp = stamp;
         return;
     }
 
