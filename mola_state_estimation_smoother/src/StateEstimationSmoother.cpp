@@ -1126,6 +1126,16 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         ret.twist_inv_cov = twist_cov.inverse_LLt();
     }
 
+    // Extrapolate the low-pass-filtered velocity instead of the boundary
+    // keyframe's raw (noisy) twist, when anchoring on the newest keyframe
+    // (mirrors the async fast-predictor path).
+    if (params_.predict_twist_filter_enabled && state_.filtered_predict_twist.has_value() &&
+        !state_.stamp2frame_index.empty() &&
+        *closesFrameIdx == state_.stamp2frame_index.getDirectMap().rbegin()->second)
+    {
+        ret.twist = *state_.filtered_predict_twist;
+    }
+
     // 3) Produce the pose in the requested frame.
     if (frame_id == params_.reference_frame_name)
     {
@@ -1865,6 +1875,19 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         }
     }
 
+    // Drive the predict-twist low-pass with the newest keyframe's optimized
+    // twist, so the short-term prediction extrapolates a damped velocity rather
+    // than the boundary node's noisy raw estimate.
+    if (params_.predict_twist_filter_enabled && !state_.stamp2frame_index.empty())
+    {
+        const auto& latestIt = *state_.stamp2frame_index.getDirectMap().rbegin();
+        if (const auto itKf = state_.last_estimated_states.find(latestIt.second);
+            itKf != state_.last_estimated_states.end())
+        {
+            update_predict_twist_filter_locked(itKf->second.twist, latestIt.first);
+        }
+    }
+
     // Retrieve latest enu_to_map for geo-referencing:
     if (params_.estimate_geo_reference)
     {
@@ -2374,6 +2397,13 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
     }
     snap->anchorStamp = latestStamp;
 
+    // Extrapolate a low-pass-filtered velocity, not the boundary keyframe's raw
+    // (noisy) twist, so the front end's motion prior stays smooth.
+    if (params_.predict_twist_filter_enabled && state_.filtered_predict_twist.has_value())
+    {
+        snap->anchor.twist = *state_.filtered_predict_twist;
+    }
+
     // Odometry-frame transforms (numeric id >= 1) and the name<->id mapping.
     snap->frameNames = state_.known_odom_frames;
     for (const auto& [id, pdf] : state_.last_estimated_frames)
@@ -2455,6 +2485,49 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     ns.twist_inv_cov = twCov.inverse();
 
     return ns;
+}
+
+void StateEstimationSmoother::update_predict_twist_filter_locked(
+    const mrpt::math::TTwist3D& rawTwist, const mrpt::Clock::time_point& stamp)
+{
+    if (!params_.predict_twist_filter_enabled)
+    {
+        return;
+    }
+
+    // Bootstrap (first sample, or after a reset): adopt the raw value.
+    if (!state_.filtered_predict_twist.has_value() ||
+        !state_.filtered_predict_twist_stamp.has_value())
+    {
+        state_.filtered_predict_twist       = rawTwist;
+        state_.filtered_predict_twist_stamp = stamp;
+        return;
+    }
+
+    const double dt = mrpt::system::timeDifference(*state_.filtered_predict_twist_stamp, stamp);
+
+    // Out-of-order or same-stamp solve: just refresh, don't run the filter.
+    if (dt <= 0)
+    {
+        state_.filtered_predict_twist       = rawTwist;
+        state_.filtered_predict_twist_stamp = stamp;
+        return;
+    }
+
+    // dt-aware exponential moving average, so a variable solve rate keeps a
+    // constant effective time constant.
+    const double tau   = std::max(1e-3, params_.predict_twist_filter_time_const);
+    const double alpha = 1.0 - std::exp(-dt / tau);
+
+    auto& f = *state_.filtered_predict_twist;
+    f.vx += alpha * (rawTwist.vx - f.vx);
+    f.vy += alpha * (rawTwist.vy - f.vy);
+    f.vz += alpha * (rawTwist.vz - f.vz);
+    f.wx += alpha * (rawTwist.wx - f.wx);
+    f.wy += alpha * (rawTwist.wy - f.wy);
+    f.wz += alpha * (rawTwist.wz - f.wz);
+
+    state_.filtered_predict_twist_stamp = stamp;
 }
 
 std::optional<mrpt::poses::CPose3DPDFGaussian> StateEstimationSmoother::estimated_T_enu_to_map()

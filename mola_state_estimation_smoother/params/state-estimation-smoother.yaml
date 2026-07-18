@@ -118,10 +118,18 @@ params:
   async_backend: ${MOLA_ASYNC_BACKEND|true}
 
   # Random walk model for linear acceleration uncertainty [m/s²]
-  sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
+  sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|0.5}
 
   # Random walk model for angular acceleration uncertainty [rad/s²]
-  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|10.0}
+  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|1.0}
+
+  # Low-pass the newest keyframe's velocity before using it as the short-term
+  # extrapolation prior. The newest keyframe is the boundary node of the window
+  # (constrained on one side only), so its raw velocity is the noisiest in the
+  # graph; extrapolating it un-damped injects jitter into a front end's motion
+  # prior. On by default (deterministic dt-aware EMA).
+  predict_twist_filter_enabled: ${MOLA_NAVSTATE_PREDICT_TWIST_FILTER|true}
+  predict_twist_filter_time_const: ${MOLA_NAVSTATE_PREDICT_TWIST_TAU|0.3}
 
   # Integrator uncertainty for position [m]
   sigma_integrator_position: 0.1

@@ -165,10 +165,26 @@ class Parameters
      */
     double imu_min_sample_period = 0.0;  // [s]
 
-    double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
+    double sigma_random_walk_acceleration_linear  = 0.5;  // [m/s²]
     double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
-    double sigma_integrator_position              = 0.10;  // [m]
-    double sigma_integrator_orientation           = 0.10;  // [rad]
+
+    /** If true, the short-term extrapolation velocity used by
+     * estimated_navstate() is a low-pass-filtered version of the newest
+     * keyframe's optimized twist, instead of the raw value. The newest keyframe
+     * is the boundary node of the sliding window (constrained on one side only),
+     * so its raw velocity is the noisiest state in the graph; extrapolating it
+     * un-damped injects jitter into a front end's motion prior. This mirrors the
+     * velocity low-pass of the lightweight estimator. On by default so the
+     * prior stays smooth; it is a plain dt-aware EMA, hence deterministic and
+     * reproducible run-to-run. */
+    bool predict_twist_filter_enabled = true;
+
+    /** [s] Time constant of the predict-twist low-pass
+     * (predict_twist_filter_enabled). Larger = smoother prior but more lag
+     * behind genuine acceleration. */
+    double predict_twist_filter_time_const = 0.3;
+    double sigma_integrator_position       = 0.10;  // [m]
+    double sigma_integrator_orientation    = 0.10;  // [rad]
 
     double sigma_twist_from_consecutive_poses_linear  = 1.0;  // [m/s]
     double sigma_twist_from_consecutive_poses_angular = 1.0;  // [rad/s]
