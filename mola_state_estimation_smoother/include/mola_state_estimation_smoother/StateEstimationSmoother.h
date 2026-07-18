@@ -288,6 +288,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<frame_index_t, FrameState> last_estimated_states;
 
+        /// Low-pass-filtered twist of the newest keyframe, used as the
+        /// extrapolation velocity for short-term prediction when
+        /// `predict_twist_filter_enabled`. Damps the boundary keyframe's raw
+        /// velocity (the least-constrained node), which otherwise injects jitter
+        /// into a front end's motion prior. Reset with the rest of `State`.
+        std::optional<mrpt::math::TTwist3D>    filtered_predict_twist;
+        std::optional<mrpt::Clock::time_point> filtered_predict_twist_stamp;
+
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
 
@@ -473,6 +481,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Gets the latest state of a pose wrt the reference frame ("map")
     [[nodiscard]] NavState get_latest_state_and_covariance(const frame_index_t idx) const;
+
+    /// Updates the low-pass-filtered predict twist with the newest keyframe's
+    /// optimized twist (dt-aware exponential moving average). No-op unless
+    /// `predict_twist_filter_enabled`. See `State::filtered_predict_twist`.
+    void update_predict_twist_filter_locked(
+        const mrpt::math::TTwist3D& rawTwist, const mrpt::Clock::time_point& stamp);
 
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian>

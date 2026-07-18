@@ -105,6 +105,20 @@ Key traits:
   the frame-local `{odom_i}` hardening is preserved (a query anchors on that
   source's own last raw pose in the Snapshot). The default synchronous path is
   byte-for-byte unchanged (deterministic offline/unit-test runs).
+- Predict-twist low-pass (`predict_twist_filter_enabled: true`,
+  `predict_twist_filter_time_const: 0.3` s): the velocity extrapolated by both
+  the sync path and the `FastPredictor` is a dt-aware EMA of the newest
+  keyframe's optimized twist, NOT the raw value. The newest keyframe is the
+  boundary node of the sliding window (constrained on one side only), so its raw
+  velocity is the noisiest state in the graph; extrapolating it un-damped feeds a
+  jittery motion prior to a LiDAR front end, which starts ICP from a bad guess,
+  slows/degrades registration, and (under real-time load) drops scans -- a
+  feedback loop that produces meter-scale trajectory spikes on wheeled robots
+  where the lightweight estimator (which low-passes velocity) stays smooth. The
+  filter is a plain EMA, hence deterministic. Its cost is a short lag behind
+  genuine acceleration; the paired sigma defaults below are moderate enough that
+  the two together match the smoothest sigma-only tuning while generalizing
+  better than very tight sigmas.
 
 Sensor inputs:
 - `fuse_pose()` - localization / LiDAR odometry poses
@@ -264,11 +278,22 @@ Major parameter groups:
 The shipped `params/state-estimation-smoother.yaml` targets real-time use, so
 these are **on by default** (each also settable via the shown env var):
 
+Note on run paths: the `mola-cli` launches (e.g. `mola-lo-gui-rosbag2`, which
+runs `lidar_odometry_from_rosbag2.yaml`) replay the bag in real time through a
+`Rosbag2Dataset` module that emits observations at wall-clock rate. This is a
+live-deployment surrogate, NOT the offline `mola-lidar-odometry-cli` (which
+consumes the dataset as fast as possible). So under `mola-cli` the per-sensor
+timing matches a real robot and `async_backend: true` is the appropriate,
+deployed setting; only the true offline CLIs (`mola-lidar-odometry-cli`,
+`mola-navstate-cli`) need it off for reproducibility.
+
 | feature | param / env var | default | notes |
 |---|---|---|---|
 | async backend | `async_backend` / `MOLA_ASYNC_BACKEND` | **true** | sub-ms queries; solve off the caller's thread. **Set false for offline/reproducible batch runs** (mola-navstate-cli) - async serving is non-deterministic. The C++ `Parameters` default stays `false`, so unit tests (inline YAML) remain deterministic. |
 | odom keyframe merge | `odometry_min_sample_period` / `MOLA_ODOMETRY_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz keyframes; merges (no motion lost). Deterministic. |
 | IMU keyframe skip | `imu_min_sample_period` / `MOLA_IMU_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz attitude/gravity factors. |
+| predict-twist low-pass | `predict_twist_filter_enabled` / `MOLA_NAVSTATE_PREDICT_TWIST_FILTER` (+ `predict_twist_filter_time_const` / `MOLA_NAVSTATE_PREDICT_TWIST_TAU`, 0.3 s) | **true** | EMA-smooths the extrapolation velocity so the front end's ICP prior stays smooth. Deterministic; C++ default also true. |
+| accel random-walk sigmas | `sigma_random_walk_acceleration_linear` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC`, `..._angular` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC` | **0.5** / **1.0** | Moderate (was 1.0/10.0). The old loose angular let the boundary-node yaw rate swing and rotate the predicted pose. Loosen only for platforms with genuinely high linear/angular acceleration. |
 
 REP-105 `map -> odom` published from the graph variable (default **off**,
 enable per deployment because it needs the routing + frame wiring below):
