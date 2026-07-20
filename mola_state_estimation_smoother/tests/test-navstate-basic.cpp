@@ -360,6 +360,44 @@ void test_unregistered_odom_frame_does_not_throw()
     ASSERT_(ret2.has_value());
 }
 
+// --------------------------------------
+// Probabilistic extrapolation: the extrapolated pose covariance must grow with
+// the extrapolation horizon (the {map} path previously left it constant).
+void test_extrapolation_covariance_grows()
+{
+    const auto& _ = Data::Instance();
+
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(navStateParams));
+
+    const auto t0 = mrpt::Clock::fromDouble(0.0);
+    const auto t1 = mrpt::Clock::fromDouble(0.5);
+
+    nav.fuse_pose(t0, _.pdf0, "map");  // (0,0,0)
+    nav.fuse_pose(t1, _.pdf1, "map");  // (0.5,0,0) -> forward velocity ~1 m/s
+
+    // Extrapolate the {map} frame at growing horizons past the last keyframe:
+    const auto qNear = nav.estimated_navstate(mrpt::Clock::fromDouble(0.6), "map");
+    const auto qFar  = nav.estimated_navstate(mrpt::Clock::fromDouble(1.0), "map");
+    ASSERT_(qNear.has_value());
+    ASSERT_(qFar.has_value());
+
+    const auto traceOf = [](const auto& s)
+    {
+        mrpt::poses::CPose3DPDFGaussian g;
+        g.copyFrom(s.pose);
+        return g.cov.asEigen().trace();
+    };
+
+    const double trNear = traceOf(*qNear);
+    const double trFar  = traceOf(*qFar);
+
+    std::cout << "pose cov trace: near=" << trNear << " far=" << trFar << std::endl;
+
+    ASSERT_GT_(trNear, 0.0);
+    ASSERT_GT_(trFar, trNear);
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -372,7 +410,9 @@ int main(int argc, char** argv)
         {"test_2_poses_too_late", test_2_poses_too_late},
         {"test_3_poses", test_3_poses},
         {"test_noisy_straight", test_noisy_straight},
-        {"test_unregistered_odom_frame_does_not_throw", test_unregistered_odom_frame_does_not_throw},
+        {"test_unregistered_odom_frame_does_not_throw",
+         test_unregistered_odom_frame_does_not_throw},
+        {"test_extrapolation_covariance_grows", test_extrapolation_covariance_grows},
     };
 
     int runOnlyIdx = -1;

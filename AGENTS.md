@@ -119,6 +119,16 @@ Key traits:
   genuine acceleration; the paired sigma defaults below are moderate enough that
   the two together match the smoothest sigma-only tuning while generalizing
   better than very tight sigmas.
+- Short-term extrapolation is covariance-aware: both the sync path and the
+  `FastPredictor` share `extrapolate_pose_pdf()` (`src/extrapolation.h`), which
+  returns the pose PDF of `anchor (+) Exp(twist*dt)` with first-order uncertainty
+  propagation -- the anchor pose covariance transported through the composition
+  (MRPT's `CPose3DPDFGaussian::operator+` Adjoint) plus the body-increment
+  covariance (current-velocity uncertainty over the interval + acceleration
+  process noise). The increment's tangent-to-pose Jacobian is approximated as
+  identity (exact in translation, first order in rotation) in the sub-second
+  extrapolation regime. This replaces the earlier mean-only extrapolation that
+  left the pose covariance ungrown.
 
 Sensor inputs:
 - `fuse_pose()` - localization / LiDAR odometry poses
