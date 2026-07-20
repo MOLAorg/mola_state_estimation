@@ -102,72 +102,86 @@ std::optional<NavState> FastPredictor::predict(
     // synchronous estimated_navstate()).
     NavState ret = snap->anchor;
 
-    // Anchor twist covariance (before random-walk growth), reused as the
-    // current-velocity uncertainty of the pose increment below.
-    const mrpt::math::CMatrixDouble66 anchorTwistCov = snap->anchor.twist_inv_cov.inverse_LLt();
+    // The covariance propagation below (matrix inversions, information-form
+    // conversions and Gaussian pose composition) can throw on a non
+    // positive-definite covariance; estimated_navstate() delegates here directly
+    // in async mode, so absorb it and report "not ready yet" instead of letting
+    // it terminate the caller's thread.
+    try
     {
-        auto twist_cov = anchorTwistCov;
-        for (int i = 0; i < 3; i++)
+        // Anchor twist covariance (before random-walk growth), reused as the
+        // current-velocity uncertainty of the pose increment below.
+        const mrpt::math::CMatrixDouble66 anchorTwistCov = snap->anchor.twist_inv_cov.inverse_LLt();
         {
-            twist_cov(0 + i, 0 + i) +=
-                mrpt::square(params.sigma_random_walk_acceleration_linear * dt);
-            twist_cov(3 + i, 3 + i) +=
-                mrpt::square(params.sigma_random_walk_acceleration_angular * dt);
+            auto twist_cov = anchorTwistCov;
+            for (int i = 0; i < 3; i++)
+            {
+                twist_cov(0 + i, 0 + i) +=
+                    mrpt::square(params.sigma_random_walk_acceleration_linear * dt);
+                twist_cov(3 + i, 3 + i) +=
+                    mrpt::square(params.sigma_random_walk_acceleration_angular * dt);
+            }
+            ret.twist_inv_cov = twist_cov.inverse_LLt();
         }
-        ret.twist_inv_cov = twist_cov.inverse_LLt();
-    }
 
-    // Reference ({map}) frame: extrapolate the anchor pose forward, propagating
-    // covariance.
-    if (frame_id == params.reference_frame_name)
-    {
-        mrpt::poses::CPose3DPDFGaussian anchorPose;
-        anchorPose.copyFrom(ret.pose);
-        ret.pose.copyFrom(extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt));
-        return ret;
-    }
+        // Reference ({map}) frame: extrapolate the anchor pose forward,
+        // propagating covariance.
+        if (frame_id == params.reference_frame_name)
+        {
+            mrpt::poses::CPose3DPDFGaussian anchorPose;
+            anchorPose.copyFrom(ret.pose);
+            ret.pose.copyFrom(
+                extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt));
+            return ret;
+        }
 
-    // Odometry frame {odom_i}: resolve its numeric id.
-    const auto& str2id = snap->frameNames.getDirectMap();
-    const auto  itName = str2id.find(frame_id);
-    if (itName == str2id.end())
-    {
-        return std::nullopt;
-    }
-    const auto requestedFrameIdx = itName->second;
-
-    // Frame-local prediction: anchor on the source's OWN last raw pose in
-    // {odom_i} and extrapolate by the body-twist increment, so the prediction
-    // stays immune to {map} corrections (geo-ref / loop closure / per-solve
-    // jitter). Falls back to the global conversion before the first raw pose.
-    const auto itRaw = snap->lastRawPoseBySource.find(requestedFrameIdx);
-    if (itRaw == snap->lastRawPoseBySource.end())
-    {
-        const auto itFrame = snap->frameTransforms.find(requestedFrameIdx);
-        if (itFrame == snap->frameTransforms.end())
+        // Odometry frame {odom_i}: resolve its numeric id.
+        const auto& str2id = snap->frameNames.getDirectMap();
+        const auto  itName = str2id.find(frame_id);
+        if (itName == str2id.end())
         {
             return std::nullopt;
         }
-        mrpt::poses::CPose3DPDFGaussian anchorPose;
-        anchorPose.copyFrom(ret.pose);
-        const auto mapPred =
-            extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
-        // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
-        ret.pose.copyFrom(mapPred - itFrame->second);
+        const auto requestedFrameIdx = itName->second;
+
+        // Frame-local prediction: anchor on the source's OWN last raw pose in
+        // {odom_i} and extrapolate by the body-twist increment, so the prediction
+        // stays immune to {map} corrections (geo-ref / loop closure / per-solve
+        // jitter). Falls back to the global conversion before the first raw pose.
+        const auto itRaw = snap->lastRawPoseBySource.find(requestedFrameIdx);
+        if (itRaw == snap->lastRawPoseBySource.end())
+        {
+            const auto itFrame = snap->frameTransforms.find(requestedFrameIdx);
+            if (itFrame == snap->frameTransforms.end())
+            {
+                return std::nullopt;
+            }
+            mrpt::poses::CPose3DPDFGaussian anchorPose;
+            anchorPose.copyFrom(ret.pose);
+            const auto mapPred =
+                extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+            // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
+            ret.pose.copyFrom(mapPred - itFrame->second);
+            return ret;
+        }
+
+        const auto&  rawAnchor = itRaw->second;
+        const double dtPred    = mrpt::system::timeDifference(rawAnchor.stamp, t_query);
+        if (std::abs(dtPred) > params.max_time_to_use_velocity_model)
+        {
+            return std::nullopt;
+        }
+
+        ret.pose.copyFrom(
+            extrapolate_pose_pdf(params, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
+
         return ret;
     }
-
-    const auto&  rawAnchor = itRaw->second;
-    const double dtPred    = mrpt::system::timeDifference(rawAnchor.stamp, t_query);
-    if (std::abs(dtPred) > params.max_time_to_use_velocity_model)
+    catch (const std::exception&)
     {
+        // Under-constrained covariance: report "not ready yet".
         return std::nullopt;
     }
-
-    ret.pose.copyFrom(
-        extrapolate_pose_pdf(params, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
-
-    return ret;
 }
 
 }  // namespace mola::state_estimation_smoother

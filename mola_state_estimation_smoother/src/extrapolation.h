@@ -29,6 +29,7 @@
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/poses/Lie/SE.h>
 
+#include <array>
 #include <cmath>
 
 namespace mola::state_estimation_smoother
@@ -88,12 +89,15 @@ inline mrpt::poses::CPose3D body_twist_delta(
  *     `twistCov` carried over the interval (dt^2 * twistCov), plus an
  *     acceleration process-noise term (~ 0.5*a*dt^2 position/attitude drift).
  *
- *  The increment covariance is expressed in the body tangent [vx vy vz wx wy wz]
- *  (the ordering of NavState::twist_inv_cov) and mapped to the increment's
- *  [x y z yaw pitch roll] covariance with J = d(pose)/d(tangent) ~= I for the
- *  small increments in this regime (exact in the translation channel, first
- *  order in rotation). Swap in the exact SE(3) exp Jacobian if the rotation
- *  channel ever needs it.
+ *  The increment covariance is first built in the body tangent [vx vy vz wx wy
+ *  wz] (the ordering of NavState::twist_inv_cov) and then mapped to the
+ *  increment's CPose3DPDFGaussian ordering [x y z yaw pitch roll] with
+ *  J = d(pose)/d(tangent). To first order at a small increment J reduces to a
+ *  coordinate relabeling: identity on translation, and the body angular rates
+ *  map to the Euler rates as yaw<-wz, pitch<-wy, roll<-wx. The residual
+ *  Jacobian curvature is the higher-order term neglected in this sub-second
+ *  regime; swap in the exact SE(3) exp Jacobian if the rotation channel ever
+ *  needs it.
  */
 inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     const Parameters& params, const mrpt::poses::CPose3DPDFGaussian& anchorPose,
@@ -112,7 +116,18 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
         incrCov(3 + i, 3 + i) +=
             mrpt::square(params.sigma_random_walk_acceleration_angular * halfDt2);
     }
-    deltaPdf.cov = incrCov;
+
+    // Relabel from the body tangent [vx vy vz wx wy wz] to the pose-covariance
+    // ordering [x y z yaw pitch roll] (yaw<-wz, pitch<-wy, roll<-wx). This is a
+    // permutation of the angular block, exact at first order.
+    constexpr std::array<int, 6> tangentOfPoseParam = {0, 1, 2, 5, 4, 3};
+    for (int i = 0; i < 6; i++)
+    {
+        for (int j = 0; j < 6; j++)
+        {
+            deltaPdf.cov(i, j) = incrCov(tangentOfPoseParam[i], tangentOfPoseParam[j]);
+        }
+    }
 
     return anchorPose + deltaPdf;
 }
