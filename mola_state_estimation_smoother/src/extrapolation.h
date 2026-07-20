@@ -21,9 +21,12 @@
 #pragma once
 
 #include <mola_state_estimation_smoother/Parameters.h>
+#include <mrpt/core/bits_math.h>  // mrpt::square
+#include <mrpt/math/CMatrixFixed.h>
 #include <mrpt/math/CVectorFixed.h>
 #include <mrpt/math/TTwist3D.h>
 #include <mrpt/poses/CPose3D.h>
+#include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/poses/Lie/SE.h>
 
 #include <cmath>
@@ -73,6 +76,45 @@ inline mrpt::poses::CPose3D body_twist_delta(
             return mrpt::poses::CPose3D(mrpt::poses::Lie::SE<3>::exp(twistDt));
         }
     }
+}
+
+/** Covariance-aware short-term pose extrapolation: returns the pose PDF of
+ *  `anchorPose` (+) Exp(twist*dt) with first-order uncertainty propagation.
+ *
+ *  Two sources of uncertainty are combined:
+ *   - the anchor pose covariance, transported through the composition (handled
+ *     exactly by MRPT's CPose3DPDFGaussian::operator+, i.e. the Adjoint term);
+ *   - the body-frame increment covariance: the current-velocity uncertainty
+ *     `twistCov` carried over the interval (dt^2 * twistCov), plus an
+ *     acceleration process-noise term (~ 0.5*a*dt^2 position/attitude drift).
+ *
+ *  The increment covariance is expressed in the body tangent [vx vy vz wx wy wz]
+ *  (the ordering of NavState::twist_inv_cov) and mapped to the increment's
+ *  [x y z yaw pitch roll] covariance with J = d(pose)/d(tangent) ~= I for the
+ *  small increments in this regime (exact in the translation channel, first
+ *  order in rotation). Swap in the exact SE(3) exp Jacobian if the rotation
+ *  channel ever needs it.
+ */
+inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
+    const Parameters& params, const mrpt::poses::CPose3DPDFGaussian& anchorPose,
+    const mrpt::math::TTwist3D& twist, const mrpt::math::CMatrixDouble66& twistCov, double dt)
+{
+    mrpt::poses::CPose3DPDFGaussian deltaPdf;
+    deltaPdf.mean = body_twist_delta(params, twist, dt);
+
+    mrpt::math::CMatrixDouble66 incrCov = twistCov;
+    incrCov *= mrpt::square(dt);
+
+    const double halfDt2 = 0.5 * dt * dt;
+    for (int i = 0; i < 3; i++)
+    {
+        incrCov(i, i) += mrpt::square(params.sigma_random_walk_acceleration_linear * halfDt2);
+        incrCov(3 + i, 3 + i) +=
+            mrpt::square(params.sigma_random_walk_acceleration_angular * halfDt2);
+    }
+    deltaPdf.cov = incrCov;
+
+    return anchorPose + deltaPdf;
 }
 
 }  // namespace mola::state_estimation_smoother

@@ -1108,13 +1108,15 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         return {};
     }
 
-    MRPT_TODO("Implement probabilistic extrapolation");
-    // For now, approximate extrapolation only:
     NavState ret = retKf;
 
-    // Approximate twist uncertainty growth due to random walk:
+    // Anchor twist covariance (before random-walk growth), reused as the
+    // current-velocity uncertainty of the pose increment below.
+    const mrpt::math::CMatrixDouble66 anchorTwistCov = retKf.twist_inv_cov.inverse_LLt();
+
+    // Twist uncertainty growth due to the acceleration random walk:
     {
-        auto twist_cov = ret.twist_inv_cov.inverse_LLt();
+        auto twist_cov = anchorTwistCov;
         for (int i = 0; i < 3; i++)
         {
             twist_cov(0 + i, 0 + i) +=
@@ -1140,8 +1142,11 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     if (frame_id == params_.reference_frame_name)
     {
         // Reference ({map}) frame: extrapolate the closest keyframe pose forward
-        // with the configured kinematic model.
-        ret.pose.mean = ret.pose.mean + body_twist_delta(params_, ret.twist, closestFrameDtSigned);
+        // with the configured kinematic model, propagating covariance.
+        mrpt::poses::CPose3DPDFGaussian anchorPose;
+        anchorPose.copyFrom(retKf.pose);
+        ret.pose.copyFrom(extrapolate_pose_pdf(
+            params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned));
         return ret;
     }
 
@@ -1173,10 +1178,12 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         {
             return {};
         }
-        ret.pose.mean = ret.pose.mean + body_twist_delta(params_, ret.twist, closestFrameDtSigned);
-        mrpt::poses::CPose3DPDFGaussianInf posePdfFrame_wrt_map_inf;
-        posePdfFrame_wrt_map_inf.copyFrom(itFrame->second);
-        ret.pose = ret.pose - posePdfFrame_wrt_map_inf;
+        mrpt::poses::CPose3DPDFGaussian anchorPose;
+        anchorPose.copyFrom(retKf.pose);
+        const auto mapPred = extrapolate_pose_pdf(
+            params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+        // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
+        ret.pose.copyFrom(mapPred - itFrame->second);
         return ret;
     }
 
@@ -1189,22 +1196,13 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         return {};
     }
 
-    mrpt::poses::CPose3DPDFGaussian pred;
-    pred.mean = rawAnchor.pose.mean + body_twist_delta(params_, ret.twist, dtPred);
-
-    // Frame-local covariance: the anchor is the front end's own (near-exact) pose
-    // in {odom_i}, so prediction uncertainty is dominated by the one-step
-    // extrapolation, not the absolute {map}-frame keyframe covariance.
-    pred.cov         = rawAnchor.pose.cov;
-    const double adt = std::abs(dtPred);
-    for (int i = 0; i < 3; i++)
-    {
-        pred.cov(i, i) += mrpt::square(params_.sigma_random_walk_acceleration_linear * adt * adt);
-        pred.cov(3 + i, 3 + i) +=
-            mrpt::square(params_.sigma_random_walk_acceleration_angular * adt * adt);
-    }
-
-    ret.pose.copyFrom(pred);  // NavState.pose is CPose3DPDFGaussianInf
+    // Frame-local extrapolation from the source's own last raw pose in {odom_i},
+    // propagating covariance (anchor pose uncertainty + body increment). The
+    // anchor is the front end's own near-exact pose in {odom_i}, so prediction
+    // uncertainty is dominated by the one-step extrapolation, not the absolute
+    // {map}-frame keyframe covariance.
+    ret.pose.copyFrom(
+        extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
 
     return ret;
 }

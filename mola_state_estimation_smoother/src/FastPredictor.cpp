@@ -101,8 +101,12 @@ std::optional<NavState> FastPredictor::predict(
     // random-walk model over the extrapolation interval (mirrors the
     // synchronous estimated_navstate()).
     NavState ret = snap->anchor;
+
+    // Anchor twist covariance (before random-walk growth), reused as the
+    // current-velocity uncertainty of the pose increment below.
+    const mrpt::math::CMatrixDouble66 anchorTwistCov = snap->anchor.twist_inv_cov.inverse_LLt();
     {
-        auto twist_cov = ret.twist_inv_cov.inverse_LLt();
+        auto twist_cov = anchorTwistCov;
         for (int i = 0; i < 3; i++)
         {
             twist_cov(0 + i, 0 + i) +=
@@ -113,10 +117,13 @@ std::optional<NavState> FastPredictor::predict(
         ret.twist_inv_cov = twist_cov.inverse_LLt();
     }
 
-    // Reference ({map}) frame: extrapolate the anchor pose forward.
+    // Reference ({map}) frame: extrapolate the anchor pose forward, propagating
+    // covariance.
     if (frame_id == params.reference_frame_name)
     {
-        ret.pose.mean = ret.pose.mean + body_twist_delta(params, ret.twist, dt);
+        mrpt::poses::CPose3DPDFGaussian anchorPose;
+        anchorPose.copyFrom(ret.pose);
+        ret.pose.copyFrom(extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt));
         return ret;
     }
 
@@ -141,10 +148,12 @@ std::optional<NavState> FastPredictor::predict(
         {
             return std::nullopt;
         }
-        ret.pose.mean = ret.pose.mean + body_twist_delta(params, ret.twist, dt);
-        mrpt::poses::CPose3DPDFGaussianInf posePdfFrame_wrt_map_inf;
-        posePdfFrame_wrt_map_inf.copyFrom(itFrame->second);
-        ret.pose = ret.pose - posePdfFrame_wrt_map_inf;
+        mrpt::poses::CPose3DPDFGaussian anchorPose;
+        anchorPose.copyFrom(ret.pose);
+        const auto mapPred =
+            extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+        // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
+        ret.pose.copyFrom(mapPred - itFrame->second);
         return ret;
     }
 
@@ -155,19 +164,8 @@ std::optional<NavState> FastPredictor::predict(
         return std::nullopt;
     }
 
-    mrpt::poses::CPose3DPDFGaussian pred;
-    pred.mean = rawAnchor.pose.mean + body_twist_delta(params, ret.twist, dtPred);
-
-    pred.cov         = rawAnchor.pose.cov;
-    const double adt = std::abs(dtPred);
-    for (int i = 0; i < 3; i++)
-    {
-        pred.cov(i, i) += mrpt::square(params.sigma_random_walk_acceleration_linear * adt * adt);
-        pred.cov(3 + i, 3 + i) +=
-            mrpt::square(params.sigma_random_walk_acceleration_angular * adt * adt);
-    }
-
-    ret.pose.copyFrom(pred);  // NavState.pose is CPose3DPDFGaussianInf
+    ret.pose.copyFrom(
+        extrapolate_pose_pdf(params, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
 
     return ret;
 }
