@@ -304,6 +304,30 @@ deployed setting; only the true offline CLIs (`mola-lidar-odometry-cli`,
 | IMU keyframe skip | `imu_min_sample_period` / `MOLA_IMU_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz attitude/gravity factors. |
 | predict-twist low-pass | `predict_twist_filter_enabled` / `MOLA_NAVSTATE_PREDICT_TWIST_FILTER` (+ `predict_twist_filter_time_const` / `MOLA_NAVSTATE_PREDICT_TWIST_TAU`, 0.3 s) | **true** | EMA-smooths the extrapolation velocity so the front end's ICP prior stays smooth. Deterministic; C++ default also true. |
 | accel random-walk sigmas | `sigma_random_walk_acceleration_linear` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC`, `..._angular` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC` | **0.5** / **1.0** | Moderate (was 1.0/10.0). The old loose angular let the boundary-node yaw rate swing and rotate the predicted pose. Loosen only for platforms with genuinely high linear/angular acceleration. |
+| gyro observations | `imu_angular_velocity_sigma` / `MOLA_IMU_ANGULAR_VELOCITY_SIGMA` | **0.05** | Direct (Huber-robust) prior on each keyframe's `W`, so a fast rotation reaches the graph immediately instead of only through the constant-velocity factor. 0 disables. |
+
+**Gyro priors vs. the constant-angular-velocity factor.** These two fight each
+other, and getting it wrong blows up the whole window. That factor's sigma is
+`sigma_random_walk_acceleration_angular * dt`, which vanishes as `dt` does,
+while the graph routinely produces keyframe pairs only ~10 ms apart (a pose
+observation landing just past `min_time_difference_to_create_new_frame` from an
+existing IMU keyframe). Those two keyframes then hold two *independent* noisy
+gyro measurements that the model insists must be nearly identical. The residual
+is `R_i*w_i - R_j*w_j`, so the optimizer can only relieve the disagreement by
+rotating the poses: linear velocity diverged to ~1e6 m/s and iSAM2 threw
+`IndeterminantLinearSystemException` on an unrelated `t`/`v` variable, roughly
+once a second through an entire run. Two unconditional guards, both in
+`StateEstimationSmoother.cpp`:
+
+- `angular_const_vel_sigma()` adds `sqrt(2)*imu_angular_velocity_sigma` in
+  quadrature to the random-walk term, so the factor is never tighter than the
+  sensor noise it competes with. Reduces to the old model when no gyro is fused.
+- The gyro prior itself uses a Huber kernel, bounding how far any single raw,
+  un-averaged sample can drag the window.
+
+Regression test: `tests/test-imu-gyro-solver-stability.cpp`. A startup-only
+warmup gate was tried first and is the wrong shape of fix: the failures span the
+whole run, not just the cold start.
 
 REP-105 `map -> odom` published from the graph variable (default **off**,
 enable per deployment because it needs the routing + frame wiring below):
@@ -329,6 +353,24 @@ Example (single wheel-odom source labeled `odom_wheels`, ROS odom frame `odom`):
 `MOLA_PUBLISH_MAP_TO_ODOM_TF=true MOLA_MAP_TO_ODOM_FRAME=odom_wheels
 MOLA_MAP_TO_ODOM_CHILD_FRAME=odom`, plus
 `localization_publish_tf_source:=state_estimation/map_odom`.
+
+## Open issue: large, persistent `MeasuredGravityFactor` errors
+
+Not yet diagnosed. On Oxford Spires (`2024-03-14-blenheim-palace-01`), dumping
+the graph with `NAVSTATE_PRINT_FG_ERRORS=true` shows `MeasuredGravityFactor`
+residuals of a few hundred within the first second, growing to ~1e4 and staying
+there for the rest of the run. With `imu_normalized_gravity_alignment_sigma`
+0.4 deg, an error of 280 is roughly a 10 deg mismatch between the measured
+up-vector and the one implied by `T_enu_to_map` and the keyframe pose.
+
+It is *not* caused by the gyro priors: the same magnitudes appear with
+`MOLA_IMU_ANGULAR_VELOCITY_SIGMA=0`. Early on the residual also flip-flops
+between two values on consecutive updates, suggesting `T_enu_to_map` and the
+keyframe rotations are trading the error back and forth rather than converging.
+Candidates to check: whether the sigma is simply far too tight for an
+accelerometer under real linear acceleration (no `imu_accel_looks_like_gravity`
+rejection beyond the magnitude test), and whether `T_enu_to_map` is
+observable enough when `estimate_geo_reference=false` and no GNSS is fused.
 
 ## Relocalize mode (`estimate_geo_reference=false`, GNSS+IMU init against a known map)
 

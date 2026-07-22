@@ -198,6 +198,12 @@ params:
   # Set to 0 to disable.
   imu_normalized_gravity_alignment_sigma: "${MOLA_IMU_GRAVITY_ALIGNMENT_SIGMA|0.4}"
 
+  # When an IMU provides angular velocity (gyroscope), add a direct prior on the
+  # corresponding keyframe's body-frame angular-velocity variable [rad/s], instead of
+  # leaving it constrained only by the constant-velocity kinematic factor between
+  # keyframes. Set to 0 to disable.
+  imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.05}"
+
   # --------------------------------------------------------------------------
   # Geo-referencing
   # --------------------------------------------------------------------------

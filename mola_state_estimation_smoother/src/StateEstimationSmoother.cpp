@@ -75,6 +75,10 @@ constexpr double PLANAR_XY_SIGMA             = 1e10;
 constexpr double PLANAR_Z_SIGMA              = 1e-4;
 constexpr double TRICYCLE_LARGE_SIGMAS       = 1e6;
 
+/// Huber threshold [whitened units] for raw gyro observations; the standard
+/// value giving ~95% efficiency under Gaussian noise.
+constexpr double GYRO_HUBER_K = 1.345;
+
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
     p.z(0);
@@ -687,7 +691,10 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     const bool hasAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W);
     const bool hasGravity =
         imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
-    if (!hasAttitude && !hasGravity)
+    const bool hasAngularVelocity = imu.has(mrpt::obs::IMU_WX) && imu.has(mrpt::obs::IMU_WY) &&
+                                     imu.has(mrpt::obs::IMU_WZ) &&
+                                     params_.imu_angular_velocity_sigma > 0;
+    if (!hasAttitude && !hasGravity && !hasAngularVelocity)
     {
         return;
     }
@@ -772,6 +779,35 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
                 symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
                 accNoise);
         }
+    }
+
+    // Angular velocity (gyroscope) observation: a direct prior on this keyframe's
+    // body-frame angular-velocity variable, so a genuine, fast rotation is represented
+    // in the graph immediately instead of only through the constant-velocity kinematic
+    // factor between keyframes (see imu_angular_velocity_sigma's docstring).
+    if (hasAngularVelocity)
+    {
+        const gtsam::Vector3 measuredW_sensor = {
+            imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY), imu.get(mrpt::obs::IMU_WZ)};
+
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
+        // Angular velocity is a free vector under a fixed rigid rotation (no lever-arm
+        // term, unlike linear velocity):
+        const gtsam::Vector3 measuredW_vehicle = sensorOnVehicle.rotation() * measuredW_sensor;
+
+        // Robust kernel: this is one raw, un-averaged sample of a noisy, often
+        // vibration-contaminated signal, used as a direct observation of a state
+        // variable. A single outlier (or a sigma set optimistically for the actual
+        // platform) would otherwise drag the whole sliding window through the
+        // body-frame coupling of the constant-velocity factor, which can only
+        // absorb the disagreement by rotating the poses. Huber bounds how far any
+        // one reading can pull the solution while leaving well-behaved samples
+        // fully informative.
+        auto gyroNoise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(GYRO_HUBER_K),
+            gtsam::noiseModel::Isotropic::Sigma(3, params_.imu_angular_velocity_sigma));
+
+        state_.gtsam->newFactors.addPrior(W(this_kf_id), measuredW_vehicle, gyroNoise);
     }
 }
 
@@ -1345,6 +1381,31 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
     }
 }
 
+double StateEstimationSmoother::angular_const_vel_sigma(double dt) const
+{
+    // Random-walk term: how much the angular velocity may drift on its own over dt.
+    const double sigmaModel = params_.sigma_random_walk_acceleration_angular * dt;
+
+    // Measurement term: when gyro readings are fused as direct observations of w
+    // (imu_angular_velocity_sigma > 0), two consecutive keyframes hold two
+    // INDEPENDENT noisy measurements, so their difference already has a spread of
+    // sqrt(2)*sigma no matter how close in time they are. The random-walk term
+    // alone does not account for that and vanishes with dt, while this graph
+    // routinely produces keyframe pairs only ~10 ms apart (a pose observation
+    // landing just past the merge threshold of an existing IMU keyframe). There
+    // the model term is several times tighter than the sensor noise it is being
+    // asked to explain, and the resulting conflict cannot be absorbed by w alone:
+    // this factor's residual is R_i*w_i - R_j*w_j, so the optimizer can only
+    // reduce it by rotating the poses, which blows up the whole window (seen as
+    // an IndeterminantLinearSystemException on an unrelated pose/velocity
+    // variable). Adding both terms in quadrature keeps the factor consistent with
+    // the data it competes against, and reduces to the pure random-walk model
+    // when no gyro is fused.
+    const double sigmaMeas = std::sqrt(2.0) * params_.imu_angular_velocity_sigma;
+
+    return std::hypot(sigmaModel, sigmaMeas);
+}
+
 /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
 void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
 {
@@ -1364,8 +1425,8 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     ASSERT_GT_(dt, 0.);
 
     // errors in constant vel:
-    const double std_lin_vel = params_.sigma_random_walk_acceleration_linear;
-    const double std_ang_vel = params_.sigma_random_walk_acceleration_angular;
+    const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear;
+    const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
     if (dt > params_.time_between_frames_to_warning)
     {
@@ -1395,7 +1456,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
     sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
-        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
+        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, sigma_ang_vel));
 
     // 2) Add kinematics / numerical integration factor
     // ---------------------------------------------------
@@ -1432,8 +1493,8 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     ASSERT_GT_(dt, 0.);
 
     // errors in constant vel:
-    const double std_lin_vel = params_.sigma_random_walk_acceleration_linear;
-    const double std_ang_vel = params_.sigma_random_walk_acceleration_angular;
+    const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear;
+    const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
     if (dt > params_.time_between_frames_to_warning)
     {
@@ -1462,7 +1523,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     // \omega is in the body frame, we need a special factor to rotate it:
     // See line 4 of eq (4) in the MOLA RSS2019 paper.
     sink.emplace_shared<mola::factors::FactorConstLocalVelocityPose>(
-        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, std_ang_vel * dt));
+        kTi, kbWi, kTj, kbWj, gtsam::noiseModel::Isotropic::Sigma(3, sigma_ang_vel));
 
     // In the tricycle model, body v_y must be zero:
     {
@@ -1474,7 +1535,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorTricycleKinematics& f)
     }
     // In the tricycle model, body w_x,w_y must be zero:
     {
-        const Eigen::Vector3d sigmas = {std_ang_vel * dt, std_ang_vel * dt, TRICYCLE_LARGE_SIGMAS};
+        const Eigen::Vector3d sigmas = {sigma_ang_vel, sigma_ang_vel, TRICYCLE_LARGE_SIGMAS};
 
         sink.emplace_shared<gtsam::PriorFactor<gtsam::Point3>>(
             kbWj, gtsam::Point3::Zero(), gtsam::noiseModel::Diagonal::Sigmas(sigmas));

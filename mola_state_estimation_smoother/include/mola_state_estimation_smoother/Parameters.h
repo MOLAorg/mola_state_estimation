@@ -229,6 +229,18 @@ class Parameters
      */
     double imu_normalized_gravity_alignment_sigma = 0.4;
 
+    /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
+     * corresponding keyframe's body-frame angular-velocity variable, sensor-to-vehicle
+     * rotated. Without this, angular velocity is only constrained by the constant-velocity
+     * kinematic factor between keyframes plus whatever pose factors happen to be fused, so a
+     * genuine, fast rotation can go unrepresented in the graph for as long as those lag (e.g.
+     * while ICP is failing and not fusing new poses at all) -- which then also lags the
+     * short-term prediction consumed by front ends as their next ICP prior/initial guess.
+     * Sigma is in [rad/s]; set to 0 to disable. 0.05 rad/s is a conservative starting default
+     * for a generic MEMS gyro; tune tighter for a better-characterized sensor.
+     */
+    double imu_angular_velocity_sigma = 0.05;
+
     /** @} */
 
     /** @name Geo-referencing
