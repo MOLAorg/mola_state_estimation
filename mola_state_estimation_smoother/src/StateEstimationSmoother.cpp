@@ -727,7 +727,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         if (!mola::factors::imu_quaternion_looks_valid(qw, qx, qy, qz))
         {
             MRPT_LOG_THROTTLE_WARN(
-                5.0, "Ignoring invalid (NaN or non-normalized) IMU orientation quaternion");
+                60.0, "Ignoring invalid (NaN or non-normalized) IMU orientation quaternion");
         }
         else
         {
