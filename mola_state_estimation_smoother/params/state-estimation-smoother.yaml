@@ -201,8 +201,10 @@ params:
   # When an IMU provides angular velocity (gyroscope), add a direct prior on the
   # corresponding keyframe's body-frame angular-velocity variable [rad/s], instead of
   # leaving it constrained only by the constant-velocity kinematic factor between
-  # keyframes. Set to 0 to disable.
-  imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.05}"
+  # keyframes. Set to 0 to disable. Deliberately loose (~5.7 deg/s): a single raw
+  # sample taken as the keyframe-interval average on a vibrating platform; tighter
+  # values over-constrain and can make the window singular. See Parameters.h.
+  imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.10}"
 
   # --------------------------------------------------------------------------
   # Geo-referencing

@@ -236,10 +236,18 @@ class Parameters
      * genuine, fast rotation can go unrepresented in the graph for as long as those lag (e.g.
      * while ICP is failing and not fusing new poses at all) -- which then also lags the
      * short-term prediction consumed by front ends as their next ICP prior/initial guess.
-     * Sigma is in [rad/s]; set to 0 to disable. 0.05 rad/s is a conservative starting default
-     * for a generic MEMS gyro; tune tighter for a better-characterized sensor.
+     * Sigma is in [rad/s]; set to 0 to disable.
+     *
+     * The default (0.10 rad/s ~ 5.7 deg/s) is deliberately loose: this is one raw,
+     * instantaneous sample taken as the average angular velocity over a whole keyframe
+     * interval, on a platform that vibrates, so its honest uncertainty is several deg/s. A
+     * tighter value pins each keyframe's W hard to its own noisy sample; two such priors on
+     * near-simultaneous keyframes then disagree by more than the constant-velocity factor
+     * between them allows, and the only way the optimizer can relieve that is by rotating the
+     * poses, which can make the window numerically singular. Tune tighter only for a
+     * genuinely well-characterized, well-isolated gyro.
      */
-    double imu_angular_velocity_sigma = 0.05;
+    double imu_angular_velocity_sigma = 0.10;
 
     /** @} */
 

@@ -304,7 +304,7 @@ deployed setting; only the true offline CLIs (`mola-lidar-odometry-cli`,
 | IMU keyframe skip | `imu_min_sample_period` / `MOLA_IMU_MIN_SAMPLE_PERIOD` | **0.1** | ~10 Hz attitude/gravity factors. |
 | predict-twist low-pass | `predict_twist_filter_enabled` / `MOLA_NAVSTATE_PREDICT_TWIST_FILTER` (+ `predict_twist_filter_time_const` / `MOLA_NAVSTATE_PREDICT_TWIST_TAU`, 0.3 s) | **true** | EMA-smooths the extrapolation velocity so the front end's ICP prior stays smooth. Deterministic; C++ default also true. |
 | accel random-walk sigmas | `sigma_random_walk_acceleration_linear` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC`, `..._angular` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC` | **0.5** / **1.0** | Moderate (was 1.0/10.0). The old loose angular let the boundary-node yaw rate swing and rotate the predicted pose. Loosen only for platforms with genuinely high linear/angular acceleration. |
-| gyro observations | `imu_angular_velocity_sigma` / `MOLA_IMU_ANGULAR_VELOCITY_SIGMA` | **0.05** | Direct (Huber-robust) prior on each keyframe's `W`, so a fast rotation reaches the graph immediately instead of only through the constant-velocity factor. 0 disables. |
+| gyro observations | `imu_angular_velocity_sigma` / `MOLA_IMU_ANGULAR_VELOCITY_SIGMA` | **0.10** | Direct (Huber-robust) prior on each keyframe's `W`, so a fast rotation reaches the graph immediately instead of only through the constant-velocity factor. 0 disables. Deliberately loose, see below. |
 
 **Gyro priors vs. the constant-angular-velocity factor.** These two fight each
 other, and getting it wrong blows up the whole window. That factor's sigma is
@@ -315,19 +315,28 @@ existing IMU keyframe). Those two keyframes then hold two *independent* noisy
 gyro measurements that the model insists must be nearly identical. The residual
 is `R_i*w_i - R_j*w_j`, so the optimizer can only relieve the disagreement by
 rotating the poses: linear velocity diverged to ~1e6 m/s and iSAM2 threw
-`IndeterminantLinearSystemException` on an unrelated `t`/`v` variable, roughly
-once a second through an entire run. Two unconditional guards, both in
+`IndeterminantLinearSystemException` on an unrelated `t`/`v` (or on `f0`,
+`T_enu_to_map`, when the gravity factors sharing it get dragged along), roughly
+once a second through an entire run. Three unconditional guards, all in
 `StateEstimationSmoother.cpp`:
 
+- The **default `imu_angular_velocity_sigma` is loose (0.10 rad/s)**. This is the
+  dominant lever: a single raw, instantaneous sample is being used as the average
+  `W` over a whole keyframe interval on a vibrating platform, so pinning it hard is
+  physically wrong. On Oxford Spires the solver failed below ~0.08 rad/s and was
+  clean at and above it (0.10-0.20 all clean); 0.10 is the honest value with
+  margin. Loosening only the const-vel factor instead (see below) did *not*
+  suffice on its own -- the prior tightness is what over-constrains.
 - `angular_const_vel_sigma()` adds `sqrt(2)*imu_angular_velocity_sigma` in
   quadrature to the random-walk term, so the factor is never tighter than the
   sensor noise it competes with. Reduces to the old model when no gyro is fused.
-- The gyro prior itself uses a Huber kernel, bounding how far any single raw,
-  un-averaged sample can drag the window.
+- The gyro prior itself uses a Huber kernel, bounding how far any single raw
+  sample can drag the window.
 
-Regression test: `tests/test-imu-gyro-solver-stability.cpp`. A startup-only
-warmup gate was tried first and is the wrong shape of fix: the failures span the
-whole run, not just the cold start.
+Regression test: `tests/test-imu-gyro-solver-stability.cpp`. Two approaches were
+tried and rejected: a startup-only warmup gate (wrong shape -- the failures span
+the whole run, not just the cold start), and loosening only the const-vel factor
+(insufficient -- see the first bullet).
 
 REP-105 `map -> odom` published from the graph variable (default **off**,
 enable per deployment because it needs the routing + frame wiring below):
