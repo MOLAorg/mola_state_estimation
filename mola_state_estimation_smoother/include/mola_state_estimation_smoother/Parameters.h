@@ -165,8 +165,13 @@ class Parameters
      */
     double imu_min_sample_period = 0.0;  // [s]
 
-    double sigma_random_walk_acceleration_linear  = 0.5;  // [m/s²]
-    double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
+    double sigma_random_walk_acceleration_linear = 0.5;  // [m/s²]
+    /** Angular random-walk sigma for the constant-velocity factor between keyframes.
+     *  Kept loose on purpose: a tight value makes that factor override the per-keyframe
+     *  gyro prior, averaging genuine fast rotations away (the optimized W then keeps only
+     *  a fraction of the measured rate). The downstream predict-twist low-pass damps the
+     *  extra boundary-node variability this allows. */
+    double sigma_random_walk_acceleration_angular = 10.0;  // [rad/s²]
 
     /** If true, the short-term extrapolation velocity used by
      * estimated_navstate() is a low-pass-filtered version of the newest
@@ -228,6 +233,26 @@ class Parameters
      * Set to 0 to disable.
      */
     double imu_normalized_gravity_alignment_sigma = 0.4;
+
+    /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
+     * corresponding keyframe's body-frame angular-velocity variable, sensor-to-vehicle
+     * rotated. Without this, angular velocity is only constrained by the constant-velocity
+     * kinematic factor between keyframes plus whatever pose factors happen to be fused, so a
+     * genuine, fast rotation can go unrepresented in the graph for as long as those lag (e.g.
+     * while ICP is failing and not fusing new poses at all) -- which then also lags the
+     * short-term prediction consumed by front ends as their next ICP prior/initial guess.
+     * Sigma is in [rad/s]; set to 0 to disable.
+     *
+     * The default (0.10 rad/s ~ 5.7 deg/s) is deliberately loose: this is one raw,
+     * instantaneous sample taken as the average angular velocity over a whole keyframe
+     * interval, on a platform that vibrates, so its honest uncertainty is several deg/s. A
+     * tighter value pins each keyframe's W hard to its own noisy sample; two such priors on
+     * near-simultaneous keyframes then disagree by more than the constant-velocity factor
+     * between them allows, and the only way the optimizer can relieve that is by rotating the
+     * poses, which can make the window numerically singular. Tune tighter only for a
+     * genuinely well-characterized, well-isolated gyro.
+     */
+    double imu_angular_velocity_sigma = 0.10;
 
     /** @} */
 

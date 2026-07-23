@@ -442,6 +442,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// state_.last_estimated_state
     void process_pending_gtsam_updates();
 
+    /** Sigma [rad/s] for the constant-angular-velocity factor spanning `dt` seconds.
+     *  Combines the random-walk model with the gyro measurement noise present at both
+     *  endpoints when raw gyro readings are fused (see the implementation). */
+    double angular_const_vel_sigma(double dt) const;
+
     /// Implementation of Eqs (1),(4) in the MOLA RSS2019 paper.
     void addFactor(const AbsFactorConstVelKinematics& f);
     void addFactor(const AbsFactorTricycleKinematics& f);

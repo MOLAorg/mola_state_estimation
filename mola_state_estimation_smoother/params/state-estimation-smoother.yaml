@@ -121,7 +121,9 @@ params:
   sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|0.5}
 
   # Random walk model for angular acceleration uncertainty [rad/s²]
-  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|1.0}
+  # Kept loose so the constant-velocity factor does not override the per-keyframe gyro
+  # prior and average genuine fast rotations away. See Parameters.h.
+  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|10.0}
 
   # Low-pass the newest keyframe's velocity before using it as the short-term
   # extrapolation prior. The newest keyframe is the boundary node of the window
@@ -197,6 +199,14 @@ params:
   # gravity-align the map.
   # Set to 0 to disable.
   imu_normalized_gravity_alignment_sigma: "${MOLA_IMU_GRAVITY_ALIGNMENT_SIGMA|0.4}"
+
+  # When an IMU provides angular velocity (gyroscope), add a direct prior on the
+  # corresponding keyframe's body-frame angular-velocity variable [rad/s], instead of
+  # leaving it constrained only by the constant-velocity kinematic factor between
+  # keyframes. Set to 0 to disable. Deliberately loose (~5.7 deg/s): a single raw
+  # sample taken as the keyframe-interval average on a vibrating platform; tighter
+  # values over-constrain and can make the window singular. See Parameters.h.
+  imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.10}"
 
   # --------------------------------------------------------------------------
   # Geo-referencing
