@@ -165,8 +165,13 @@ class Parameters
      */
     double imu_min_sample_period = 0.0;  // [s]
 
-    double sigma_random_walk_acceleration_linear  = 0.5;  // [m/s²]
-    double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
+    double sigma_random_walk_acceleration_linear = 0.5;  // [m/s²]
+    /** Angular random-walk sigma for the constant-velocity factor between keyframes.
+     *  Kept loose on purpose: a tight value makes that factor override the per-keyframe
+     *  gyro prior, averaging genuine fast rotations away (the optimized W then keeps only
+     *  a fraction of the measured rate). The downstream predict-twist low-pass damps the
+     *  extra boundary-node variability this allows. */
+    double sigma_random_walk_acceleration_angular = 10.0;  // [rad/s²]
 
     /** If true, the short-term extrapolation velocity used by
      * estimated_navstate() is a low-pass-filtered version of the newest

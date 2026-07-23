@@ -121,7 +121,9 @@ params:
   sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|0.5}
 
   # Random walk model for angular acceleration uncertainty [rad/s²]
-  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|1.0}
+  # Kept loose so the constant-velocity factor does not override the per-keyframe gyro
+  # prior and average genuine fast rotations away. See Parameters.h.
+  sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|10.0}
 
   # Low-pass the newest keyframe's velocity before using it as the short-term
   # extrapolation prior. The newest keyframe is the boundary node of the window
