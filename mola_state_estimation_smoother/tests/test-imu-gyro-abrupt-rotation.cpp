@@ -77,6 +77,9 @@ params:
 // the predicted yaw rate (twist.wz) at the end of the blackout.
 double run_and_get_predicted_wz(double gyroSigma)
 {
+    // Fixed seed: the IMU noise below must not make this test flaky.
+    rng.randomize(1);
+
     mola::state_estimation_smoother::StateEstimationSmoother est;
     est.initialize(mrpt::containers::yaml::FromText(make_config(gyroSigma)));
 
@@ -91,7 +94,7 @@ double run_and_get_predicted_wz(double gyroSigma)
     }
 
     mrpt::poses::CPose3D gtPose = mrpt::poses::CPose3D::Identity();
-    double                t     = 0;
+    double               t      = 0;
 
     const auto fuseImuWz = [&](double wz)
     {

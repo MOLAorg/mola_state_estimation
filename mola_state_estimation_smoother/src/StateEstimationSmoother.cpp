@@ -692,8 +692,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     const bool hasGravity =
         imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
     const bool hasAngularVelocity = imu.has(mrpt::obs::IMU_WX) && imu.has(mrpt::obs::IMU_WY) &&
-                                     imu.has(mrpt::obs::IMU_WZ) &&
-                                     params_.imu_angular_velocity_sigma > 0;
+                                    imu.has(mrpt::obs::IMU_WZ) &&
+                                    params_.imu_angular_velocity_sigma > 0;
     if (!hasAttitude && !hasGravity && !hasAngularVelocity)
     {
         return;
@@ -722,6 +722,9 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         "[fuse_imu]: t=%f  this_kf_id=%zu ", mrpt::Clock::toDouble(imu.timestamp),
         static_cast<size_t>(this_kf_id));
 
+    // Shared by every branch below (at least one runs, given the early return above):
+    const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
+
     // Direct azimuth observation?
     // -------------------------------------------------
     if (imu.has(mrpt::obs::IMU_ORI_QUAT_W))
@@ -741,8 +744,6 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             // GTSAM uses w,x,y,z quaternion order:
             const auto measuredRotation = mola::factors::imu_apply_enu_azimuth_correction(
                 gtsam::Rot3::Quaternion(qw, qx, qy, qz), params_.imu_attitude_azimuth_offset_deg);
-
-            const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
 
             // Create noise model for rotation (3 DOF: roll, pitch, yaw)
             auto rotationNoise = gtsam::noiseModel::Isotropic::Sigma(
@@ -769,8 +770,6 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         {
             const gtsam::Vector3 measuredGravityNormalized = measuredGravity.normalized();
 
-            const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
-
             // Create noise model for gravity alignment:
             auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
                 3, mrpt::DEG2RAD(params_.imu_normalized_gravity_alignment_sigma));
@@ -790,24 +789,31 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         const gtsam::Vector3 measuredW_sensor = {
             imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY), imu.get(mrpt::obs::IMU_WZ)};
 
-        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
-        // Angular velocity is a free vector under a fixed rigid rotation (no lever-arm
-        // term, unlike linear velocity):
-        const gtsam::Vector3 measuredW_vehicle = sensorOnVehicle.rotation() * measuredW_sensor;
+        if (!measuredW_sensor.allFinite())
+        {
+            MRPT_LOG_THROTTLE_WARN(
+                60.0, "Ignoring invalid (NaN or Inf) IMU angular velocity reading");
+        }
+        else
+        {
+            // Angular velocity is a free vector under a fixed rigid rotation (no lever-arm
+            // term, unlike linear velocity):
+            const gtsam::Vector3 measuredW_vehicle = sensorOnVehicle.rotation() * measuredW_sensor;
 
-        // Robust kernel: this is one raw, un-averaged sample of a noisy, often
-        // vibration-contaminated signal, used as a direct observation of a state
-        // variable. A single outlier (or a sigma set optimistically for the actual
-        // platform) would otherwise drag the whole sliding window through the
-        // body-frame coupling of the constant-velocity factor, which can only
-        // absorb the disagreement by rotating the poses. Huber bounds how far any
-        // one reading can pull the solution while leaving well-behaved samples
-        // fully informative.
-        auto gyroNoise = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(GYRO_HUBER_K),
-            gtsam::noiseModel::Isotropic::Sigma(3, params_.imu_angular_velocity_sigma));
+            // Robust kernel: this is one raw, un-averaged sample of a noisy, often
+            // vibration-contaminated signal, used as a direct observation of a state
+            // variable. A single outlier (or a sigma set optimistically for the actual
+            // platform) would otherwise drag the whole sliding window through the
+            // body-frame coupling of the constant-velocity factor, which can only
+            // absorb the disagreement by rotating the poses. Huber bounds how far any
+            // one reading can pull the solution while leaving well-behaved samples
+            // fully informative.
+            auto gyroNoise = gtsam::noiseModel::Robust::Create(
+                gtsam::noiseModel::mEstimator::Huber::Create(GYRO_HUBER_K),
+                gtsam::noiseModel::Isotropic::Sigma(3, params_.imu_angular_velocity_sigma));
 
-        state_.gtsam->newFactors.addPrior(W(this_kf_id), measuredW_vehicle, gyroNoise);
+            state_.gtsam->newFactors.addPrior(W(this_kf_id), measuredW_vehicle, gyroNoise);
+        }
     }
 }
 
