@@ -37,6 +37,7 @@ find_package(mrpt-obs)
 # Find MOLA packages:
 find_package(mola_imu_preintegration REQUIRED)
 find_package(mola_kernel REQUIRED)
+find_package(mola_yaml REQUIRED)
 
 # -----------------------
 # define lib:
@@ -50,12 +51,14 @@ mola_add_library(
     mrpt::obs
     mola::mola_imu_preintegration
     mola::mola_kernel
+    mola::mola_yaml
   #PRIVATE_LINK_LIBRARIES
   #  mrpt::obs
   CMAKE_DEPENDENCIES
     mola_common
     mola_kernel
     mola_imu_preintegration
+    mola_yaml
 )
 
 # -----------------------
