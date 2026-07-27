@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <iomanip>
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
