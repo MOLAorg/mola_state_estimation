@@ -42,7 +42,14 @@
 #include <gtsam/nonlinear/expressions.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/expressions.h>
+// IncrementalFixedLagSmoother moved from gtsam_unstable to gtsam in newer
+// releases; prefer the stable header when available to avoid a deprecation
+// warning, falling back to the unstable one for older GTSAM versions.
+#if __has_include(<gtsam/nonlinear/IncrementalFixedLagSmoother.h>)
+#include <gtsam/nonlinear/IncrementalFixedLagSmoother.h>
+#else
 #include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
+#endif
 
 // Custom factors:
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
