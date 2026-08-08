@@ -48,6 +48,14 @@ Key traits:
 - Fuses pose, odometry, IMU and twist; ignores GNSS.
 - Not frame-aware (ignores `frame_id`).
 - Supports optional planar-motion enforcement (`enforce_planar_motion`).
+- `fuse_imu()` only **buffers** the reading (`state_.pending_imu`). It is fused
+  by `fuse_pending_imu_up_to()`, called at the start of every method that
+  carries a time of interest (`estimated_navstate()`, `fuse_pose()`,
+  `fuse_twist()`, `fuse_odometry*()`), which fuses exactly the readings not
+  newer than that time, in timestamp order. `get_last_twist()`, having no time
+  of interest, fuses everything buffered. So the estimate for a given time is a
+  function of the measurement timestamps, not of the delivery order: a pipeline
+  feeding this estimator from concurrent sensor threads stays reproducible.
 
 ### 2. `mola_state_estimation_smoother`
 
