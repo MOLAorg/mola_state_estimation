@@ -144,7 +144,11 @@ class StateEstimationSimple : public mola::NavStateFilter
     std::optional<NavState> estimated_navstate(
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
 
-    std::optional<mrpt::math::TTwist3D> get_last_twist() const;
+    /** Returns the twist after fusing every IMU reading received so far,
+     *  irrespective of its timestamp (see fuse_imu() on why IMU readings are
+     *  buffered). Prefer estimated_navstate() whenever the time of interest is
+     *  known. */
+    std::optional<mrpt::math::TTwist3D> get_last_twist();
 
     /** @} */
 
@@ -189,6 +193,21 @@ class StateEstimationSimple : public mola::NavStateFilter
         };
         std::map<std::string, SourceState> per_source;
 
+        // Angular velocity (already rotated into the vehicle frame) of an IMU
+        // reading that has been received but not fused yet. See fuse_imu().
+        struct PendingImu
+        {
+            double wx = 0;
+            double wy = 0;
+            double wz = 0;
+        };
+
+        // IMU readings waiting to be fused, ordered by timestamp. A multimap,
+        // so that two readings sharing a timestamp are both kept: which of them
+        // is "the" reading for that instant is undecidable, and dropping one
+        // would silently discard data that used to be fused.
+        std::multimap<mrpt::Clock::time_point, PendingImu> pending_imu;
+
         // To be built from parameters strings when changed.
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
@@ -209,6 +228,15 @@ class StateEstimationSimple : public mola::NavStateFilter
     void update_vel_filter(
         const std::array<double, 6>& z, const std::array<double, 6>& R_diag,
         const mrpt::Clock::time_point& tim, const std::string& caller = "");
+
+    /** Fuses the buffered IMU readings with a timestamp not newer than `upTo`,
+     *  in timestamp order, and drops them from the buffer.
+     *  Must be called with state_mtx_ already held. */
+    void fuse_pending_imu_up_to(const mrpt::Clock::time_point& upTo);
+
+    /** Fuses every buffered IMU reading, whatever its timestamp.
+     *  Must be called with state_mtx_ already held. */
+    void fuse_all_pending_imu();
 
     State state_;
 

@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 using namespace std::string_literals;
 using namespace mrpt::literals;
@@ -976,6 +978,103 @@ void test_gnss_significant_3d_lever_arm()
 }
 #endif
 
+// --------------------------------------------------------------------------
+// Test: IMU arrival order must not change the estimate
+// --------------------------------------------------------------------------
+// The estimate returned for a given time must be a function of the measurement
+// timestamps, never of the order in which the measurements were delivered, nor
+// of how many later ones happened to arrive first. That is what makes a
+// pipeline feeding this estimator from several concurrent sensor threads
+// reproducible.
+void test_imu_arrival_order_independence()
+{
+    std::cout << "[Test] IMU arrival-order independence... ";
+
+    // Angular rate of each of the readings, all of them around Z:
+    const std::vector<std::pair<double, double>> imuSamples = {
+        {1.1, 1.0}, {1.2, 2.0}, {1.3, 3.0}, {1.4, 4.0}};
+
+    const double queryTime = 1.25;  // in between the 2nd and the 3rd reading
+
+    const auto makeImu = [](double t, double wz)
+    {
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, wz);
+        imu.sensorPose = mrpt::poses::CPose3D::Identity();
+        return imu;
+    };
+
+    // Feeds the given readings, in the given order, and queries at queryTime:
+    const auto run = [&](const std::vector<std::pair<double, double>>& deliveryOrder)
+    {
+        mola::state_estimation_simple::StateEstimationSimple estimator;
+        estimator.initialize(get_default_config());
+
+        // Seed a pose (and hence a twist) at a constant 2 m/s along X:
+        estimator.fuse_pose(
+            mrpt::Clock::fromDouble(0.0),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D::Identity(), mrpt::math::CMatrixDouble66::Identity()),
+            "map");
+        estimator.fuse_pose(
+            mrpt::Clock::fromDouble(1.0),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D(2.0, 0, 0), mrpt::math::CMatrixDouble66::Identity()),
+            "map");
+
+        for (const auto& [t, wz] : deliveryOrder)
+        {
+            estimator.fuse_imu(makeImu(t, wz));
+        }
+
+        auto st = estimator.estimated_navstate(mrpt::Clock::fromDouble(queryTime), "map");
+        ASSERT_(st.has_value());
+        return *st;
+    };
+
+    // (a) Only the readings older than the query time were delivered:
+    const auto onlyPast = run({imuSamples[0], imuSamples[1]});
+
+    // (b) The later readings were delivered too, before the query:
+    const auto alsoFuture = run(imuSamples);
+
+    // (c) Same set as (b), delivered in reverse order:
+    auto reversed = imuSamples;
+    std::reverse(reversed.begin(), reversed.end());
+    const auto reversedArrival = run(reversed);
+
+    const auto expectSameAs = [&](const mola::NavState& other, const char* what)
+    {
+        ASSERTMSG_(onlyPast.twist.wx == other.twist.wx, what);
+        ASSERTMSG_(onlyPast.twist.wy == other.twist.wy, what);
+        ASSERTMSG_(onlyPast.twist.wz == other.twist.wz, what);
+        ASSERTMSG_(onlyPast.twist.vx == other.twist.vx, what);
+        ASSERTMSG_(onlyPast.pose.mean == other.pose.mean, what);
+    };
+
+    expectSameAs(alsoFuture, "Readings newer than the query time changed the estimate");
+    expectSameAs(reversedArrival, "The delivery order changed the estimate");
+
+    // Two readings sharing a timestamp must both be fused, not one silently
+    // dropped in favor of the other:
+    auto withDuplicate = imuSamples;
+    withDuplicate.push_back(imuSamples[1]);
+    const auto duplicated = run(withDuplicate);
+    ASSERTMSG_(
+        duplicated.twist.wz != onlyPast.twist.wz,
+        "A reading sharing a timestamp with another one was dropped");
+
+    // Sanity: the estimate did track the readings it was supposed to use, and
+    // only those. The filter approaches, but does not reach, the measurement.
+    ASSERT_GT_(onlyPast.twist.wz, 1.0);
+    ASSERT_LT_(onlyPast.twist.wz, 2.0);
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -991,6 +1090,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_icp_and_3d_odometry_fusion();
         test_velocity_kalman_filter();
         test_multirate_interleaved_velocity();
+        test_imu_arrival_order_independence();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();

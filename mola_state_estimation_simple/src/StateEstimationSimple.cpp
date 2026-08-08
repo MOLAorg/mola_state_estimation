@@ -29,6 +29,7 @@
 #include <mrpt/topography/conversions.h>
 
 #include <Eigen/Dense>
+#include <chrono>
 #include <fstream>
 #include <memory>
 
@@ -37,6 +38,15 @@ IMPLEMENTS_MRPT_OBJECT(StateEstimationSimple, mola::ExecutableBase, mola::state_
 
 namespace mola::state_estimation_simple
 {
+
+namespace
+{
+/// Age [s], relative to the newest buffered reading, beyond which an unfused
+/// IMU reading is discarded. Only reached if nothing ever asks the estimator
+/// for a state, since any query or measurement drains everything older than
+/// its own timestamp.
+constexpr double kPendingImuMaxAge = 1.0;
+}  // namespace
 
 StateEstimationSimple::StateEstimationSimple() = default;
 
@@ -275,6 +285,8 @@ void StateEstimationSimple::fuse_odometry(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
+    fuse_pending_imu_up_to(odom.timestamp);
+
     // Advance last_pose by the incremental 2D odometry delta:
     if (state_.last_odom_obs && state_.last_pose)
     {
@@ -320,6 +332,8 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
     const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName)
 {
     auto lck = std::scoped_lock(state_mtx_);
+
+    fuse_pending_imu_up_to(obs.timestamp);
 
     // Apply sensor-to-base correction if the sensor is not at the origin:
     auto sensedPose = obs.pose;
@@ -417,35 +431,68 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // Do not predict a new pose for this timestamp, so we can use the last *real*
     // call to fuse_pose() from an outter source.
 
-    // and now overwrite twist (wx,wy,wz) part from IMU data:
+    // Angular velocity, transformed from the IMU frame to the vehicle frame:
     mrpt::math::TTwist3D imuReading;
     imuReading.wx = imu.get(mrpt::obs::TIMUDataIndex::IMU_WX);
     imuReading.wy = imu.get(mrpt::obs::TIMUDataIndex::IMU_WY);
     imuReading.wz = imu.get(mrpt::obs::TIMUDataIndex::IMU_WZ);
-
-    // Transform frames: IMU -> vehicle:
     imuReading.rotate(imu.sensorPose.asTPose());
 
+    // The reading is buffered, not fused right away: it is fused once some
+    // other call establishes the time of interest (a query or another
+    // measurement), and only if it is not newer than that time. The estimate
+    // returned for a given time is then a function of the measurement
+    // timestamps alone, and no longer of how many IMU readings happened to be
+    // delivered first, which is what makes concurrent sensor inputs
+    // reproducible.
+    state_.pending_imu.emplace(
+        imu.timestamp, State::PendingImu{imuReading.wx, imuReading.wy, imuReading.wz});
+
+    // Keep the buffer bounded in case nothing ever asks for an estimate:
+    const auto oldestToKeep =
+        state_.pending_imu.rbegin()->first - std::chrono::duration_cast<mrpt::Clock::duration>(
+                                                 std::chrono::duration<double>(kPendingImuMaxAge));
+    state_.pending_imu.erase(
+        state_.pending_imu.begin(), state_.pending_imu.lower_bound(oldestToKeep));
+}
+
+void StateEstimationSimple::fuse_pending_imu_up_to(const mrpt::Clock::time_point& upTo)
+{
     // IMU only observes angular velocity: preserve linear (vx,vy,vz) from the
     // last fuse_pose(). Pass a very large R for the linear components so the
     // filter gain for them is ~0 (no new information from this IMU reading).
     const double no_info = 1e9;
     const double var_ang = mrpt::square(params.sigma_imu_angular_velocity);
 
-    const double cur_vx = state_.last_twist.has_value() ? state_.last_twist->vx : 0.0;
-    const double cur_vy = state_.last_twist.has_value() ? state_.last_twist->vy : 0.0;
-    const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
-
-    const std::array<double, 6> z = {
-        cur_vx, cur_vy, cur_vz, imuReading.wx, imuReading.wy, imuReading.wz,
-    };
     const std::array<double, 6> R_diag = {
         no_info, no_info, no_info, var_ang, var_ang, var_ang,
     };
 
-    update_vel_filter(z, R_diag, imu.timestamp, "fuse_imu");
+    const auto itEnd = state_.pending_imu.upper_bound(upTo);
+    for (auto it = state_.pending_imu.begin(); it != itEnd; ++it)
+    {
+        const double cur_vx = state_.last_twist.has_value() ? state_.last_twist->vx : 0.0;
+        const double cur_vy = state_.last_twist.has_value() ? state_.last_twist->vy : 0.0;
+        const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
 
-    MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
+        const std::array<double, 6> z = {
+            cur_vx, cur_vy, cur_vz, it->second.wx, it->second.wy, it->second.wz,
+        };
+
+        update_vel_filter(z, R_diag, it->first, "fuse_imu");
+
+        MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
+    }
+    state_.pending_imu.erase(state_.pending_imu.begin(), itEnd);
+}
+
+void StateEstimationSimple::fuse_all_pending_imu()
+{
+    if (state_.pending_imu.empty())
+    {
+        return;
+    }
+    fuse_pending_imu_up_to(state_.pending_imu.rbegin()->first);
 }
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -632,6 +679,10 @@ void StateEstimationSimple::fuse_pose(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
+    // The IMU readings up to this measurement's own time belong before it in
+    // the filter; newer ones stay buffered (see fuse_imu()):
+    fuse_pending_imu_up_to(timestamp);
+
     // Numerical sanity: variances >= 0 (== 0 allowed for some components only)
     for (int i = 0; i < 6; i++) ASSERT_GE_(pose.cov(i, i), .0);
     ASSERT_GT_(pose.cov.trace(), .0);
@@ -737,6 +788,8 @@ void StateEstimationSimple::fuse_twist(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
+    fuse_pending_imu_up_to(timestamp);
+
     std::array<double, 6> z = {
         twist.vx, twist.vy, twist.vz, twist.wx, twist.wy, twist.wz,
     };
@@ -756,6 +809,10 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
     auto lck = std::scoped_lock(state_mtx_);
+
+    // Bring the filter up to the queried time, using only the IMU readings that
+    // precede it (see fuse_imu()):
+    fuse_pending_imu_up_to(timestamp);
 
     if (!state_.last_pose_obs_tim)
     {
@@ -953,9 +1010,12 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
     }
 }
 
-std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist() const
+std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist()
 {
     auto lck = std::scoped_lock(state_mtx_);
+
+    // No time of interest is given here, so everything received is fused:
+    fuse_all_pending_imu();
 
     return state_.last_twist;
 }
