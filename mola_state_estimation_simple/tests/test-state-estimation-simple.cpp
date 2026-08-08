@@ -1058,6 +1058,15 @@ void test_imu_arrival_order_independence()
     expectSameAs(alsoFuture, "Readings newer than the query time changed the estimate");
     expectSameAs(reversedArrival, "The delivery order changed the estimate");
 
+    // Two readings sharing a timestamp must both be fused, not one silently
+    // dropped in favor of the other:
+    auto withDuplicate = imuSamples;
+    withDuplicate.push_back(imuSamples[1]);
+    const auto duplicated = run(withDuplicate);
+    ASSERTMSG_(
+        duplicated.twist.wz != onlyPast.twist.wz,
+        "A reading sharing a timestamp with another one was dropped");
+
     // Sanity: the estimate did track the readings it was supposed to use, and
     // only those. The filter approaches, but does not reach, the measurement.
     ASSERT_GT_(onlyPast.twist.wz, 1.0);

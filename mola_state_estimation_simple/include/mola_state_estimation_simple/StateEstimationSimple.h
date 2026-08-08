@@ -202,8 +202,11 @@ class StateEstimationSimple : public mola::NavStateFilter
             double wz = 0;
         };
 
-        // IMU readings waiting to be fused, keyed and ordered by timestamp.
-        std::map<mrpt::Clock::time_point, PendingImu> pending_imu;
+        // IMU readings waiting to be fused, ordered by timestamp. A multimap,
+        // so that two readings sharing a timestamp are both kept: which of them
+        // is "the" reading for that instant is undecidable, and dropping one
+        // would silently discard data that used to be fused.
+        std::multimap<mrpt::Clock::time_point, PendingImu> pending_imu;
 
         // To be built from parameters strings when changed.
         RegexCache do_process_imu_labels_re;

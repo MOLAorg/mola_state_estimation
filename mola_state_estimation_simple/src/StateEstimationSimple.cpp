@@ -445,7 +445,8 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // timestamps alone, and no longer of how many IMU readings happened to be
     // delivered first, which is what makes concurrent sensor inputs
     // reproducible.
-    state_.pending_imu[imu.timestamp] = {imuReading.wx, imuReading.wy, imuReading.wz};
+    state_.pending_imu.emplace(
+        imu.timestamp, State::PendingImu{imuReading.wx, imuReading.wy, imuReading.wz});
 
     // Keep the buffer bounded in case nothing ever asks for an estimate:
     const auto oldestToKeep =
