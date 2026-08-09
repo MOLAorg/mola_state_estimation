@@ -1075,6 +1075,97 @@ void test_imu_arrival_order_independence()
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// reset() must not discard buffered, not-yet-fused IMU readings
+// --------------------------------------------------------------------------
+// reset() forgets the estimated past: the pose and twist history. Readings that
+// have been received but not yet fused are not part of that past, they describe
+// instants the filter has not reached yet. Discarding them would make the
+// estimate depend on whether a reading happened to be delivered just before or
+// just after the reset, which in a live system is decided by thread scheduling
+// rather than by the data.
+void test_imu_survives_reset()
+{
+    std::cout << "[Test] IMU buffered across reset()... ";
+
+    const std::vector<std::pair<double, double>> imuSamples = {
+        {1.1, 1.0}, {1.2, 2.0}, {1.3, 3.0}, {1.4, 4.0}};
+
+    const double queryTime = 1.25;  // in between the 2nd and the 3rd reading
+
+    const auto makeImu = [](double t, double wz)
+    {
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, wz);
+        imu.sensorPose = mrpt::poses::CPose3D::Identity();
+        return imu;
+    };
+
+    // Same readings and same query either way; the only difference is whether
+    // they were delivered before or after reset():
+    const auto run = [&](bool deliverBeforeReset)
+    {
+        mola::state_estimation_simple::StateEstimationSimple estimator;
+        estimator.initialize(get_default_config());
+
+        const auto feedImu = [&]()
+        {
+            for (const auto& [t, wz] : imuSamples)
+            {
+                estimator.fuse_imu(makeImu(t, wz));
+            }
+        };
+
+        if (deliverBeforeReset)
+        {
+            feedImu();
+        }
+
+        estimator.reset();
+
+        if (!deliverBeforeReset)
+        {
+            feedImu();
+        }
+
+        // Seeded after the reset, so both arms share the same pose history:
+        estimator.fuse_pose(
+            mrpt::Clock::fromDouble(0.0),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D::Identity(), mrpt::math::CMatrixDouble66::Identity()),
+            "map");
+        estimator.fuse_pose(
+            mrpt::Clock::fromDouble(1.0),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D(2.0, 0, 0), mrpt::math::CMatrixDouble66::Identity()),
+            "map");
+
+        auto st = estimator.estimated_navstate(mrpt::Clock::fromDouble(queryTime), "map");
+        ASSERT_(st.has_value());
+        return *st;
+    };
+
+    const auto deliveredBefore = run(true);
+    const auto deliveredAfter  = run(false);
+
+    ASSERTMSG_(
+        deliveredBefore.twist.wz == deliveredAfter.twist.wz,
+        "reset() discarded IMU readings that had been received but not yet fused");
+    ASSERTMSG_(
+        deliveredBefore.pose.mean == deliveredAfter.pose.mean,
+        "reset() changed the extrapolated pose");
+
+    // Sanity: the readings were actually used, so the check above is not
+    // trivially comparing two untouched zeros.
+    ASSERT_GT_(deliveredBefore.twist.wz, 1.0);
+    ASSERT_LT_(deliveredBefore.twist.wz, 2.0);
+
+    std::cout << "OK\n";
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -1091,6 +1182,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_velocity_kalman_filter();
         test_multirate_interleaved_velocity();
         test_imu_arrival_order_independence();
+        test_imu_survives_reset();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();

@@ -78,8 +78,18 @@ void StateEstimationSimple::reset()
 {
     auto lck = std::scoped_lock(state_mtx_);
 
+    // Buffered-but-unfused IMU readings survive the reset. They are sensor data
+    // for instants the filter has not reached yet, not part of the past this
+    // call exists to forget, and the next query consumes exactly the ones its
+    // own timestamp covers. Discarding them here would instead make the
+    // estimate depend on how many readings happened to be delivered before the
+    // reset ran, i.e. on thread scheduling rather than on the input.
+    auto pendingImu = std::move(state_.pending_imu);
+
     // reset:
     state_ = State();
+
+    state_.pending_imu = std::move(pendingImu);
 
     MRPT_LOG_INFO_STREAM("reset() called");
 }
