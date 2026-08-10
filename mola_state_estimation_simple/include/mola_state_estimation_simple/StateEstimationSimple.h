@@ -197,6 +197,14 @@ class StateEstimationSimple : public mola::NavStateFilter
         {
             std::optional<mrpt::poses::CPose3DPDFGaussian> last_pose;
             std::optional<mrpt::Clock::time_point>         last_obs_tim;
+
+            // Which frame `last_pose` is expressed in. Localization sources
+            // (fuse_pose) are in the map frame; 3D odometry sources keep their
+            // own, potentially offset, odometry frame. A change of the map
+            // frame must only be applied to the former: the latter keeps
+            // receiving observations in its original frame, and rebasing the
+            // stored anchor would corrupt the next delta.
+            bool in_map_frame = true;
         };
         std::map<std::string, SourceState> per_source;
 
