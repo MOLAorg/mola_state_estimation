@@ -1166,6 +1166,99 @@ void test_imu_survives_reset()
     std::cout << "OK\n";
 }
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
+// A change of the map frame must not disturb an odometry source, whose
+// observations keep arriving in their own, untouched, reference frame.
+void test_transform_frame_leaves_odometry_frame_alone()
+{
+    std::cout << "[Test] transform_frame() keeps odometry-frame sources... ";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(get_default_config());
+
+    const auto cov = mrpt::math::CMatrixDouble66::Identity();
+
+    auto send_wheel_odom = [&](double t, double x)
+    {
+        auto obs         = mrpt::obs::CObservationRobotPose::Create();
+        obs->timestamp   = mrpt::Clock::fromDouble(t);
+        obs->sensorLabel = "wheel_odom";
+        obs->pose        = mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(x, 0, 0), cov);
+        est.onNewObservation(obs);
+    };
+
+    // Two static observations, so that a (zero) twist exists and the state is
+    // queryable.
+    for (const double t : {0.0, 0.5})
+    {
+        est.fuse_pose(
+            mrpt::Clock::fromDouble(t),
+            mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov), "map");
+        send_wheel_odom(t, 0.0);
+    }
+
+    // Change the map frame, then let odometry advance 1 m in its own frame.
+    // The fused pose must move by exactly that 1 m as seen in the new map
+    // frame, i.e. no extra offset leaks in from `b`.
+    const auto b = mrpt::poses::CPose3D(1, 2, 3, 25.0_deg, 0.0_deg, 10.0_deg);
+    ASSERT_(est.transform_frame(b));
+
+    auto before = est.estimated_navstate(mrpt::Clock::fromDouble(0.5), "map");
+    ASSERT_(before.has_value());
+
+    send_wheel_odom(1.0, 1.0);
+
+    auto after = est.estimated_navstate(mrpt::Clock::fromDouble(1.0), "map");
+    ASSERT_(after.has_value());
+
+    const auto delta = after->pose.mean - before->pose.mean;
+    ASSERT_NEAR_(delta.x(), 1.0, 1e-6);
+    ASSERT_NEAR_(delta.y(), 0.0, 1e-6);
+    ASSERT_NEAR_(delta.z(), 0.0, 1e-6);
+
+    std::cout << "OK\n";
+}
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+// The ENU-to-map transform ends in the map frame, so a change of that frame
+// must carry it along; otherwise later GNSS fixes land in the stale frame.
+void test_transform_frame_updates_geo_reference()
+{
+    std::cout << "[Test] transform_frame() rebases the geo-reference... ";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(gnss_config());
+    est.set_geo_reference(identity_georef());
+
+    const auto b = mrpt::poses::CPose3D(1, 2, 3, 30.0_deg, 0.0_deg, 0.0_deg);
+    ASSERT_(est.transform_frame(b));
+
+    const auto g = est.get_geo_reference();
+    ASSERT_(g.has_value());
+    // The datum is a property of the Earth and must be untouched.
+    ASSERT_NEAR_(g->geo_coord.lat.decimal_value, kDatumLat, 1e-12);
+    ASSERT_NEAR_(g->geo_coord.lon.decimal_value, kDatumLon, 1e-12);
+    // T_enu_to_map was identity, so it must now be exactly `b`.
+    ASSERT_NEAR_(g->T_enu_to_map.mean.x(), b.x(), 1e-9);
+    ASSERT_NEAR_(g->T_enu_to_map.mean.y(), b.y(), 1e-9);
+    ASSERT_NEAR_(g->T_enu_to_map.mean.z(), b.z(), 1e-9);
+    ASSERT_NEAR_(g->T_enu_to_map.mean.yaw(), b.yaw(), 1e-9);
+
+    // A GNSS fix at the datum must therefore be placed at the origin of the
+    // NEW map frame, i.e. at `b`'s translation.
+    seed_anchor(est, mrpt::poses::CPose3D(20, 20, 20), 100.0);
+    est.fuse_gnss(make_gps(kDatumLat, kDatumLon, kDatumAlt, 0.05, 0.10, 0.1));
+
+    auto s = est.estimated_navstate(mrpt::Clock::fromDouble(0.05), "map");
+    ASSERT_(s.has_value());
+    ASSERT_NEAR_(s->pose.mean.x(), b.x(), 0.3);
+    ASSERT_NEAR_(s->pose.mean.y(), b.y(), 0.3);
+
+    std::cout << "OK\n";
+}
+#endif
+#endif
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -1192,6 +1285,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_gnss_disabled_ignores();
         test_gnss_bad_covariance_rejected();
         test_gnss_significant_3d_lever_arm();
+#endif
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
+        test_transform_frame_leaves_odometry_frame_alone();
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+        test_transform_frame_updates_geo_reference();
+#endif
 #endif
 
         std::cout << "\nAll StateEstimationSimple tests passed!\n";

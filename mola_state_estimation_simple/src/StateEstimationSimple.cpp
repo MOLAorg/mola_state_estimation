@@ -352,7 +352,8 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
         sensedPose = sensedPose + mrpt::poses::CPose3DPDFGaussian(-obs.sensorPose);
     }
 
-    auto& src = state_.per_source[odomName];
+    auto& src        = state_.per_source[odomName];
+    src.in_map_frame = false;
 
     // Compute and apply the incremental delta to last_pose, keeping it in the
     // LiDAR SLAM frame rather than replacing it with the absolute odom pose
@@ -707,7 +708,8 @@ void StateEstimationSimple::fuse_pose(
     // so that the derived twist reflects true ICP-to-ICP motion even when
     // fuse_odometry() / fuse_odometry_3d_pose() have modified last_pose in
     // between ICP scans.
-    auto& src = state_.per_source[frame_id];
+    auto& src        = state_.per_source[frame_id];
+    src.in_map_frame = true;
 
     double dt = 0;
     if (src.last_obs_tim)
@@ -814,6 +816,50 @@ void StateEstimationSimple::fuse_twist(
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist    = " << state_.last_twist->asString());
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
 }
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
+bool StateEstimationSimple::transform_frame(const mrpt::poses::CPose3D& b)
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    // Everything expressed in the map frame: the fused pose and the per-source
+    // last poses of map-frame sources, used to derive velocity from
+    // consecutive observations.
+    if (state_.last_pose)
+    {
+        state_.last_pose->changeCoordinatesReference(b);
+    }
+    for (auto& [name, src] : state_.per_source)
+    {
+        if (!src.in_map_frame || !src.last_pose)
+        {
+            continue;
+        }
+        src.last_pose->changeCoordinatesReference(b);
+    }
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+    // The ENU-to-map transform ends in the map frame, so it must follow it.
+    // The geodetic datum (geo_coord) is a property of the Earth, not of the
+    // map frame, hence left untouched.
+    if (geo_reference_)
+    {
+        geo_reference_->T_enu_to_map.changeCoordinatesReference(b);
+    }
+#endif
+
+    // Deliberately NOT touched: last_twist / last_twist_cov / vel_filter_P and
+    // the buffered IMU readings. All of them live in the vehicle's own frame
+    // (fuse_pose() derives velocity from `pose - previous_pose`, and
+    // estimated_navstate() extrapolates by right-composition), which a change
+    // of the map frame leaves invariant. Wheel-odometry readings are likewise
+    // in their own frame, and so are the odometry-frame entries skipped above.
+
+    MRPT_LOG_INFO_STREAM("transform_frame(): applied reference-frame change " << b);
+
+    return true;
+}
+#endif
 
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
