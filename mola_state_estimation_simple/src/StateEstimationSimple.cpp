@@ -815,6 +815,38 @@ void StateEstimationSimple::fuse_twist(
     MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
 }
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
+bool StateEstimationSimple::transform_frame(const mrpt::poses::CPose3D& b)
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    // Everything expressed in the map frame: the fused pose and the per-source
+    // last poses used to derive velocity from consecutive observations.
+    if (state_.last_pose)
+    {
+        state_.last_pose->changeCoordinatesReference(b);
+    }
+    for (auto& [name, src] : state_.per_source)
+    {
+        if (src.last_pose)
+        {
+            src.last_pose->changeCoordinatesReference(b);
+        }
+    }
+
+    // Deliberately NOT touched: last_twist / last_twist_cov / vel_filter_P and
+    // the buffered IMU readings. All of them live in the vehicle's own frame
+    // (fuse_pose() derives velocity from `pose - previous_pose`, and
+    // estimated_navstate() extrapolates by right-composition), which a change
+    // of the map frame leaves invariant. Wheel-odometry readings are likewise
+    // in their own frame.
+
+    MRPT_LOG_INFO_STREAM("transform_frame(): applied reference-frame change " << b);
+
+    return true;
+}
+#endif
+
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {

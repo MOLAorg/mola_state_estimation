@@ -131,6 +131,13 @@ class StateEstimationSimple : public mola::NavStateFilter
     std::optional<mola::Georeferencing> get_geo_reference() const override;
 #endif
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
+    /** Re-expresses the stored poses in a new reference frame (`p` -> `b + p`).
+     *  Every velocity held here is in the vehicle's own frame, so a change of
+     *  the map frame leaves the twist and its covariance untouched. */
+    bool transform_frame(const mrpt::poses::CPose3D& b) override;
+#endif
+
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
