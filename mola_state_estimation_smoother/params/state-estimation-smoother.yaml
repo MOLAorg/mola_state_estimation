@@ -102,16 +102,16 @@ params:
   # this is safe for both real-time and offline/reproducible runs.
   odometry_min_sample_period: ${MOLA_ODOMETRY_MIN_SAMPLE_PERIOD|0.1}
 
-  # Wheel-odometry motion-model noise (Thrun-style: grows with the distance
-  # travelled / angle turned over each increment, rather than a fixed per-step
-  # sigma). Defaults match MRPT's CActionRobotMovement2D Gaussian model,
-  # except for the min_std floors, kept tighter here. Lower a1..a4 for
-  # platforms with accurate encoders and no wheel slip; raise for loose
-  # terrain (mud, gravel, vegetation).
+  # Wheel-odometry motion-model noise (MRPT's mmGaussian model: grows with
+  # the distance traveled / angle turned over each increment, rather than a
+  # fixed per-step sigma). Defaults match MRPT's CActionRobotMovement2D
+  # Gaussian model, except for the min_std floors, kept tighter here. Lower
+  # a1..a4 for platforms with accurate encoders and no wheel slip; raise for
+  # loose terrain (mud, gravel, vegetation).
   odom_motion_model_a1: ${MOLA_ODOM_MOTION_MODEL_A1|0.01} # [m/m]
-  odom_motion_model_a2: ${MOLA_ODOM_MOTION_MODEL_A2|0.05729577951} # MRPT default: RAD2DEG(0.001)
-  odom_motion_model_a3: ${MOLA_ODOM_MOTION_MODEL_A3|0.017453292519943295} # MRPT default: DEG2RAD(1.0)
-  odom_motion_model_a4: ${MOLA_ODOM_MOTION_MODEL_A4|0.05} # [m/rad]
+  odom_motion_model_a2: ${MOLA_ODOM_MOTION_MODEL_A2|0.05729577951} # [m/deg] MRPT default: RAD2DEG(0.001)
+  odom_motion_model_a3: ${MOLA_ODOM_MOTION_MODEL_A3|0.017453292519943295} # [deg/m] MRPT default: DEG2RAD(1.0)
+  odom_motion_model_a4: ${MOLA_ODOM_MOTION_MODEL_A4|0.05} # [deg/deg]
   odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m]
   odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg]
 

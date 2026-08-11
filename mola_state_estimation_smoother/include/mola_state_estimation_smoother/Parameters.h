@@ -157,20 +157,20 @@ class Parameters
      */
     double odometry_min_sample_period = 0.0;  // [s]
 
-    /** \name Wheel-odometry motion-model noise (fuse_odometry(), Thrun-style
-     *  proportional model over each odometry increment: noise grows with the
-     *  distance travelled / angle turned, rather than being a fixed per-step
-     *  sigma). Defaults match MRPT's CActionRobotMovement2D Gaussian model
-     *  defaults except for the min_std floors, which are kept tighter here
-     *  (a wheel encoder's near-zero-motion noise floor is well below MRPT's
-     *  general-purpose default). Lower a1..a4 for platforms with accurate
-     *  encoders and no wheel slip; raise for loose terrain.
+    /** \name Wheel-odometry motion-model noise (fuse_odometry(), MRPT's
+     *  mmGaussian proportional model over each odometry increment: noise
+     *  grows with the distance traveled / angle turned, rather than being a
+     *  fixed per-step sigma). Defaults match MRPT's CActionRobotMovement2D
+     *  Gaussian model defaults except for the min_std floors, which are kept
+     *  tighter here (a wheel encoder's near-zero-motion noise floor is well
+     *  below MRPT's general-purpose default). Lower a1..a4 for platforms
+     *  with accurate encoders and no wheel slip; raise for loose terrain.
      *  @{ */
-    double odom_motion_model_a1 = 0.01;  // [m/m] noise growth per m translated
-    double odom_motion_model_a2 = 0.05729577951;  // MRPT default: RAD2DEG(0.001)
+    double odom_motion_model_a1 = 0.01;  // [m/m] noise growth per m traveled
+    double odom_motion_model_a2 = 0.05729577951;  // [m/deg] MRPT default: RAD2DEG(0.001)
     double odom_motion_model_a3 =
-        0.017453292519943295;  // MRPT default: DEG2RAD(1.0), noise growth per rad rotated
-    double odom_motion_model_a4              = 0.05;  // [m/rad]
+        0.017453292519943295;  // [deg/m] MRPT default: DEG2RAD(1.0), noise growth per m traveled
+    double odom_motion_model_a4              = 0.05;  // [deg/deg] noise growth per deg rotated
     double odom_motion_model_min_std_xy      = 1e-3;  // [m]
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg]
     /** @} */

@@ -776,6 +776,25 @@ void StateEstimationSimple::fuse_pose(
             << state_.last_twist_cov->asString());
     }
 
+    // Drop a PRE-ANCHOR odometry baseline: fuse_odometry() can be called
+    // before the first fuse_pose() ever runs (odometry usually starts
+    // streaming immediately, LiDAR ICP needs a scan first), in which case
+    // it already skips applying an increment (no last_pose to add it to)
+    // but still records state_.last_odom_obs as a baseline. Once this,
+    // the FIRST pose, is accepted below, that baseline predates the anchor
+    // -- the next fuse_odometry() call would otherwise apply the delta
+    // spanning that whole pre-anchor gap onto the fresh pose. Only the
+    // first-ever pose needs this: once an odom baseline is established
+    // AFTER a pose already exists, subsequent fuse_pose() calls (periodic
+    // ICP corrections) must NOT reset it, or the odometry chain never gets
+    // to dead-reckon between them -- see test_odometry_fusion(), which
+    // fuse_pose()s twice before relying on the odometry increment still
+    // being anchored to the first call's baseline.
+    if (!state_.last_pose.has_value())
+    {
+        state_.last_odom_obs.reset();
+    }
+
     src.last_pose    = pose;
     src.last_obs_tim = timestamp;
 
