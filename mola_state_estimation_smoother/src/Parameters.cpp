@@ -60,6 +60,13 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, odometry_min_sample_period);
     MCP_LOAD_OPT(cfg, imu_min_sample_period);
 
+    MCP_LOAD_OPT(cfg, odom_motion_model_a1);
+    MCP_LOAD_OPT(cfg, odom_motion_model_a2);
+    MCP_LOAD_OPT(cfg, odom_motion_model_a3);
+    MCP_LOAD_OPT(cfg, odom_motion_model_a4);
+    MCP_LOAD_OPT(cfg, odom_motion_model_min_std_xy);
+    MCP_LOAD_OPT(cfg, odom_motion_model_min_std_phi_deg);
+
     MCP_LOAD_OPT(cfg, async_backend);
     MCP_LOAD_OPT(cfg, fast_predictor_buffer_length);
 

@@ -314,8 +314,8 @@ void StateEstimationSimple::fuse_odometry(
         // 2D odometry measures vx, vy, wz only. Pass large R for the
         // unmeasured components (vz, wx, wy) so the filter gain is ~0 for them.
         const double no_info = 1e9;
-        const double var_xyz = mrpt::square(0.1);  // [m²/s²]
-        const double var_rot = mrpt::square(0.05);  // [rad²/s²]
+        const double var_xyz = mrpt::square(params.sigma_wheel_odom_linear_vel);  // [m²/s²]
+        const double var_rot = mrpt::square(params.sigma_wheel_odom_angular_vel);  // [rad²/s²]
 
         const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
         const double cur_wx = state_.last_twist.has_value() ? state_.last_twist->wx : 0.0;

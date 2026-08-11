@@ -53,6 +53,19 @@ class Parameters
 
     double sigma_imu_angular_velocity = 0.05;  // [rad/s]
 
+    /** \name Wheel-odometry velocity fusion (fuse_odometry(), CObservationOdometry
+     *  readings with hasVelocities=true)
+     *  Kept tighter than sigma_relative_pose_linear/angular by default: wheel
+     *  encoders give a direct, uncontaminated velocity reading over one control
+     *  cycle, unlike a pose difference derived from ICP or another lower-rate
+     *  source. Lower further for platforms with known-accurate encoders and no
+     *  wheel slip; raise for loose terrain (mud, gravel, vegetation) where slip
+     *  makes the reading less trustworthy than these defaults assume.
+     *  @{ */
+    double sigma_wheel_odom_linear_vel  = 0.1;  // [m/s]
+    double sigma_wheel_odom_angular_vel = 0.05;  // [rad/s]
+    /** @} */
+
     /** If true, velocity estimates are smoothed via a per-component scalar
      *  Kalman filter. The process noise reuses
      *  sigma_random_walk_acceleration_linear/angular [m/s^2, rad/s^2], and
