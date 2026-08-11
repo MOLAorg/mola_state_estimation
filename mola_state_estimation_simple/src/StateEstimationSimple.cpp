@@ -314,8 +314,8 @@ void StateEstimationSimple::fuse_odometry(
         // 2D odometry measures vx, vy, wz only. Pass large R for the
         // unmeasured components (vz, wx, wy) so the filter gain is ~0 for them.
         const double no_info = 1e9;
-        const double var_xyz = mrpt::square(0.1);  // [m²/s²]
-        const double var_rot = mrpt::square(0.05);  // [rad²/s²]
+        const double var_xyz = mrpt::square(params.sigma_wheel_odom_linear_vel);  // [m²/s²]
+        const double var_rot = mrpt::square(params.sigma_wheel_odom_angular_vel);  // [rad²/s²]
 
         const double cur_vz = state_.last_twist.has_value() ? state_.last_twist->vz : 0.0;
         const double cur_wx = state_.last_twist.has_value() ? state_.last_twist->wx : 0.0;
@@ -774,6 +774,25 @@ void StateEstimationSimple::fuse_pose(
         MRPT_LOG_DEBUG_STREAM(
             "fuse_pose(): twist_cov after=\n"
             << state_.last_twist_cov->asString());
+    }
+
+    // Drop a PRE-ANCHOR odometry baseline: fuse_odometry() can be called
+    // before the first fuse_pose() ever runs (odometry usually starts
+    // streaming immediately, LiDAR ICP needs a scan first), in which case
+    // it already skips applying an increment (no last_pose to add it to)
+    // but still records state_.last_odom_obs as a baseline. Once this,
+    // the FIRST pose, is accepted below, that baseline predates the anchor
+    // -- the next fuse_odometry() call would otherwise apply the delta
+    // spanning that whole pre-anchor gap onto the fresh pose. Only the
+    // first-ever pose needs this: once an odom baseline is established
+    // AFTER a pose already exists, subsequent fuse_pose() calls (periodic
+    // ICP corrections) must NOT reset it, or the odometry chain never gets
+    // to dead-reckon between them -- see test_odometry_fusion(), which
+    // fuse_pose()s twice before relying on the odometry increment still
+    // being anchored to the first call's baseline.
+    if (!state_.last_pose.has_value())
+    {
+        state_.last_odom_obs.reset();
     }
 
     src.last_pose    = pose;

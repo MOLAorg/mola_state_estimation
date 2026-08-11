@@ -157,6 +157,40 @@ class Parameters
      */
     double odometry_min_sample_period = 0.0;  // [s]
 
+    /** \name Wheel-odometry motion-model noise (fuse_odometry(), MRPT's
+     *  mmGaussian proportional model over each odometry increment: noise
+     *  grows with the distance traveled / angle turned, rather than being a
+     *  fixed per-step sigma). Defaults match MRPT's CActionRobotMovement2D
+     *  Gaussian model defaults. Lower a1..a4 for platforms with accurate
+     *  encoders and no wheel slip; raise for loose terrain.
+     *
+     *  Units, verified against MRPT's computeFromOdometry_modelGaussian()
+     *  implementation directly (its own header/docs comment says a2 [m/deg]
+     *  and a3 [deg/m], which is WRONG -- the implementation multiplies a2
+     *  and a3 by CPose2D::phi(), which is radians, not by a degrees
+     *  conversion of it):
+     *    sigma_xy  = minStdXY  + a1*|translation| + a2*|rotation_rad|
+     *    sigma_phi = minStdPHI + a3*|translation| + a4*|rotation_rad|
+     *  So a1 [m/m], a2 [m/rad], a3 [rad/m], a4 [rad/rad] (dimensionless
+     *  either way). Don't trust a docs-only cross-check for this MRPT
+     *  struct; the implementation is the source of truth.
+     *
+     *  min_std_xy/min_std_phi_deg are NOT the effective floor in practice:
+     *  fuse_odometry_locked() adds a further +1e-4 to every diagonal
+     *  covariance entry after this model runs (an independent numerical
+     *  regularizer, unrelated to these two fields), i.e. sigma >= 0.01 m /
+     *  0.01 rad (~0.57 deg) regardless of what these are set to. Tuning
+     *  either below that is a no-op today.
+     *  @{ */
+    double odom_motion_model_a1 = 0.01;  // [m/m] noise growth per m traveled
+    double odom_motion_model_a2 = 0.05729577951;  // [m/rad] MRPT default: RAD2DEG(0.001)
+    double odom_motion_model_a3 =
+        0.017453292519943295;  // [rad/m] MRPT default: DEG2RAD(1.0), noise growth per m traveled
+    double odom_motion_model_a4              = 0.05;  // [rad/rad] noise growth per rad rotated
+    double odom_motion_model_min_std_xy      = 1e-3;  // [m] -- see effective-floor note above
+    double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
+    /** @} */
+
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.
      * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so

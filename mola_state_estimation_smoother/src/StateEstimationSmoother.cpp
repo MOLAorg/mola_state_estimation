@@ -647,8 +647,13 @@ void StateEstimationSmoother::fuse_odometry_locked(
     // Use a probabilistic motion model:
     mrpt::obs::CActionRobotMovement2D odoAct;
     odoAct.motionModelConfiguration.modelSelection = mrpt::obs::CActionRobotMovement2D::mmGaussian;
-    odoAct.motionModelConfiguration.gaussianModel.minStdXY  = 1e-3;
-    odoAct.motionModelConfiguration.gaussianModel.minStdPHI = mrpt::DEG2RAD(0.1);
+    odoAct.motionModelConfiguration.gaussianModel.a1       = params_.odom_motion_model_a1;
+    odoAct.motionModelConfiguration.gaussianModel.a2       = params_.odom_motion_model_a2;
+    odoAct.motionModelConfiguration.gaussianModel.a3       = params_.odom_motion_model_a3;
+    odoAct.motionModelConfiguration.gaussianModel.a4       = params_.odom_motion_model_a4;
+    odoAct.motionModelConfiguration.gaussianModel.minStdXY = params_.odom_motion_model_min_std_xy;
+    odoAct.motionModelConfiguration.gaussianModel.minStdPHI =
+        mrpt::DEG2RAD(params_.odom_motion_model_min_std_phi_deg);
 
     const auto odometryIncrement = odom.odometry - lastOdom;
 

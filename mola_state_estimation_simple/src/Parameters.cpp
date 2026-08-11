@@ -36,6 +36,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, sigma_imu_angular_velocity);
 
+    MCP_LOAD_OPT(cfg, sigma_wheel_odom_linear_vel);
+    MCP_LOAD_OPT(cfg, sigma_wheel_odom_angular_vel);
+
     MCP_LOAD_OPT(cfg, velocity_filter_enabled);
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);

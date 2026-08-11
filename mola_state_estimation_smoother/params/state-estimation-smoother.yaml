@@ -102,6 +102,24 @@ params:
   # this is safe for both real-time and offline/reproducible runs.
   odometry_min_sample_period: ${MOLA_ODOMETRY_MIN_SAMPLE_PERIOD|0.1}
 
+  # Wheel-odometry motion-model noise (MRPT's mmGaussian model: grows with
+  # the distance traveled / angle turned over each increment, rather than a
+  # fixed per-step sigma). Defaults match MRPT's CActionRobotMovement2D
+  # Gaussian model. Lower a1..a4 for platforms with accurate encoders and no
+  # wheel slip; raise for loose terrain (mud, gravel, vegetation).
+  # Units verified against MRPT's implementation, not its (wrong) docs
+  # comment: a2/a3 multiply CPose2D::phi(), which is radians -- see
+  # Parameters.h's fuller note. min_std_xy/min_std_phi_deg are NOT the
+  # effective floor: fuse_odometry_locked() adds a further +1e-4 to every
+  # diagonal covariance entry afterwards, i.e. sigma >= 0.01 m / ~0.57 deg
+  # regardless of these two values.
+  odom_motion_model_a1: ${MOLA_ODOM_MOTION_MODEL_A1|0.01} # [m/m]
+  odom_motion_model_a2: ${MOLA_ODOM_MOTION_MODEL_A2|0.05729577951} # [m/rad] MRPT default: RAD2DEG(0.001)
+  odom_motion_model_a3: ${MOLA_ODOM_MOTION_MODEL_A3|0.017453292519943295} # [rad/m] MRPT default: DEG2RAD(1.0)
+  odom_motion_model_a4: ${MOLA_ODOM_MOTION_MODEL_A4|0.05} # [rad/rad]
+  odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m], see effective-floor note above
+  odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg], see effective-floor note above
+
   # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
   # arriving less than this after the last processed one are skipped (attitude/
   # gravity are absolute, so nothing is accumulated). 0 = disabled. Default 0.1.

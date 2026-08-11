@@ -157,6 +157,87 @@ void test_odometry_fusion()
 }
 
 // --------------------------------------------------------------------------
+// Test 2b: Pre-anchor odometry is discarded, not carried across fuse_pose()
+// --------------------------------------------------------------------------
+// Odometry can start streaming before the first LiDAR pose is ever fused
+// (fuse_odometry() is called with no last_pose yet, so it records a baseline
+// but applies no increment). That baseline must not survive past the first
+// fuse_pose(): otherwise the next post-anchor odometry reading computes its
+// delta against a pre-anchor value, injecting motion that predates the
+// anchor into the fresh pose.
+void test_pre_anchor_odometry_discarded()
+{
+    std::cout << "[Test 2b] Pre-anchor odometry discarded at first fuse_pose()... ";
+
+    mola::state_estimation_simple::StateEstimationSimple estimator;
+    estimator.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
+    estimator.initialize(get_default_config());
+
+    // 1. Odometry arrives BEFORE any pose: records a baseline, no last_pose
+    //    to apply an increment to yet.
+    {
+        mrpt::obs::CObservationOdometry odom;
+        odom.timestamp = mrpt::Clock::fromDouble(0.0);
+        odom.odometry  = mrpt::poses::CPose2D::Identity();
+        estimator.fuse_odometry(odom);
+    }
+    // 2. More pre-anchor motion: if this baseline survived to after the
+    //    anchor, the next post-anchor reading would jump by ~5m.
+    {
+        mrpt::obs::CObservationOdometry odom;
+        odom.timestamp = mrpt::Clock::fromDouble(0.5);
+        odom.odometry  = mrpt::poses::CPose2D(5.0, 0, 0);
+        estimator.fuse_odometry(odom);
+    }
+
+    // 3. First LiDAR pose ever: the anchor. A second call at the same
+    //    position follows immediately, purely so estimated_navstate() below
+    //    has a twist to work with (it needs two consecutive per-source poses
+    //    to compute one, per fuse_pose()'s own logic) -- unrelated to what
+    //    this test is actually checking.
+    estimator.fuse_pose(
+        mrpt::Clock::fromDouble(1.0),
+        mrpt::poses::CPose3DPDFGaussian(
+            mrpt::poses::CPose3D::Identity(), mrpt::math::CMatrixDouble66::Identity()),
+        "map");
+    estimator.fuse_pose(
+        mrpt::Clock::fromDouble(1.05),
+        mrpt::poses::CPose3DPDFGaussian(
+            mrpt::poses::CPose3D::Identity(), mrpt::math::CMatrixDouble66::Identity()),
+        "map");
+
+    // 4. First post-anchor odometry reading: must only re-establish the
+    //    baseline (no increment applied yet), NOT jump by "0.1 - 5.0".
+    {
+        mrpt::obs::CObservationOdometry odom;
+        odom.timestamp = mrpt::Clock::fromDouble(1.1);
+        odom.odometry  = mrpt::poses::CPose2D(0.1, 0, 0);
+        estimator.fuse_odometry(odom);
+    }
+    {
+        auto stateOpt = estimator.estimated_navstate(mrpt::Clock::fromDouble(1.1), "map");
+        ASSERT_(stateOpt.has_value());
+        ASSERT_NEAR_(stateOpt->pose.mean.x(), 0.0, 1e-3);
+    }
+
+    // 5. Second post-anchor reading: NOW a real 0.1m increment applies,
+    //    relative to step 4's baseline.
+    {
+        mrpt::obs::CObservationOdometry odom;
+        odom.timestamp = mrpt::Clock::fromDouble(1.2);
+        odom.odometry  = mrpt::poses::CPose2D(0.2, 0, 0);
+        estimator.fuse_odometry(odom);
+    }
+    {
+        auto stateOpt = estimator.estimated_navstate(mrpt::Clock::fromDouble(1.2), "map");
+        ASSERT_(stateOpt.has_value());
+        ASSERT_NEAR_(stateOpt->pose.mean.x(), 0.1, 1e-3);
+    }
+
+    std::cout << "OK\n";
+}
+
+// --------------------------------------------------------------------------
 // Test 3: IMU Fusion (Angular Velocity)
 // --------------------------------------------------------------------------
 // The simple estimator uses IMU to overwrite the angular velocity (twist)
@@ -1267,6 +1348,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     {
         test_pose_and_twist();
         test_odometry_fusion();
+        test_pre_anchor_odometry_discarded();
         test_imu_angular_velocity();
         test_planar_motion();
         test_gnss_ignored();
