@@ -56,6 +56,12 @@ Key traits:
   of interest, fuses everything buffered. So the estimate for a given time is a
   function of the measurement timestamps, not of the delivery order: a pipeline
   feeding this estimator from concurrent sensor threads stays reproducible.
+- `params.initial_twist` (`MOLA_INITIAL_VX` in the shipped YAML) seeds
+  `state_.last_twist` on `initialize()`/`reset()`, for datasets that start
+  already in motion (e.g. highway-speed KITTI). The seed survives the very
+  first `fuse_pose()` call (which would otherwise reset the twist, having no
+  per-source pose history yet) but is discarded unconditionally as soon as any
+  real velocity measurement is fused (`state_.twist_is_unconsumed_seed`).
 
 ### 2. `mola_state_estimation_smoother`
 

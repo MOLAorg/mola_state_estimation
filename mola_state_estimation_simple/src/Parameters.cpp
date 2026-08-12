@@ -61,6 +61,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
             tw[i] = seq.at(i).as<double>();
         }
     }
+
+    MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
+    MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
 }
 
 }  // namespace mola::state_estimation_simple

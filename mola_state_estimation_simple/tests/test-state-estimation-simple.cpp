@@ -1166,6 +1166,90 @@ void test_imu_survives_reset()
     std::cout << "OK\n";
 }
 
+// --------------------------------------------------------------------------
+// Test: initial_twist seed (MOLA_INITIAL_VX)
+// --------------------------------------------------------------------------
+// A dataset that starts already in motion (e.g. a highway-speed KITTI
+// sequence) configures params.initial_twist so the very first ICP prior
+// already assumes forward motion, instead of waiting for two ICP poses to
+// derive a velocity. Regression covered here: initial_twist used to be parsed
+// but never applied to state_.last_twist, and even when seeded, the very
+// first fuse_pose() call unconditionally reset the twist to "unknown" (it has
+// no per-source pose history yet), wiping the seed out before it could ever
+// be used to extrapolate.
+void test_initial_twist_seed()
+{
+    std::cout << "[Test] initial_twist seed (MOLA_INITIAL_VX)... ";
+
+    const char* yaml_text = R"###(
+params:
+    max_time_to_use_velocity_model: 2.0
+    sigma_random_walk_acceleration_linear: 1.0
+    sigma_random_walk_acceleration_angular: 1.0
+    sigma_relative_pose_linear: 0.1
+    sigma_relative_pose_angular: 0.1
+    sigma_imu_angular_velocity: 0.05
+    enforce_planar_motion: false
+    initial_twist: [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+)###";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+    // (a) Right after initialize(), the seed must be visible with no
+    // observations fused at all.
+    {
+        auto tw = est.get_last_twist();
+        ASSERT_(tw.has_value());
+        ASSERT_NEAR_(tw->vx, 5.0, 1e-9);
+    }
+
+    // (b) The FIRST fuse_pose() call ever must not wipe out the seed: this
+    // source has no prior pose of its own yet, which is exactly the branch
+    // that used to unconditionally reset the twist.
+    est.fuse_pose(
+        mrpt::Clock::fromDouble(0.0),
+        mrpt::poses::CPose3DPDFGaussian(
+            mrpt::poses::CPose3D::Identity(), mrpt::math::CMatrixDouble66::Identity()),
+        "map");
+    {
+        auto tw = est.get_last_twist();
+        ASSERT_(tw.has_value());
+        ASSERT_NEAR_(tw->vx, 5.0, 1e-9);
+    }
+
+    // (c) estimated_navstate() extrapolates using the seeded twist from the
+    // single known pose: x = 0 + 5.0 * 0.5 = 2.5.
+    {
+        auto s = est.estimated_navstate(mrpt::Clock::fromDouble(0.5), "map");
+        ASSERT_(s.has_value());
+        ASSERT_NEAR_(s->pose.mean.x(), 2.5, 1e-3);
+    }
+
+    // (d) Once a real velocity measurement arrives (second ICP pose, true
+    // speed 2.0 m/s), it must overwrite the seed unconditionally.
+    est.fuse_pose(
+        mrpt::Clock::fromDouble(1.0),
+        mrpt::poses::CPose3DPDFGaussian(
+            mrpt::poses::CPose3D(2.0, 0, 0), mrpt::math::CMatrixDouble66::Identity()),
+        "map");
+    {
+        auto tw = est.get_last_twist();
+        ASSERT_(tw.has_value());
+        ASSERT_NEAR_(tw->vx, 2.0, 1e-3);
+    }
+
+    // (e) reset() must re-seed the initial twist (params are not cleared).
+    est.reset();
+    {
+        auto tw = est.get_last_twist();
+        ASSERT_(tw.has_value());
+        ASSERT_NEAR_(tw->vx, 5.0, 1e-9);
+    }
+
+    std::cout << "OK\n";
+}
+
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
 // A change of the map frame must not disturb an odometry source, whose
 // observations keep arriving in their own, untouched, reference frame.
@@ -1276,6 +1360,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_multirate_interleaved_velocity();
         test_imu_arrival_order_independence();
         test_imu_survives_reset();
+        test_initial_twist_seed();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();
