@@ -285,12 +285,29 @@ void StateEstimationSimple::update_vel_filter(
             continue;
         }
 
-        // Bootstrap this component on its first observation (or after a twist
-        // reset cleared the per-component clocks).
-        if (!state_.vel_filter_last_tim[i].has_value() || !state_.last_twist.has_value())
+        // True bootstrap: nothing seeded and nothing observed yet for this
+        // component, so there is nothing to blend with.
+        if (!state_.last_twist.has_value())
         {
             v[i]                          = z[i];
             state_.vel_filter_P[i]        = R_diag[i];
+            state_.vel_filter_last_tim[i] = tim;
+            continue;
+        }
+
+        // Seeded (params.initial_twist) but never observed: blend this first
+        // real measurement with the seed via its own covariance instead of
+        // overwriting it outright. No process-noise growth is applied since
+        // the seed carries no observation time to measure its age from.
+        if (!state_.vel_filter_last_tim[i].has_value())
+        {
+            const double denom = state_.vel_filter_P[i] + R_diag[i];
+            if (denom > kEps)
+            {
+                const double K = state_.vel_filter_P[i] / denom;
+                v[i] += K * (z[i] - v[i]);
+                state_.vel_filter_P[i] *= (1.0 - K);
+            }
             state_.vel_filter_last_tim[i] = tim;
             continue;
         }
