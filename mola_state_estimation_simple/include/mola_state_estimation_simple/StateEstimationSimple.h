@@ -178,6 +178,14 @@ class StateEstimationSimple : public mola::NavStateFilter
         // Indices 0-2: linear (vx,vy,vz), 3-5: angular (wx,wy,wz).
         std::array<double, 6> vel_filter_P = {1e4, 1e4, 1e4, 1e4, 1e4, 1e4};
 
+        // Whether each component's vel_filter_P above came from
+        // seedInitialTwistFromParams() rather than the uninformative default.
+        // Needed to tell apart, on a component's first-ever observation,
+        // whether it must blend with a real seed or bootstrap outright: once
+        // ANY component has been observed, state_.last_twist itself is no
+        // longer a reliable "was this seeded" signal for the OTHER components.
+        std::array<bool, 6> vel_filter_seeded = {false, false, false, false, false, false};
+
         // Per-component last-update time. Each velocity component keeps its own
         // clock so sources with very different rates and timestamp conventions
         // do not starve each other: a source only advances the clock of the

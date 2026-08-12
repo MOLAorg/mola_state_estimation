@@ -120,7 +120,8 @@ void StateEstimationSimple::seedInitialTwistFromParams()
         cov(i, i) = var_ang;
     }
 
-    state_.vel_filter_P = {var_lin, var_lin, var_lin, var_ang, var_ang, var_ang};
+    state_.vel_filter_P      = {var_lin, var_lin, var_lin, var_ang, var_ang, var_ang};
+    state_.vel_filter_seeded = {true, true, true, true, true, true};
 }
 
 namespace
@@ -285,9 +286,13 @@ void StateEstimationSimple::update_vel_filter(
             continue;
         }
 
-        // True bootstrap: nothing seeded and nothing observed yet for this
-        // component, so there is nothing to blend with.
-        if (!state_.last_twist.has_value())
+        // True bootstrap: this component was neither seeded by
+        // params.initial_twist nor observed yet, so there is nothing to
+        // blend with. Checked per-component (not via state_.last_twist,
+        // which becomes non-empty as soon as ANY component is observed and
+        // would otherwise make sibling, still-unseeded components blend with
+        // an uninformative default instead of bootstrapping outright).
+        if (!state_.vel_filter_seeded[i] && !state_.vel_filter_last_tim[i].has_value())
         {
             v[i]                          = z[i];
             state_.vel_filter_P[i]        = R_diag[i];
@@ -299,7 +304,7 @@ void StateEstimationSimple::update_vel_filter(
         // real measurement with the seed via its own covariance instead of
         // overwriting it outright. No process-noise growth is applied since
         // the seed carries no observation time to measure its age from.
-        if (!state_.vel_filter_last_tim[i].has_value())
+        if (state_.vel_filter_seeded[i] && !state_.vel_filter_last_tim[i].has_value())
         {
             const double denom = state_.vel_filter_P[i] + R_diag[i];
             if (denom > kEps)
@@ -812,7 +817,8 @@ void StateEstimationSimple::fuse_pose(
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();
-        state_.vel_filter_P = State().vel_filter_P;
+        state_.vel_filter_P      = State().vel_filter_P;
+        state_.vel_filter_seeded = State().vel_filter_seeded;
         for (auto& t : state_.vel_filter_last_tim)
         {
             t.reset();
