@@ -65,6 +65,8 @@ void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
     // Load params:
     params.loadFrom(cfg["params"]);
 
+    seedInitialTwistFromParams();
+
     // Initialize parent:
     mola::NavStateFilter::initialize(cfg);
 }
@@ -91,7 +93,34 @@ void StateEstimationSimple::reset()
 
     state_.pending_imu = std::move(pendingImu);
 
+    seedInitialTwistFromParams();
+
     MRPT_LOG_INFO_STREAM("reset() called");
+}
+
+void StateEstimationSimple::seedInitialTwistFromParams()
+{
+    if (params.initial_twist == mrpt::math::TTwist3D())
+    {
+        return;  // nothing configured, keep the legacy "unknown velocity" state
+    }
+
+    state_.last_twist = params.initial_twist;
+
+    auto&        cov     = state_.last_twist_cov.emplace();
+    const double var_lin = mrpt::square(params.initial_twist_sigma_lin);
+    const double var_ang = mrpt::square(params.initial_twist_sigma_ang);
+    cov.setZero();
+    for (int i = 0; i < 3; i++)
+    {
+        cov(i, i) = var_lin;
+    }
+    for (int i = 3; i < 6; i++)
+    {
+        cov(i, i) = var_ang;
+    }
+
+    state_.vel_filter_P = {var_lin, var_lin, var_lin, var_ang, var_ang, var_ang};
 }
 
 namespace
@@ -753,8 +782,16 @@ void StateEstimationSimple::fuse_pose(
 
         update_vel_filter(z, R_diag, timestamp, "fuse_pose");
     }
-    else
+    else if (src.last_pose.has_value())
     {
+        // dt <= 0 or dt >= max_time_to_use_velocity_model for a source that DID
+        // have a prior pose: a genuine reason to distrust whatever twist is
+        // currently held. When src.last_pose has no value at all (the very
+        // first fuse_pose() call ever for this source), there is simply
+        // nothing new to compute here, so any twist already held -- from
+        // params.initial_twist, or from a real fuse_twist()/fuse_odometry()/
+        // fuse_imu() measurement fused before this source's first pose -- is
+        // left untouched instead of being wiped out.
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();

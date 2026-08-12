@@ -237,6 +237,11 @@ class StateEstimationSimple : public mola::NavStateFilter
     void fuse_odometry_3d_pose(
         const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName);
 
+    /** If params.initial_twist is non-zero, seeds state_.last_twist (and its
+     *  covariance) with it. Called from initialize() and reset(). Must be
+     *  called with state_mtx_ already held. */
+    void seedInitialTwistFromParams();
+
     /** Applies a scalar Kalman predict+update step to each velocity component.
      *  When velocity_filter_enabled is false this is a plain write-through.
      *  Must be called with state_mtx_ already held. */
