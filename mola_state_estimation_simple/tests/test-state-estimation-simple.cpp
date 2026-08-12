@@ -1308,16 +1308,22 @@ params:
     }
 
     // (d) Once a real velocity measurement arrives (second ICP pose, true
-    // speed 2.0 m/s), it must overwrite the seed unconditionally.
+    // speed 2.0 m/s), it is blended with the seed via their respective
+    // covariances rather than overwritten outright. With the default seed
+    // sigma (20 m/s, i.e. var=400) versus the measurement's var=0.01, the
+    // seed carries almost no weight, so the blended result lands extremely
+    // close to the raw measurement: K = 400/(400+0.01), vx = 5.0 + K*(2.0-5.0).
     est.fuse_pose(
         mrpt::Clock::fromDouble(1.0),
         mrpt::poses::CPose3DPDFGaussian(
             mrpt::poses::CPose3D(2.0, 0, 0), mrpt::math::CMatrixDouble66::Identity()),
         "map");
     {
-        auto tw = est.get_last_twist();
+        const double K        = 400.0 / (400.0 + 0.01);
+        const double expected = 5.0 + K * (2.0 - 5.0);
+        auto         tw       = est.get_last_twist();
         ASSERT_(tw.has_value());
-        ASSERT_NEAR_(tw->vx, 2.0, 1e-3);
+        ASSERT_NEAR_(tw->vx, expected, 1e-6);
     }
 
     // (e) reset() must re-seed the initial twist (params are not cleared).
@@ -1327,6 +1333,58 @@ params:
         ASSERT_(tw.has_value());
         ASSERT_NEAR_(tw->vx, 5.0, 1e-9);
     }
+
+    std::cout << "OK\n";
+}
+
+// --------------------------------------------------------------------------
+// Test: an unseeded component's first observation bootstraps, even after a
+// sibling component has already been observed
+// --------------------------------------------------------------------------
+// Regression: update_vel_filter() used to decide "true bootstrap vs. blend
+// with seed" from state_.last_twist.has_value(), which becomes true as soon
+// as ANY component is observed. A component that was never configured via
+// params.initial_twist and never observed would then wrongly take the
+// "blend" path using the uninformative default P (1e4) as if it had been
+// seeded, instead of bootstrapping outright from its own measurement.
+void test_partial_observation_bootstraps_independently()
+{
+    std::cout << "[Test] Partial observation bootstraps each component independently... ";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(get_default_config());  // no initial_twist configured
+
+    // Only vx observed: bootstraps vx, and makes state_.last_twist non-empty.
+    {
+        mrpt::math::CMatrixDouble66 cov;
+        cov.setZero();
+        for (int i = 0; i < 6; i++)
+        {
+            cov(i, i) = 1e8;
+        }
+        cov(0, 0) = 0.01;
+        est.fuse_twist(mrpt::Clock::fromDouble(0.0), mrpt::math::TTwist3D(5.0, 0, 0, 0, 0, 0), cov);
+    }
+
+    // Only wz observed for the first time, with a comparatively large (i.e.
+    // imprecise) measurement noise. A correct bootstrap takes the measurement
+    // outright (K=1); the buggy blend-with-default-P path would instead
+    // average it down towards the previous (zero) value.
+    {
+        mrpt::math::CMatrixDouble66 cov;
+        cov.setZero();
+        for (int i = 0; i < 6; i++)
+        {
+            cov(i, i) = 1e8;
+        }
+        cov(5, 5) = 5000.0;
+        est.fuse_twist(mrpt::Clock::fromDouble(1.0), mrpt::math::TTwist3D(0, 0, 0, 0, 0, 3.0), cov);
+    }
+
+    auto tw = est.get_last_twist();
+    ASSERT_(tw.has_value());
+    ASSERT_NEAR_(tw->vx, 5.0, 1e-6);
+    ASSERT_NEAR_(tw->wz, 3.0, 1e-6);
 
     std::cout << "OK\n";
 }
@@ -1580,6 +1638,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_imu_arrival_order_independence();
         test_imu_survives_reset();
         test_initial_twist_seed();
+        test_partial_observation_bootstraps_independently();
         test_real_measurement_survives_first_fuse_pose();
         test_initial_twist_invalid_sigma_rejected();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
