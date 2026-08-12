@@ -21,6 +21,8 @@
 
 #include <mola_state_estimation_simple/Parameters.h>
 
+#include <cmath>
+
 namespace mola::state_estimation_simple
 {
 
@@ -64,6 +66,15 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, initial_twist_sigma_lin);
     MCP_LOAD_OPT(cfg, initial_twist_sigma_ang);
+
+    if (initial_twist != mrpt::math::TTwist3D())
+    {
+        // A zero, negative, or non-finite sigma would build a singular
+        // last_twist_cov, which later throws out of inverse_LLt() in
+        // estimated_navstate(). Catch it here, at config-load time, instead.
+        ASSERT_(std::isfinite(initial_twist_sigma_lin) && initial_twist_sigma_lin > 0);
+        ASSERT_(std::isfinite(initial_twist_sigma_ang) && initial_twist_sigma_ang > 0);
+    }
 }
 
 }  // namespace mola::state_estimation_simple

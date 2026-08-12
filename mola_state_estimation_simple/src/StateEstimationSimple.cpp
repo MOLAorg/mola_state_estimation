@@ -121,8 +121,6 @@ void StateEstimationSimple::seedInitialTwistFromParams()
     }
 
     state_.vel_filter_P = {var_lin, var_lin, var_lin, var_ang, var_ang, var_ang};
-
-    state_.twist_is_unconsumed_seed = true;
 }
 
 namespace
@@ -203,8 +201,6 @@ void StateEstimationSimple::update_vel_filter(
 
     auto write_twist_and_cov = [&](const std::array<double, 6>& v, const std::array<double, 6>& P)
     {
-        state_.twist_is_unconsumed_seed = false;
-
         auto& tw = state_.last_twist.emplace();
         tw.vx    = v[0];
         tw.vy    = v[1];
@@ -786,12 +782,16 @@ void StateEstimationSimple::fuse_pose(
 
         update_vel_filter(z, R_diag, timestamp, "fuse_pose");
     }
-    else if (!state_.twist_is_unconsumed_seed)
+    else if (src.last_pose.has_value())
     {
-        // Don't wipe out params.initial_twist here: this branch also fires on
-        // the very first fuse_pose() call ever (src.last_pose has no prior
-        // value yet), which is exactly when that seed is needed the most, as
-        // no other source has provided a velocity yet either.
+        // dt <= 0 or dt >= max_time_to_use_velocity_model for a source that DID
+        // have a prior pose: a genuine reason to distrust whatever twist is
+        // currently held. When src.last_pose has no value at all (the very
+        // first fuse_pose() call ever for this source), there is simply
+        // nothing new to compute here, so any twist already held -- from
+        // params.initial_twist, or from a real fuse_twist()/fuse_odometry()/
+        // fuse_imu() measurement fused before this source's first pose -- is
+        // left untouched instead of being wiped out.
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): resetting twist");
         state_.last_twist.reset();
         state_.last_twist_cov.reset();

@@ -58,10 +58,16 @@ Key traits:
   feeding this estimator from concurrent sensor threads stays reproducible.
 - `params.initial_twist` (`MOLA_INITIAL_VX` in the shipped YAML) seeds
   `state_.last_twist` on `initialize()`/`reset()`, for datasets that start
-  already in motion (e.g. highway-speed KITTI). The seed survives the very
-  first `fuse_pose()` call (which would otherwise reset the twist, having no
-  per-source pose history yet) but is discarded unconditionally as soon as any
-  real velocity measurement is fused (`state_.twist_is_unconsumed_seed`).
+  already in motion (e.g. highway-speed KITTI). `fuse_pose()`'s "distrust the
+  twist" reset only fires when the reporting source DID have a prior pose but
+  the new one is unusable (backwards or stale `dt`); a source's first-ever
+  pose leaves any twist already held untouched, so the seed (or any real
+  measurement fused via `fuse_odometry()`/`fuse_imu()`/`fuse_twist()` before
+  that first pose) survives instead of being wiped. `initial_twist_sigma_lin`/
+  `_ang` (`MOLA_INITIAL_TWIST_SIGMA_LIN`/`_ANG`) size the seed's covariance;
+  `Parameters::loadFrom()` rejects a non-finite or non-positive sigma when
+  `initial_twist` is non-zero, since that would otherwise build a singular
+  `last_twist_cov` that later throws out of `inverse_LLt()`.
 
 ### 2. `mola_state_estimation_smoother`
 

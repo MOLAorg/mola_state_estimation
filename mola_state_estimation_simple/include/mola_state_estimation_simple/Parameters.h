@@ -43,13 +43,15 @@ class Parameters
      * last incorporated observation. */
     double max_time_to_use_velocity_model = 2.0;  // [s]
 
-    /** Optional initial guess for the twist, used only until the first real
-     *  velocity measurement is fused (a second fuse_pose(), or any
-     *  fuse_odometry()/fuse_imu()/fuse_twist() call), which overwrites it
-     *  unconditionally. Useful for datasets that start already in motion
-     *  (e.g. a highway-speed KITTI sequence), where waiting for two ICP
-     *  poses to derive velocity would give the first scan's ICP prior no
-     *  usable motion guess. */
+    /** Optional initial guess for the twist. The seed stays in effect until it
+     *  is overwritten by an accepted velocity update: fuse_odometry(),
+     *  fuse_imu(), fuse_twist(), or a second fuse_pose() only consume it when
+     *  their data actually yields a valid, time-bearing velocity update
+     *  within the velocity-model window (see max_time_to_use_velocity_model);
+     *  otherwise the seed remains available. Useful for datasets that start
+     *  already in motion (e.g. a highway-speed KITTI sequence), where waiting
+     *  for two ICP poses to derive velocity would give the first scan's ICP
+     *  prior no usable motion guess. */
     mrpt::math::TTwist3D initial_twist;
 
     /// Uncertainty of initial_twist, expressed as a one-sigma value applied

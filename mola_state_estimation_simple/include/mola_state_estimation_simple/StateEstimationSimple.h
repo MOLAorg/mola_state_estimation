@@ -174,13 +174,6 @@ class StateEstimationSimple : public mola::NavStateFilter
         std::optional<mrpt::math::CMatrixDouble66>     last_twist_cov;
         bool                                           pose_already_updated_with_odom = false;
 
-        // True while last_twist still holds params.initial_twist and has not
-        // yet been overwritten by a real velocity measurement. Protects the
-        // seed from fuse_pose()'s "no velocity data for this source yet"
-        // reset, which would otherwise fire on the very first fuse_pose()
-        // call (see fuse_pose()).
-        bool twist_is_unconsumed_seed = false;
-
         // Per-component variance for the velocity Kalman filter.
         // Indices 0-2: linear (vx,vy,vz), 3-5: angular (wx,wy,wz).
         std::array<double, 6> vel_filter_P = {1e4, 1e4, 1e4, 1e4, 1e4, 1e4};
@@ -245,9 +238,8 @@ class StateEstimationSimple : public mola::NavStateFilter
         const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName);
 
     /** If params.initial_twist is non-zero, seeds state_.last_twist (and its
-     *  covariance) with it, marking it as an unconsumed seed. Called from
-     *  initialize() and reset(). Must be called with state_mtx_ already
-     *  held. */
+     *  covariance) with it. Called from initialize() and reset(). Must be
+     *  called with state_mtx_ already held. */
     void seedInitialTwistFromParams();
 
     /** Applies a scalar Kalman predict+update step to each velocity component.
