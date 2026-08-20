@@ -67,6 +67,7 @@
 
 // std:
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 // arguments: class_name, parent_class, class namespace
@@ -96,6 +97,21 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
     tw.vz = 0;
     tw.wx = 0;
     tw.wy = 0;
+}
+
+// Seconds on a monotone, always-positive axis (the clock's own tick origin),
+// for the GTSAM fixed-lag smoother's key timestamps.
+//
+// NOT mrpt::Clock::toDouble(): that rebases onto the UNIX epoch with an
+// UNSIGNED subtraction, so a timestamp even a millisecond before it reads
+// ~1.8e12 s instead of a small negative number. Datasets whose clock starts at
+// zero do produce such timestamps, and one of them among the key stamps moves
+// the smoother's notion of "now" 58000 years into the future, marginalizing
+// every genuine keyframe on arrival. Only differences of these values matter
+// to GTSAM, so the origin is free; being consistent is what is not.
+double key_stamp_seconds(const mrpt::Clock::time_point& t)
+{
+    return std::chrono::duration<double>(t.time_since_epoch()).count();
 }
 
 }  // namespace
@@ -1578,16 +1594,18 @@ void StateEstimationSmoother::delete_too_old_entries()
     // auto lck = mrpt::lockHelper(stateMutex_); // this is assumed to be acquired by caller
 
     // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
-    const double newestTime =
-        mrpt::Clock::toDouble(state_.stamp2frame_index.getDirectMap().rbegin()->first);
-    const double minTime = newestTime - params_.sliding_window_length;
+    // Ages are measured against the newest stamp with timeDifference(), not by
+    // comparing two toDouble() values: see add_kinematic_factor_between() for
+    // why that helper cannot be used on a pre-UNIX-epoch timestamp. Through it,
+    // the oldest keyframes of a zero-based clock read as the NEWEST and were
+    // never pruned.
+    const auto& newestStamp = state_.stamp2frame_index.getDirectMap().rbegin()->first;
 
     std::set<mrpt::Clock::time_point> stamps_to_erase;
     std::set<frame_index_t>           ids_to_erase;
     for (const auto& [existing_t, frame_idx] : state_.stamp2frame_index)
     {
-        const double t_existing = mrpt::Clock::toDouble(existing_t);
-        if (t_existing < minTime)
+        if (mrpt::system::timeDifference(existing_t, newestStamp) > params_.sliding_window_length)
         {
             stamps_to_erase.insert(existing_t);
             ids_to_erase.insert(frame_idx);
@@ -1778,7 +1796,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     // Even if we have no new factors/values, do update the stamps of "persistent" variables:
     if (state_.last_observation_stamp.has_value())
     {
-        const auto lastObservationStamp_sec = mrpt::Clock::toDouble(*state_.last_observation_stamp);
+        const auto lastObservationStamp_sec = key_stamp_seconds(*state_.last_observation_stamp);
 
         state_.gtsam->newKeyStamps[symbol_T_enu_to_map] = lastObservationStamp_sec;
         for (const auto& [_, frameId] : state_.known_odom_frames)
@@ -2240,7 +2258,7 @@ void StateEstimationSmoother::initialize_new_frame(
     frame_index_t id, const pair_nearby_frame_iterators_t& closestFrames)
 {
     const auto stamp   = state_.stamp2frame_index.find_value(id)->second;
-    const auto stamp_s = mrpt::Clock::toDouble(stamp);
+    const auto stamp_s = key_stamp_seconds(stamp);
 
     const auto closest_idx_opt = pick_closest(closestFrames, stamp);
 
@@ -2341,8 +2359,14 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
     // Dispatch to factor generation:
     // --------------------------------------------------------------------
-    const double dt = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(to)) -
-                      mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(from));
+    // Elapsed time between the two keyframes, taken on the clock's own signed
+    // tick type. Never as a difference of mrpt::Clock::toDouble() values: that
+    // helper rebases onto the UNIX epoch with an UNSIGNED subtraction, so a
+    // timestamp even a millisecond before it wraps to ~1.8e12 s instead of a
+    // small negative number, and every difference taken through it is garbage.
+    // Datasets whose clock starts at zero do produce such timestamps.
+    const double dt = mrpt::system::timeDifference(
+        state_.stamp2frame_index.inverse(from), state_.stamp2frame_index.inverse(to));
 
     switch (params_.kinematic_model)
     {
