@@ -70,6 +70,7 @@
 #include <chrono>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -158,6 +159,11 @@ void navstate_dump_row(
     {
         return;
     }
+
+    // estimated_navstate() is callable concurrently and, in async mode, holds no
+    // lock of its own, so two queries could otherwise interleave halves of a row.
+    static std::mutex           s_dumpMutex;
+    std::lock_guard<std::mutex> lck(s_dumpMutex);
 
     const auto& m = ns.pose.mean;
     (*st) << mrpt::format("%.6f", mrpt::Clock::toDouble(timestamp)) << "," << dt << ","  //
@@ -1177,18 +1183,16 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // a solve or taking stateMutex_ (the backend thread may be holding it).
     if (params_.async_backend)
     {
-        auto ret = fastPredictor_->predict(timestamp, frame_id, params_);
+        mrpt::Clock::time_point anchorStamp;
+        auto ret = fastPredictor_->predict(timestamp, frame_id, params_, &anchorStamp);
         if (ret.has_value())
         {
             // Extrapolation interval, i.e. how far behind the query the backend's
             // last completed solve sits. In this path it is a function of host
-            // load, not of the data.
-            double dtAnchor = 0;
-            if (const auto snap = fastPredictor_->snapshot(); snap && snap->valid)
-            {
-                dtAnchor = mrpt::system::timeDifference(snap->anchorStamp, timestamp);
-            }
-            navstate_dump_row(timestamp, dtAnchor, *ret);
+            // load, not of the data. Taken from the very snapshot this prediction
+            // used, not from a second snapshot() call that could race the backend.
+            navstate_dump_row(
+                timestamp, mrpt::system::timeDifference(anchorStamp, timestamp), *ret);
         }
         return ret;
     }
@@ -1343,6 +1347,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
                 params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
             // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
             ret.pose.copyFrom(mapPred - itFrame->second);
+            navstate_dump_row(timestamp, closestFrameDtSigned, ret);
             return ret;
         }
 
@@ -1360,6 +1365,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         // the absolute {map}-frame keyframe covariance.
         ret.pose.copyFrom(
             extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
+        navstate_dump_row(timestamp, dtPred, ret);
 
         return ret;
     }

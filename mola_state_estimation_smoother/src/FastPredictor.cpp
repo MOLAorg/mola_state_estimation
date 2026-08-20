@@ -77,8 +77,8 @@ void FastPredictor::clear()
 }
 
 std::optional<NavState> FastPredictor::predict(
-    const mrpt::Clock::time_point& t_query, const std::string& frame_id,
-    const Parameters& params) const
+    const mrpt::Clock::time_point& t_query, const std::string& frame_id, const Parameters& params,
+    mrpt::Clock::time_point* anchorStampOut) const
 {
     std::shared_ptr<const Snapshot> snap;
     {
@@ -88,6 +88,10 @@ std::optional<NavState> FastPredictor::predict(
     if (!snap || !snap->valid)
     {
         return std::nullopt;
+    }
+    if (anchorStampOut)
+    {
+        *anchorStampOut = snap->anchorStamp;
     }
 
     // dt from the anchor (newest solved keyframe) to the requested time.
