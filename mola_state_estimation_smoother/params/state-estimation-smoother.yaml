@@ -151,11 +151,17 @@ params:
   predict_twist_filter_enabled: ${MOLA_NAVSTATE_PREDICT_TWIST_FILTER|true}
   predict_twist_filter_time_const: ${MOLA_NAVSTATE_PREDICT_TWIST_TAU|0.3}
 
+  # Uncertainty of the kinematic (numerical integration) factors that tie two
+  # consecutive keyframe poses through the twist. NOT scaled by dt: these are
+  # per-link sigmas, so their effective stiffness depends on the keyframe rate.
   # Integrator uncertainty for position [m]
-  sigma_integrator_position: 0.1
+  sigma_integrator_position: ${MOLA_NAVSTATE_SIGMA_INTEGRATOR_POS|0.1}
 
-  # Integrator uncertainty for orientation [rad]
-  sigma_integrator_orientation: 1.0
+  # Integrator uncertainty for orientation [rad]. Note this ships 10x looser
+  # than the class default (0.1 rad): at 1.0 rad (57 deg) the orientation
+  # integration factor is close to free, leaving attitude constrained only by
+  # the pose and IMU factors.
+  sigma_integrator_orientation: ${MOLA_NAVSTATE_SIGMA_INTEGRATOR_ANG|1.0}
 
   # Uncertainty for linear velocity estimated from consecutive poses [m/s]
   sigma_twist_from_consecutive_poses_linear: 1.0

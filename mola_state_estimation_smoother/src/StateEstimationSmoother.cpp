@@ -68,6 +68,9 @@
 // std:
 #include <algorithm>
 #include <chrono>
+#include <fstream>
+#include <memory>
+#include <string>
 #include <utility>
 
 // arguments: class_name, parent_class, class namespace
@@ -112,6 +115,70 @@ void enforce_planar_twist(mrpt::math::TTwist3D& tw)
 double key_stamp_seconds(const mrpt::Clock::time_point& t)
 {
     return std::chrono::duration<double>(t.time_since_epoch()).count();
+}
+
+// Debug instrumentation: dumps every estimated_navstate() result (the pose +
+// covariance that LIO uses as ICP initial guess AND prior, plus the returned
+// twist) so the prior-vs-data weighting and the velocity feedback can be
+// analyzed offline. Same file format and same env var as the lightweight
+// estimator's, so one script reads both. Disabled unless MOLA_NAVSTATE_DUMP is
+// set to a path.
+std::ofstream* navstate_dump_stream()
+{
+    static std::unique_ptr<std::ofstream> s_stream = []() -> std::unique_ptr<std::ofstream>
+    {
+        const std::string path = mrpt::get_env<std::string>("MOLA_NAVSTATE_DUMP");
+        if (path.empty())
+        {
+            return nullptr;
+        }
+        auto st = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+        if (!st->is_open())
+        {
+            return nullptr;
+        }
+        (*st) << "tim,dt,"
+                 "x,y,z,yaw,pitch,roll,"
+                 "tw_vx,tw_vy,tw_vz,tw_wx,tw_wy,tw_wz,"
+                 "cov_x,cov_y,cov_z,cov_yaw,cov_pitch,cov_roll,"
+                 "covinv_x,covinv_y,covinv_z,covinv_yaw,covinv_pitch,covinv_roll\n";
+        return st;
+    }();
+    return s_stream.get();
+}
+
+// One row of the CSV above. `dt` is the extrapolation interval from the anchor
+// keyframe; a row is written only when a state was actually produced, so a gap
+// in the file marks a scan the front end ran with no motion model at all.
+void navstate_dump_row(
+    const mrpt::Clock::time_point& timestamp, double dt, const mola::NavState& ns)
+{
+    std::ofstream* st = navstate_dump_stream();
+    if (!st)
+    {
+        return;
+    }
+
+    const auto& m = ns.pose.mean;
+    (*st) << mrpt::format("%.6f", mrpt::Clock::toDouble(timestamp)) << "," << dt << ","  //
+          << m.x() << "," << m.y() << "," << m.z() << "," << m.yaw() << "," << m.pitch() << ","
+          << m.roll();
+
+    const auto& tw = ns.twist;
+    (*st) << "," << tw.vx << "," << tw.vy << "," << tw.vz << "," << tw.wx << "," << tw.wy << ","
+          << tw.wz;
+
+    const mrpt::math::CMatrixDouble66 cov = ns.pose.cov_inv.inverse_LLt();
+    for (int i = 0; i < 6; i++)
+    {
+        (*st) << "," << cov(i, i);
+    }
+    for (int i = 0; i < 6; i++)
+    {
+        (*st) << "," << ns.pose.cov_inv(i, i);
+    }
+    (*st) << "\n";
+    st->flush();
 }
 
 }  // namespace
@@ -1110,7 +1177,20 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     // a solve or taking stateMutex_ (the backend thread may be holding it).
     if (params_.async_backend)
     {
-        return fastPredictor_->predict(timestamp, frame_id, params_);
+        auto ret = fastPredictor_->predict(timestamp, frame_id, params_);
+        if (ret.has_value())
+        {
+            // Extrapolation interval, i.e. how far behind the query the backend's
+            // last completed solve sits. In this path it is a function of host
+            // load, not of the data.
+            double dtAnchor = 0;
+            if (const auto snap = fastPredictor_->snapshot(); snap && snap->valid)
+            {
+                dtAnchor = mrpt::system::timeDifference(snap->anchorStamp, timestamp);
+            }
+            navstate_dump_row(timestamp, dtAnchor, *ret);
+        }
+        return ret;
     }
 
     auto lck = mrpt::lockHelper(stateMutex_);
@@ -1224,6 +1304,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             anchorPose.copyFrom(retKf.pose);
             ret.pose.copyFrom(extrapolate_pose_pdf(
                 params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned));
+            navstate_dump_row(timestamp, closestFrameDtSigned, ret);
             return ret;
         }
 
