@@ -70,9 +70,13 @@ class FastPredictor
     /// Extrapolates the snapshot anchor to `t_query` in `frame_id`. nullopt if
     /// there is no valid snapshot, the frame is unknown, or `t_query` is beyond
     /// `max_time_to_use_velocity_model`.
+    /** \param anchorStampOut If not null, receives the stamp of the snapshot
+     *  anchor this very prediction was extrapolated from. Reading it from a
+     *  second snapshot() call instead would race the backend thread, which may
+     *  publish a newer snapshot in between. */
     [[nodiscard]] std::optional<NavState> predict(
         const mrpt::Clock::time_point& t_query, const std::string& frame_id,
-        const Parameters& params) const;
+        const Parameters& params, mrpt::Clock::time_point* anchorStampOut = nullptr) const;
 
     /// Drops the snapshot and the observation-stamp tracking (used on reset()).
     void clear();

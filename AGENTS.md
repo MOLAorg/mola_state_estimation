@@ -326,6 +326,19 @@ deployed setting; only the true offline CLIs (`mola-lidar-odometry-cli`,
 | predict-twist low-pass | `predict_twist_filter_enabled` / `MOLA_NAVSTATE_PREDICT_TWIST_FILTER` (+ `predict_twist_filter_time_const` / `MOLA_NAVSTATE_PREDICT_TWIST_TAU`, 0.3 s) | **true** | EMA-smooths the extrapolation velocity so the front end's ICP prior stays smooth. Deterministic; C++ default also true. |
 | accel random-walk sigmas | `sigma_random_walk_acceleration_linear` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC`, `..._angular` / `MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC` | **0.5** / **10.0** | Angular is loose on purpose: a tight value lets the constant-velocity factor override the per-keyframe gyro prior and average genuine fast rotations away (measured in-window: at 1.0 the optimized `W` kept only ~70% of the true rate at fast turns; at 10.0, ~98%). The boundary-node yaw variability this allows is damped by the predict-twist low-pass. |
 | gyro observations | `imu_angular_velocity_sigma` / `MOLA_IMU_ANGULAR_VELOCITY_SIGMA` | **0.10** | Direct (Huber-robust) prior on each keyframe's `W`, so a fast rotation reaches the graph immediately instead of only through the constant-velocity factor. 0 disables. Deliberately loose, see below. |
+| kinematic integrator sigmas | `sigma_integrator_position` / `MOLA_NAVSTATE_SIGMA_INTEGRATOR_POS`, `sigma_integrator_orientation` / `MOLA_NAVSTATE_SIGMA_INTEGRATOR_ANG` | **0.1** m / **1.0** rad | Noise of the trapezoidal position and angular-velocity integration factors tying two consecutive keyframe poses through the twist. **Not scaled by `dt`**, so their effective stiffness depends on the keyframe rate. The shipped orientation value is 10x looser than the C++ `Parameters` default (0.1 rad): at 1.0 rad (57 deg) that factor is close to free and attitude rests on the pose and IMU factors alone. |
+
+**Diagnosing the prior the front end actually receives.** Both estimators write
+the same CSV when `MOLA_NAVSTATE_DUMP=<path>` is set: one row per
+`estimated_navstate()` result, with the returned pose, twist, covariance and
+information matrix, plus `dt` (the extrapolation interval from the anchor). That
+is the object `mola_lidar_odometry` uses as the ICP initial guess *and*, when
+`cov_inv` is non-zero, as a prior factor inside the ICP solve -- so it is what to
+compare when `simple` and `smoother` disagree on a sequence. A **missing row**
+is as informative as a present one: it marks a query that returned nothing, i.e.
+a scan the front end registered with no motion model at all. In `async_backend`
+mode the `dt` column is the backend's solve lag and is a function of host load,
+not of the data.
 
 **Gyro priors vs. the constant-angular-velocity factor.** These two fight each
 other, and getting it wrong blows up the whole window. That factor's sigma is
