@@ -219,6 +219,16 @@ class Parameters
      * A relative factor is skipped, rather than forced, when the previous
      * odometry keyframe has already been marginalized out: a factor on a
      * variable the smoother no longer holds would resurrect it as a free state.
+     *
+     * Off by default on a measured trade, not out of caution. It is the better
+     * of the two ways to fuse on real data (BotanicGarden, better APE on 5 of 7
+     * sequences than the absolute-only formulation), but it costs
+     * geo-referencing: the ENU->map rotation error in
+     * test-navstate-odom-gnss-fusion grows past that test's 5 deg gate, where
+     * the absolute-only formulation stays inside it. Asserting the dead-reckoned
+     * pose absolutely, however weakly, is apparently what makes that yaw well
+     * observed. Enable this if you fuse wheel odometry and do not estimate
+     * geo-referencing.
      */
     bool odometry_relative_factors = false;
 
