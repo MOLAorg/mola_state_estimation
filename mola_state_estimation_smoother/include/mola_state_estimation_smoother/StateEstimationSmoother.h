@@ -344,6 +344,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// accumulated increment.
         std::optional<mrpt::Clock::time_point> last_wheels_odometry_stamp;
 
+        /// Wheel odometry is fused as an ABSOLUTE pose in its own {odom_i}
+        /// frame, so the covariance that goes with it must be the uncertainty
+        /// accumulated over the whole dead-reckoning history, not that of the
+        /// single latest increment. This carries that accumulation: the pose is
+        /// the same one the source reports, and the covariance is the composed
+        /// motion-model covariance of every increment since the first reading.
+        /// Reset with the estimator.
+        std::optional<mrpt::poses::CPose3DPDFGaussian> wheels_odometry_accumulated;
+
         /// Stamp of the last IMU reading that was actually processed. Used by
         /// imu_min_sample_period to skip higher-rate readings.
         std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
