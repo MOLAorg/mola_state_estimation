@@ -804,6 +804,54 @@ void StateEstimationSmoother::fuse_odometry_locked(
 
     // Fuse this new probabilistic pose observation:
     fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
+
+    // Optionally, also state what this reading actually measured: the motion
+    // between the two keyframes it spans. See Parameters::odometry_relative_factors.
+    if (params_.odometry_relative_factors)
+    {
+        add_odometry_relative_factor(odom.timestamp, incrementPdf);
+    }
+}
+
+void StateEstimationSmoother::add_odometry_relative_factor(
+    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& increment)
+{
+    // fuse_pose_locked() has just created (or reused) the keyframe for this
+    // stamp; asking for it again returns that same one.
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
+
+    const auto prev                = state_.last_wheels_odometry_kf;
+    state_.last_wheels_odometry_kf = this_kf_id;
+
+    if (!prev.has_value() || *prev == this_kf_id)
+    {
+        return;  // first reading of the chain, or both readings landed on one keyframe
+    }
+
+    // The previous keyframe may have been marginalized out of the sliding
+    // window (a long gap in the odometry stream, or a reset in between). Adding
+    // a factor on a variable the smoother no longer holds would resurrect it as
+    // a free, unconstrained state, so skip and let the chain re-anchor here.
+    if (state_.last_estimated_states.count(*prev) == 0)
+    {
+        MRPT_LOG_THROTTLE_DEBUG_FMT(
+            5.0,
+            "[fuse_odometry] relative factor skipped: KF %u is no longer in the window; "
+            "re-anchoring the odometry chain at KF %u",
+            static_cast<unsigned>(*prev), static_cast<unsigned>(this_kf_id));
+        return;
+    }
+
+    // A relative transform is the same quantity in {map} and in {odom_i}: the
+    // two chains differ by one constant rigid T_map_to_odom_i, which cancels in
+    // T_prev^-1 * T_now. So the motion model's increment is directly the
+    // measurement this factor needs, with directly the covariance it computed.
+    gtsam::Pose3   incr_out;
+    gtsam::Matrix6 incrCov_out;
+    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
+
+    state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+        T(*prev), T(this_kf_id), incr_out, gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
 }
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)

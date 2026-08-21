@@ -191,6 +191,33 @@ class Parameters
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
     /** @} */
 
+    /** Fuse each wheel-odometry increment as a RELATIVE constraint between the
+     * two keyframes it spans, `BetweenFactor(T(kf_prev), T(kf_now), increment,
+     * incrementCov)`, in addition to the absolute pose-in-{odom_i} factor that
+     * is always added.
+     *
+     * Why it exists: the absolute factor asserts a dead-reckoned pose, so the
+     * covariance that must go with it is the whole accumulated dead-reckoning
+     * uncertainty -- which is honest, but by the time it is honest it is also
+     * nearly uninformative, and it throws away the one thing wheel odometry is
+     * genuinely good at: short-baseline relative motion. The relative factor
+     * states exactly that, with exactly the covariance the motion model
+     * computes for it, and nothing accumulates.
+     *
+     * The two are not independent (the absolute factor is roughly the marginal
+     * of this chain from the first reading), so enabling this does mildly
+     * double-count the accumulated component. The absolute factor is kept
+     * regardless because it is what observes `T_map_to_odom_i`, the variable
+     * `publish_map_to_odom_tf` reports; with the accumulation above it is the
+     * weakest possible statement of the motion, so what this adds is
+     * essentially the missing short-baseline precision.
+     *
+     * A relative factor is skipped, rather than forced, when the previous
+     * odometry keyframe has already been marginalized out of the sliding
+     * window: the chain simply re-anchors at the next reading.
+     */
+    bool odometry_relative_factors = false;
+
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.
      * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so

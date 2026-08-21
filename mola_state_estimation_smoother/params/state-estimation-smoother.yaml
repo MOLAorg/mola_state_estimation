@@ -120,6 +120,15 @@ params:
   odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m], see effective-floor note above
   odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg], see effective-floor note above
 
+  # Also fuse each wheel-odometry increment as a RELATIVE constraint between the
+  # two keyframes it spans, on top of the absolute pose-in-{odom} factor that is
+  # always added. The absolute factor has to carry the whole accumulated
+  # dead-reckoning covariance to be honest, which makes it nearly uninformative;
+  # the relative one states what the reading actually measured, with the
+  # covariance the motion model computes for it, and nothing accumulates.
+  # Default off until measured on more than one platform.
+  odometry_relative_factors: ${MOLA_ODOM_RELATIVE_FACTORS|false}
+
   # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
   # arriving less than this after the last processed one are skipped (attitude/
   # gravity are absolute, so nothing is accumulated). 0 = disabled. Default 0.1.
