@@ -204,17 +204,21 @@ class Parameters
      * states exactly that, with exactly the covariance the motion model
      * computes for it, and nothing accumulates.
      *
-     * The two are not independent (the absolute factor is roughly the marginal
-     * of this chain from the first reading), so enabling this does mildly
-     * double-count the accumulated component. The absolute factor is kept
-     * regardless because it is what observes `T_map_to_odom_i`, the variable
-     * `publish_map_to_odom_tf` reports; with the accumulation above it is the
-     * weakest possible statement of the motion, so what this adds is
-     * essentially the missing short-baseline precision.
+     * When enabled, exactly ONE absolute pose-in-{odom_i} factor is ever added,
+     * on the first kept reading, because one is all it takes: `T_map_to_odom_i`
+     * is a single rigid variable, so given that anchor plus the relative chain,
+     * every later "keyframe k is at odom pose p_k" is already implied. Extra
+     * absolute factors do not observe the frame any better; they re-inject the
+     * accumulated dead-reckoning error into the map poses.
+     *
+     * It also needs no renewal when its keyframe ages out: keyframes leave
+     * through the fixed-lag smoother's marginalization, which folds their
+     * factors into a linear marginal on the surviving variables, so the anchor
+     * keeps constraining `T_map_to_odom_i` after its own keyframe is gone.
      *
      * A relative factor is skipped, rather than forced, when the previous
-     * odometry keyframe has already been marginalized out of the sliding
-     * window: the chain simply re-anchors at the next reading.
+     * odometry keyframe has already been marginalized out: a factor on a
+     * variable the smoother no longer holds would resurrect it as a free state.
      */
     bool odometry_relative_factors = false;
 

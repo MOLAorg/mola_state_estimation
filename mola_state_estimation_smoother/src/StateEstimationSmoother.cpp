@@ -802,23 +802,65 @@ void StateEstimationSmoother::fuse_odometry_locked(
     state_.last_wheels_odometry       = odom.odometry;
     state_.last_wheels_odometry_stamp = odom.timestamp;
 
-    // Fuse this new probabilistic pose observation:
-    fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
-
-    // Optionally, also state what this reading actually measured: the motion
-    // between the two keyframes it spans. See Parameters::odometry_relative_factors.
-    if (params_.odometry_relative_factors)
+    if (!params_.odometry_relative_factors)
     {
-        add_odometry_relative_factor(odom.timestamp, incrementPdf);
+        // Fuse this new probabilistic pose observation:
+        fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
+        return;
     }
+
+    fuse_odometry_relative_locked(odom, odomName, incrementPdf, newOdomPosePdf);
 }
 
-void StateEstimationSmoother::add_odometry_relative_factor(
-    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& increment)
+// Relative formulation: the motion goes into BetweenFactors between consecutive
+// odometry keyframes, and exactly ONE absolute pose-in-{odom_i} factor is ever
+// added, on the first kept reading of each source, to resolve T_map_to_odom_i.
+//
+// One is all it takes, and it stays that way for the whole run. T_map_to_odom_i
+// is a single rigid variable: given that anchor plus the relative chain, every
+// later "keyframe k is at odom pose p_k" is already implied, up to the odometry
+// drift in between. A second absolute factor observes the frame no better -- it
+// re-injects the accumulated dead-reckoning error into the map poses, which is
+// the defect the covariance accumulation mitigates rather than removes.
+//
+// Nor does the anchor need renewing when its keyframe ages out. Keyframes leave
+// through IncrementalFixedLagSmoother's MARGINALIZATION, not through
+// factorsToRemove (which this class uses only for kinematic-link splicing), so
+// the anchor's information survives as a linear marginal on T_map_to_odom_i
+// after its keyframe is gone. Re-anchoring per window would therefore add
+// information the graph has already kept: the same double count, only slower.
+// T_map_to_odom_i itself is never marginalized -- its key timestamp is bumped to
+// the newest observation on every update, so it stays inside the lag forever.
+void StateEstimationSmoother::fuse_odometry_relative_locked(
+    const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
+    const mrpt::poses::CPose3DPDFGaussian& increment,
+    const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom)
 {
-    // fuse_pose_locked() has just created (or reused) the keyframe for this
-    // stamp; asking for it again returns that same one.
-    const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
+    const auto frame_id_idx = add_or_get_odom_frame_id(odomName);
+    const auto this_kf_id   = create_or_get_keyframe_by_timestamp_locked(odom.timestamp);
+
+    // Unconditional, and independent of which factor is added below: this is the
+    // anchor estimated_navstate() extrapolates from when a front end asks for a
+    // pose in the source's OWN frame, so it has to track every kept reading.
+    state_.last_raw_pose_by_source[frame_id_idx] =
+        State::RawSourcePose{odom.timestamp, absolutePoseInOdom};
+
+    if (!state_.wheels_odometry_anchor_kf.has_value())
+    {
+        gtsam::Pose3   pose_out;
+        gtsam::Matrix6 cov_out;
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
+
+        state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+            symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
+            gtsam::noiseModel::Gaussian::Covariance(cov_out));
+
+        state_.wheels_odometry_anchor_kf = this_kf_id;
+
+        MRPT_LOG_DEBUG_FMT(
+            "[fuse_odometry] odom frame '%s' anchored at KF %u", odomName.c_str(),
+            static_cast<unsigned>(this_kf_id));
+    }
 
     const auto prev                = state_.last_wheels_odometry_kf;
     state_.last_wheels_odometry_kf = this_kf_id;
@@ -828,16 +870,17 @@ void StateEstimationSmoother::add_odometry_relative_factor(
         return;  // first reading of the chain, or both readings landed on one keyframe
     }
 
-    // The previous keyframe may have been marginalized out of the sliding
-    // window (a long gap in the odometry stream, or a reset in between). Adding
-    // a factor on a variable the smoother no longer holds would resurrect it as
-    // a free, unconstrained state, so skip and let the chain re-anchor here.
+    // The previous keyframe may have been marginalized out of the sliding window
+    // (a long gap in the stream, or a reset in between). Unlike the anchor above,
+    // whose information the marginalization keeps, a NEW factor naming a
+    // marginalized variable would resurrect it as a free, unconstrained state --
+    // so skip it and let the chain continue from here.
     if (state_.last_estimated_states.count(*prev) == 0)
     {
         MRPT_LOG_THROTTLE_DEBUG_FMT(
             5.0,
             "[fuse_odometry] relative factor skipped: KF %u is no longer in the window; "
-            "re-anchoring the odometry chain at KF %u",
+            "the odometry chain continues from KF %u",
             static_cast<unsigned>(*prev), static_cast<unsigned>(this_kf_id));
         return;
     }
