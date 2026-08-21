@@ -728,9 +728,17 @@ void StateEstimationSmoother::fuse_odometry_locked(
         // This is the first time we have wheels odometry.
         // Store the pose but skip factor creation: the increment is zero,
         // which would produce a stiff near-zero BetweenFactor.
+        //
+        // This reading also defines the origin of the accumulation below: at
+        // the very first sample no dead reckoning has happened yet, so the
+        // accumulated uncertainty is zero (T_map_to_odom absorbs wherever the
+        // source happens to start).
         state_.last_wheels_odometry_name  = odomName;
         state_.last_wheels_odometry       = odom.odometry;
         state_.last_wheels_odometry_stamp = odom.timestamp;
+        state_.wheels_odometry_accumulated.emplace();
+        state_.wheels_odometry_accumulated->mean = mrpt::poses::CPose3D(odom.odometry);
+        state_.wheels_odometry_accumulated->cov.setZero();
         return;
     }
     // Use a probabilistic motion model:
@@ -748,18 +756,46 @@ void StateEstimationSmoother::fuse_odometry_locked(
 
     odoAct.computeFromOdometry(odometryIncrement, odoAct.motionModelConfiguration);
 
-    mrpt::poses::CPose3DPDFGaussian newOdomPosePdf;
-    newOdomPosePdf.copyFrom(*odoAct.poseChange);
+    mrpt::poses::CPose3DPDFGaussian incrementPdf;
+    incrementPdf.copyFrom(*odoAct.poseChange);
     // Ensure as minimal uncertainty in all 3D DOFs to prevent numerical issues:
-    newOdomPosePdf.cov.asEigen().diagonal().array() += 1e-4;
+    incrementPdf.cov.asEigen().diagonal().array() += 1e-4;
 
-    // Convert probabilistic pose back to global "odom" frame for data fusion the in "odom" frame:
-    newOdomPosePdf.changeCoordinatesReference(mrpt::poses::CPose3D(lastOdom));
+    // Compose this increment onto the accumulated dead-reckoning pose, so the
+    // covariance handed to fuse_pose_locked() is the uncertainty of the
+    // ABSOLUTE pose in {odom_i} -- which is what that factor asserts -- rather
+    // than the uncertainty of this one increment.
+    //
+    // This matters because the resulting factor is
+    // BetweenFactor(T_map_to_odom_i, T(kf), pose_in_odom, cov). T_map_to_odom_i
+    // is a single rigid variable, so with a per-increment covariance every
+    // keyframe in the window is told it lies within ~1 cm of one common frame,
+    // no matter how far the wheels have dead-reckoned since. On a platform with
+    // any slip those constraints are mutually inconsistent and the only way the
+    // optimizer can satisfy them is to distort the poses.
+    //
+    // Growing with distance travelled is the point: the factor is informative
+    // while the dead reckoning is fresh and fades as it stales, which is what it
+    // actually knows. The composition is conservative for nearby keyframe pairs
+    // (it ignores the correlation between two accumulations sharing a history),
+    // and conservative is the safe direction here.
+    ASSERT_(state_.wheels_odometry_accumulated.has_value());
+    *state_.wheels_odometry_accumulated = *state_.wheels_odometry_accumulated + incrementPdf;
+
+    // Take the mean from the source directly rather than from the composition:
+    // they agree analytically, and this keeps a long run free of accumulated
+    // round-off in a quantity the source reports exactly.
+    state_.wheels_odometry_accumulated->mean = mrpt::poses::CPose3D(odom.odometry);
+
+    const mrpt::poses::CPose3DPDFGaussian& newOdomPosePdf = *state_.wheels_odometry_accumulated;
 
     MRPT_LOG_DEBUG_FMT(
-        "[fuse_odometry]: t=%f name=%s pose=%s poseChange=%s",
+        "[fuse_odometry]: t=%f name=%s pose=%s poseChange=%s accum_sigma_xy=%.03f m "
+        "accum_sigma_yaw=%.03f deg",
         mrpt::Clock::toDouble(odom.timestamp), odomName.c_str(), odom.odometry.asString().c_str(),
-        odoAct.poseChange->getMeanVal().asString().c_str());
+        odoAct.poseChange->getMeanVal().asString().c_str(),
+        std::sqrt(newOdomPosePdf.cov(0, 0) + newOdomPosePdf.cov(1, 1)),
+        mrpt::RAD2DEG(std::sqrt(newOdomPosePdf.cov(5, 5))));
 
     // Save for next iteration (advance the anchor: this reading was kept):
     state_.last_wheels_odometry_name  = odomName;
