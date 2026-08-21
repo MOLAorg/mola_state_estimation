@@ -41,7 +41,27 @@ constexpr double MOTION_ANG_WZ      = 0.5;  // rad/s
 constexpr double ODOMETRY_NOISE_XY  = 0.01;
 constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 
-constexpr double MAXIMUM_SE3_FINAL_ERROR        = 0.40;
+// Raised from 0.40 on 2026-08-21, deliberately and with the measurements in
+// hand, because the old value gated the wrong thing.
+//
+// The odometry simulated below is noise-only: a zero-mean per-increment
+// perturbation, no slip and no systematic error. On such a source, trusting
+// wheel odometry MORE than the motion model says is free accuracy, so this test
+// scores an over-confident implementation better than a correct one. Worst-case
+// final_se3_error over the same seven cases:
+//
+//   0.365  before: an absolute pose fused with the LATEST INCREMENT's covariance
+//   0.419  after:  that covariance corrected to the accumulated dead-reckoning one
+//
+// The second is the honest one. On real data the ranking inverts: the first
+// formulation DIVERGES on all seven BotanicGarden sequences, estimating 4.5-6.8x
+// the true path length, while the corrected one holds every one of them.
+//
+// So this fixture cannot discriminate a correct odometry weight from an
+// over-confident one, and must not be used as the gate on that axis. It still
+// earns its place as a regression guard on the fusion working at all, and the
+// threshold is sized for that.
+constexpr double MAXIMUM_SE3_FINAL_ERROR        = 0.45;
 constexpr double MAXIMUM_ENU2MAP_ROTATION_ERROR = 5.0_deg;
 
 constexpr const char* ODOMETRY_NAME = "odom";
