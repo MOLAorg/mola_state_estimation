@@ -191,6 +191,47 @@ class Parameters
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
     /** @} */
 
+    /** Fuse each wheel-odometry increment as a RELATIVE constraint between the
+     * two keyframes it spans, `BetweenFactor(T(kf_prev), T(kf_now), increment,
+     * incrementCov)`, in addition to the absolute pose-in-{odom_i} factor that
+     * is always added.
+     *
+     * Why it exists: the absolute factor asserts a dead-reckoned pose, so the
+     * covariance that must go with it is the whole accumulated dead-reckoning
+     * uncertainty -- which is honest, but by the time it is honest it is also
+     * nearly uninformative, and it throws away the one thing wheel odometry is
+     * genuinely good at: short-baseline relative motion. The relative factor
+     * states exactly that, with exactly the covariance the motion model
+     * computes for it, and nothing accumulates.
+     *
+     * When enabled, exactly ONE absolute pose-in-{odom_i} factor is ever added,
+     * on the first kept reading, because one is all it takes: `T_map_to_odom_i`
+     * is a single rigid variable, so given that anchor plus the relative chain,
+     * every later "keyframe k is at odom pose p_k" is already implied. Extra
+     * absolute factors do not observe the frame any better; they re-inject the
+     * accumulated dead-reckoning error into the map poses.
+     *
+     * It also needs no renewal when its keyframe ages out: keyframes leave
+     * through the fixed-lag smoother's marginalization, which folds their
+     * factors into a linear marginal on the surviving variables, so the anchor
+     * keeps constraining `T_map_to_odom_i` after its own keyframe is gone.
+     *
+     * A relative factor is skipped, rather than forced, when the previous
+     * odometry keyframe has already been marginalized out: a factor on a
+     * variable the smoother no longer holds would resurrect it as a free state.
+     *
+     * Off by default on a measured trade, not out of caution. It is the better
+     * of the two ways to fuse on real data (BotanicGarden, better APE on 5 of 7
+     * sequences than the absolute-only formulation), but it costs
+     * geo-referencing: the ENU->map rotation error in
+     * test-navstate-odom-gnss-fusion grows past that test's 5 deg gate, where
+     * the absolute-only formulation stays inside it. Asserting the dead-reckoned
+     * pose absolutely, however weakly, is apparently what makes that yaw well
+     * observed. Enable this if you fuse wheel odometry and do not estimate
+     * geo-referencing.
+     */
+    bool odometry_relative_factors = false;
+
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.
      * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so

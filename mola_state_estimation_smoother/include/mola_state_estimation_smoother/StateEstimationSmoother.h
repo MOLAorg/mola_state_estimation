@@ -353,6 +353,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Reset with the estimator.
         std::optional<mrpt::poses::CPose3DPDFGaussian> wheels_odometry_accumulated;
 
+        /// Keyframe the last KEPT wheel-odometry reading was fused into, i.e.
+        /// the tail of the relative-factor chain built when
+        /// `odometry_relative_factors` is enabled. Reset with the estimator.
+        std::optional<frame_index_t> last_wheels_odometry_kf;
+
+        /// Keyframe carrying the single absolute pose-in-{odom_i} factor that
+        /// resolves T_map_to_odom_i under `odometry_relative_factors`. Set once
+        /// and never renewed: the fixed-lag smoother marginalizes keyframes
+        /// rather than dropping their factors, so that information survives its
+        /// own keyframe. See fuse_odometry_relative_locked().
+        std::optional<frame_index_t> wheels_odometry_anchor_kf;
+
         /// Stamp of the last IMU reading that was actually processed. Used by
         /// imu_min_sample_period to skip higher-rate readings.
         std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
@@ -433,6 +445,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_pose_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id);
+
+    /// Relative formulation of wheel-odometry fusion: BetweenFactors between
+    /// consecutive odometry keyframes, plus one absolute factor, added once, to
+    /// resolve T_map_to_odom_i. See Parameters::odometry_relative_factors.
+    void fuse_odometry_relative_locked(
+        const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
+        const mrpt::poses::CPose3DPDFGaussian& increment,
+        const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom);
     void fuse_odometry_locked(
         const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);
     void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);

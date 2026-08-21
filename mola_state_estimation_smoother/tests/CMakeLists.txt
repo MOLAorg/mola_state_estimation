@@ -14,6 +14,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-odometry-long-drift
+  SOURCES test-odometry-long-drift.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-static-gnss-imu-orientation
   SOURCES test-static-gnss-imu-orientation.cpp
   LINK_LIBRARIES

@@ -120,6 +120,29 @@ params:
   odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m], see effective-floor note above
   odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg], see effective-floor note above
 
+  # Also fuse each wheel-odometry increment as a RELATIVE constraint between the
+  # two keyframes it spans, on top of the absolute pose-in-{odom} factor that is
+  # always added. The absolute factor has to carry the whole accumulated
+  # dead-reckoning covariance to be honest, which makes it nearly uninformative;
+  # the relative one states what the reading actually measured, with the
+  # covariance the motion model computes for it, and nothing accumulates.
+  # OFF by default, and the reason is a measured trade rather than caution.
+  #
+  # On BotanicGarden -- the only dataset family in our evaluation corpus that
+  # feeds wheel odometry, a skid-steer platform in dense vegetation -- this is
+  # the better of the two ways to fuse: better APE on 5 of 7 sequences than the
+  # absolute-only formulation. But test-navstate-odom-gnss-fusion shows it costs
+  # geo-referencing: the ENU->map rotation error grows past its 5 deg gate
+  # (5.69 deg), where the absolute-only formulation stays inside it. Asserting
+  # the dead-reckoned pose absolutely, however weakly, is apparently what makes
+  # that yaw well observed.
+  #
+  # And on that same platform, fusing wheel odometry AT ALL is worse than
+  # ignoring it on 6 of 7 sequences, so the APE side of the trade is being paid
+  # for on a configuration that is not recommended anyway. Enable this if you
+  # fuse wheel odometry and do not estimate geo-referencing.
+  odometry_relative_factors: ${MOLA_ODOM_RELATIVE_FACTORS|false}
+
   # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
   # arriving less than this after the last processed one are skipped (attitude/
   # gravity are absolute, so nothing is accumulated). 0 = disabled. Default 0.1.
