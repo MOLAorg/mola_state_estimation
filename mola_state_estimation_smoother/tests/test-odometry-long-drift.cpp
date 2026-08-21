@@ -132,14 +132,19 @@ params:
     estimate_geo_reference: false
 )###";
 
-void run_test()
+void run_test(bool relativeFactors)
 {
+    std::cout << "\n--- odometry_relative_factors: " << (relativeFactors ? "true" : "false")
+              << " ---\n";
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     if (VERBOSE)
     {
         stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
-    stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
+    auto params = mrpt::containers::yaml::FromText(navStateParams);
+    params["params"]["odometry_relative_factors"] = relativeFactors;
+    stateEst.initialize(params);
 
     mrpt::poses::CPose3D gtPose = mrpt::poses::CPose3D::Identity();
 
@@ -255,7 +260,12 @@ int main()
 {
     try
     {
-        run_test();
+        // Both formulations, because the point of the fixture is that neither
+        // lets unbounded dead-reckoning drift into the fused trajectory -- and
+        // because a formulation nothing exercises is a formulation nothing
+        // guards.
+        run_test(false);
+        run_test(true);
         std::cout << "Test successful." << std::endl;
         return 0;
     }
