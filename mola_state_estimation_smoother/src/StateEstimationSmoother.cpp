@@ -2184,6 +2184,25 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         const auto tleWriteback = mola::ProfilerEntry(profiler_, "process_pending.writeback");
         for (auto& [kfIdx, kf] : state_.last_estimated_states)
         {
+            // This is a FIXED-LAG smoother: once a keyframe leaves the lag
+            // window it is marginalized out, and its T/V/W variables leave
+            // optValues with it. Reading them unconditionally threw
+            // "Attempting to at the key tNNN, which does not exist in the
+            // Values", and since the caller treats that as fatal, the whole
+            // run stopped mid-sequence and discarded every later
+            // observation. Seen on Newer College 2020 (t3478, ~14% in) and
+            // on GEODE Offroad1_gamma (t335, ~7.5% in).
+            //
+            // Skipping is the right behavior rather than merely the safe
+            // one: such an entry already holds the last estimate the
+            // smoother produced for it before marginalizing, which IS that
+            // keyframe's final value. There is nothing newer to write.
+            if (!optValues.exists(T(kfIdx)) || !optValues.exists(V(kfIdx)) ||
+                !optValues.exists(W(kfIdx)))
+            {
+                continue;
+            }
+
             const auto pose = optValues.at<gtsam::Pose3>(T(kfIdx));
             const auto linV = optValues.at<gtsam::Vector3>(V(kfIdx));
             const auto angV = optValues.at<gtsam::Vector3>(W(kfIdx));
