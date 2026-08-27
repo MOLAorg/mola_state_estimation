@@ -129,7 +129,37 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
         }
     }
 
-    return anchorPose + deltaPdf;
+    mrpt::poses::CPose3DPDFGaussian ret = anchorPose + deltaPdf;
+
+    // Flat, dt-independent floor on the reported uncertainty. Off by default
+    // (both sigmas 0), so this is a no-op unless deliberately configured.
+    //
+    // Applied here rather than at each call site because every serving path --
+    // the synchronous estimated_navstate(), the asynchronous fast predictor,
+    // and the {map} / {odom_i} frame branches of both -- funnels through this
+    // function, and a floor that only some of them apply is worse than none.
+    //
+    // Isotropic on each block, so it does not depend on whether the consumer
+    // reads the rotation entries in Euler or Lie-tangent order: adding the same
+    // variance to all three commutes with any permutation of them.
+    if (params.sigma_relative_pose_linear > 0)
+    {
+        const double var = mrpt::square(params.sigma_relative_pose_linear);
+        for (int i = 0; i < 3; i++)
+        {
+            ret.cov(i, i) += var;
+        }
+    }
+    if (params.sigma_relative_pose_angular > 0)
+    {
+        const double var = mrpt::square(params.sigma_relative_pose_angular);
+        for (int i = 3; i < 6; i++)
+        {
+            ret.cov(i, i) += var;
+        }
+    }
+
+    return ret;
 }
 
 }  // namespace mola::state_estimation_smoother

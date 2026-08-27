@@ -186,6 +186,28 @@ params:
   # the pose and IMU factors.
   sigma_integrator_orientation: ${MOLA_NAVSTATE_SIGMA_INTEGRATOR_ANG|1.0}
 
+  # Flat, dt-independent floor added to the covariance this estimator reports
+  # from estimated_navstate(). 0 = disabled, which is what every release before
+  # these keys existed did, so the shipped default changes nothing.
+  #
+  # Why a floor at all: a front end may use the reported covariance as a WEIGHT.
+  # mola_lidar_odometry turns a non-zero pose.cov_inv into a prior factor inside
+  # its ICP solve, so what this estimator reports decides how hard the
+  # registration is pinned to the prediction. The GTSAM marginal is the graph's
+  # honest opinion of its own extrapolation, and when the window is well
+  # conditioned that opinion is tight enough to dominate the scan data.
+  #
+  # The lightweight estimator has always had this knob under the same two names
+  # (state-estimation-simple.yaml: 0.5 m / 0.1 rad), which is the single largest
+  # difference between the priors the two estimators hand a front end. Set these
+  # to those values to make the two comparable.
+  #
+  # NOTE the env vars are deliberately NOT the simple estimator's
+  # MOLA_NAVSTATE_SIGMA_POSITION/_ANG: a sweep that runs both estimators in the
+  # same batch must be able to move one without moving the other.
+  sigma_relative_pose_linear: ${MOLA_SMOOTHER_SIGMA_REL_POSE_LIN|0.0} # [m]
+  sigma_relative_pose_angular: ${MOLA_SMOOTHER_SIGMA_REL_POSE_ANG|0.0} # [rad]
+
   # Uncertainty for linear velocity estimated from consecutive poses [m/s]
   sigma_twist_from_consecutive_poses_linear: 1.0
 
