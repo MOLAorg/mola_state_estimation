@@ -129,25 +129,31 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
         }
     }
 
-    mrpt::poses::CPose3DPDFGaussian ret = anchorPose + deltaPdf;
+    return anchorPose + deltaPdf;
+}
 
-    // Flat, dt-independent floor on the reported uncertainty. Off by default
-    // (both sigmas 0), so this is a no-op unless deliberately configured.
-    //
-    // Applied here rather than at each call site because every serving path --
-    // the synchronous estimated_navstate(), the asynchronous fast predictor,
-    // and the {map} / {odom_i} frame branches of both -- funnels through this
-    // function, and a floor that only some of them apply is worse than none.
-    //
-    // Isotropic on each block, so it does not depend on whether the consumer
-    // reads the rotation entries in Euler or Lie-tangent order: adding the same
-    // variance to all three commutes with any permutation of them.
+/** Adds the flat, dt-independent floor of sigma_relative_pose_{linear,angular}
+ *  to a pose PDF's covariance, in place. A no-op when both are 0, which is the
+ *  shipped default.
+ *
+ *  Call this as the LAST step of every path that returns a pose to a caller,
+ *  i.e. AFTER any frame conversion. The floor is a statement about the pose the
+ *  caller asked for, and SE(3) composition mixes the angular block into the
+ *  translation one through the lever arm -- so a floor applied before a frame
+ *  change is not a floor in the frame that comes out of it.
+ *
+ *  Isotropic within each block, so it does not depend on whether the consumer
+ *  reads the rotation entries in Euler or Lie-tangent order: adding the same
+ *  variance to all three commutes with any permutation of them.
+ */
+inline void apply_pose_sigma_floor(const Parameters& params, mrpt::poses::CPose3DPDFGaussian& pdf)
+{
     if (params.sigma_relative_pose_linear > 0)
     {
         const double var = mrpt::square(params.sigma_relative_pose_linear);
         for (int i = 0; i < 3; i++)
         {
-            ret.cov(i, i) += var;
+            pdf.cov(i, i) += var;
         }
     }
     if (params.sigma_relative_pose_angular > 0)
@@ -155,11 +161,9 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
         const double var = mrpt::square(params.sigma_relative_pose_angular);
         for (int i = 3; i < 6; i++)
         {
-            ret.cov(i, i) += var;
+            pdf.cov(i, i) += var;
         }
     }
-
-    return ret;
 }
 
 }  // namespace mola::state_estimation_smoother

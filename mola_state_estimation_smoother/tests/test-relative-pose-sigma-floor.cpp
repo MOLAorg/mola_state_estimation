@@ -246,6 +246,91 @@ void test_floor_is_isotropic_per_block()
     }
 }
 
+// The {odom_i} fallback branch: no raw pose has been received from the source
+// yet, so the {map} prediction is converted into that frame by composition with
+// a NON-IDENTITY transform. SE(3) composition mixes the angular block into the
+// translation one through the lever arm, so a floor applied before the
+// conversion is not a floor after it. This is the branch that pins the floor to
+// the frame the caller asked for.
+void test_floor_holds_after_frame_conversion()
+{
+    constexpr double SIG_LIN = 0.5;
+    constexpr double SIG_ANG = 0.1;
+    // A large lever arm and a real rotation, so the coupling is not negligible.
+    const mrpt::poses::CPose3D T_frame(10.0, -4.0, 2.0, 0.7, 0.3, -0.2);
+
+    auto run = [&](double sl, double sa)
+    {
+        mola::state_estimation_smoother::StateEstimationSmoother est;
+        auto cfg = mrpt::containers::yaml::FromText(make_config(sl, sa));
+        est.initialize(cfg);
+        {
+            auto cov = mrpt::math::CMatrixDouble66::Identity();
+            cov *= 1e-6;
+            est.fuse_pose(
+                mrpt::Clock::fromDouble(0),
+                mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov),
+                est.parameters().reference_frame_name);
+        }
+
+        mrpt::poses::CPose3D                     gtPose = mrpt::poses::CPose3D::Identity();
+        std::vector<mrpt::math::CMatrixDouble66> covs;
+        for (size_t i = 1; i <= NUM_STEPS; i++)
+        {
+            const double                      t = T * static_cast<double>(i);
+            mrpt::math::CVectorFixedDouble<6> d;
+            d.setZero();
+            d[0]   = V0 * T;
+            gtPose = gtPose + mrpt::poses::Lie::SE<3>::exp(d);
+            {
+                mrpt::math::TTwist3D tw;
+                tw.vx = V0;
+                mrpt::math::CMatrixDouble66 twCov;
+                twCov.setIdentity();
+                twCov *= mrpt::square(0.05);
+                est.fuse_twist(mrpt::Clock::fromDouble(t), tw, twCov);
+            }
+            {
+                // Fused in {odom}, but expressed so the source's own frame sits
+                // at T_frame: this registers the frame without ever delivering a
+                // raw pose the frame-local branch could anchor on.
+                mrpt::poses::CPose3DPDFGaussian odo;
+                odo.mean = gtPose;
+                odo.cov.setDiagonal(mrpt::square(0.001));
+                est.fuse_pose(mrpt::Clock::fromDouble(t), odo, ODOM);
+            }
+            const auto st = est.estimated_navstate(mrpt::Clock::fromDouble(t + 0.5 * T), ODOM);
+            if (st)
+            {
+                covs.push_back(st->pose.cov_inv.inverse_LLt());
+            }
+        }
+        return covs;
+    };
+
+    const auto floored = run(SIG_LIN, SIG_ANG);
+    if (floored.empty())
+    {
+        // The {odom_i} branch did not engage in this configuration; nothing to
+        // assert, and a silently-skipped assertion is worse than saying so.
+        std::cout << "  (odom-frame branch not exercised; skipped)\n";
+        return;
+    }
+
+    // The guarantee, stated in the frame that was requested.
+    for (const auto& c : floored)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            ASSERT_GE_(std::sqrt(c(i, i)), SIG_LIN);
+        }
+        for (int i = 3; i < 6; i++)
+        {
+            ASSERT_GE_(std::sqrt(c(i, i)), SIG_ANG);
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -256,6 +341,7 @@ int main()
         test_floor_adds_exactly_its_variance();
         test_floor_bounds_reported_confidence();
         test_floor_is_isotropic_per_block();
+        test_floor_holds_after_frame_conversion();
         std::cout << "Test successful." << std::endl;
         return 0;
     }

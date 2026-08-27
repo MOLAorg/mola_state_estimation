@@ -1433,8 +1433,10 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             // forward with the configured kinematic model, propagating covariance.
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(retKf.pose);
-            ret.pose.copyFrom(extrapolate_pose_pdf(
-                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned));
+            auto mapPdf = extrapolate_pose_pdf(
+                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+            apply_pose_sigma_floor(params_, mapPdf);
+            ret.pose.copyFrom(mapPdf);
             navstate_dump_row(timestamp, closestFrameDtSigned, ret);
             return ret;
         }
@@ -1473,7 +1475,12 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             const auto mapPred = extrapolate_pose_pdf(
                 params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
             // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
-            ret.pose.copyFrom(mapPred - itFrame->second);
+            // The floor goes on AFTER the conversion: it is a statement about the
+            // frame the caller asked for, and the composition mixes the angular
+            // block into the translation one through the lever arm.
+            auto framePdf = mapPred - itFrame->second;
+            apply_pose_sigma_floor(params_, framePdf);
+            ret.pose.copyFrom(framePdf);
             navstate_dump_row(timestamp, closestFrameDtSigned, ret);
             return ret;
         }
@@ -1490,8 +1497,10 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         // The anchor is the front end's own near-exact pose in {odom_i}, so
         // prediction uncertainty is dominated by the one-step extrapolation, not
         // the absolute {map}-frame keyframe covariance.
-        ret.pose.copyFrom(
-            extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred));
+        auto rawPdf =
+            extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred);
+        apply_pose_sigma_floor(params_, rawPdf);
+        ret.pose.copyFrom(rawPdf);
         navstate_dump_row(timestamp, dtPred, ret);
 
         return ret;
