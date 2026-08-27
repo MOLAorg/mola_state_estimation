@@ -266,6 +266,42 @@ class Parameters
     double sigma_integrator_position       = 0.10;  // [m]
     double sigma_integrator_orientation    = 0.10;  // [rad]
 
+    /** @name Floor on the uncertainty reported by estimated_navstate()
+     *  @{ */
+
+    /** [m] Flat, dt-independent floor added to the position variance of the
+     * pose returned by estimated_navstate() (and by the asynchronous fast
+     * predictor). 0 disables it, which is the shipped default and reproduces
+     * the behavior of every release before this parameter existed.
+     *
+     * This is NOT a model of anything the graph knows. It exists because a
+     * front end may use the returned covariance as a WEIGHT, not merely as a
+     * diagnostic: mola_lidar_odometry turns a non-zero `pose.cov_inv` into a
+     * prior factor inside its ICP solve. The marginal this estimator reports is
+     * the graph's own opinion of its extrapolation, and when the graph is
+     * confident that opinion is tight enough to pin the registration to the
+     * prediction instead of letting the scan data move it. A floor bounds how
+     * hard the estimator is allowed to lean on the front end, independently of
+     * how well conditioned the window happens to be.
+     *
+     * The lightweight estimator has carried the same knob since it was written
+     * (`mola_state_estimation_simple`, same parameter names, 0.5 m / 0.1 rad),
+     * which is why the two estimators hand a front end priors of very different
+     * strength. Set this to that value to make the two comparable.
+     *
+     * Applied isotropically, so it is invariant to whether the caller reads the
+     * rotation block in Euler (yaw, pitch, roll) or Lie-tangent (w_x, w_y, w_z)
+     * order: adding the same variance to all three diagonal entries commutes
+     * with any permutation of them.
+     */
+    double sigma_relative_pose_linear = 0.0;  // [m]
+
+    /** [rad] Angular counterpart of sigma_relative_pose_linear. 0 disables it.
+     */
+    double sigma_relative_pose_angular = 0.0;  // [rad]
+
+    /** @} */
+
     double sigma_twist_from_consecutive_poses_linear  = 1.0;  // [m/s]
     double sigma_twist_from_consecutive_poses_angular = 1.0;  // [rad/s]
 

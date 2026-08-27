@@ -50,6 +50,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, odometry_relative_factors);
     MCP_LOAD_OPT(cfg, sigma_integrator_position);
     MCP_LOAD_OPT(cfg, sigma_integrator_orientation);
+    MCP_LOAD_OPT(cfg, sigma_relative_pose_linear);
+    MCP_LOAD_OPT(cfg, sigma_relative_pose_angular);
     MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_linear);
     MCP_LOAD_OPT(cfg, sigma_twist_from_consecutive_poses_angular);
 
