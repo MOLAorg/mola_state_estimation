@@ -239,11 +239,18 @@ class StateEstimationSimple : public mola::NavStateFilter
             std::string                       name;
         };
 
-        // Odometry readings waiting to be fused, ordered by timestamp, for the
-        // same reason as pending_imu above: without this, whether a reading is
-        // applied before or after a scan's fuse_pose() is decided by which
-        // thread ran first.
-        std::multimap<mrpt::Clock::time_point, PendingOdometry> pending_odometry;
+        // Odometry readings waiting to be fused, for the same reason as
+        // pending_imu above: without this, whether a reading is applied before
+        // or after a scan's fuse_pose() is decided by which thread ran first.
+        //
+        // Keyed by (timestamp, source name) rather than timestamp alone: two
+        // sources can share an instant, and both handlers mutate last_pose and
+        // the twist filter, so ordering those ties by insertion (i.e. by
+        // arrival) would put the delivery-order dependence straight back. The
+        // name is a stable property of the input. Still a multimap, so two
+        // readings from one source at one instant are both kept.
+        std::multimap<std::pair<mrpt::Clock::time_point, std::string>, PendingOdometry>
+            pending_odometry;
 
         // To be built from parameters strings when changed.
         RegexCache do_process_imu_labels_re;

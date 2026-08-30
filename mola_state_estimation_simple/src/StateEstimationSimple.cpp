@@ -96,8 +96,8 @@ void StateEstimationSimple::reset()
     // reset:
     state_ = State();
 
-    state_.pending_imu       = std::move(pendingImu);
-    state_.pending_odometry  = std::move(pendingOdom);
+    state_.pending_imu      = std::move(pendingImu);
+    state_.pending_odometry = std::move(pendingOdom);
 
     seedInitialTwistFromParams();
 
@@ -453,10 +453,17 @@ void StateEstimationSimple::fuse_odometry_3d_pose_locked(
         // last_pose has been set by LiDAR ICP.
         if (dt > 0 && dt < params.max_time_to_use_velocity_model)
         {
-            const auto   logRot  = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
-            const double dt2     = dt * dt;
-            const double var_lin = mrpt::square(params.sigma_relative_pose_linear) / dt2;
-            const double var_ang = mrpt::square(params.sigma_relative_pose_angular) / dt2;
+            const auto logRot = mrpt::poses::Lie::SO<3>::log(delta.getRotationMatrix());
+
+            // Velocity uncertainty comes from sigma_wheel_odom_*, the same
+            // knobs the 2D path uses, and NOT from sigma_relative_pose_* / dt.
+            // The latter describes a pose from an independent, lower-rate
+            // source; dividing it by this source's own sampling period makes
+            // the reading meaningless as the rate goes up (at 20 Hz, 0.5 m
+            // becomes 10 m/s, so the filter gain is ~0 and a good odometry
+            // source contributes nothing to the twist).
+            const double var_lin = mrpt::square(params.sigma_wheel_odom_linear_vel);
+            const double var_ang = mrpt::square(params.sigma_wheel_odom_angular_vel);
 
             const std::array<double, 6> z = {
                 delta.x() / dt, delta.y() / dt, delta.z() / dt,
@@ -578,15 +585,16 @@ void StateEstimationSimple::bufferPendingOdometry(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
-    state_.pending_odometry.emplace(obs->timestamp, State::PendingOdometry{obs, odomName});
+    state_.pending_odometry.emplace(
+        std::make_pair(obs->timestamp, odomName), State::PendingOdometry{obs, odomName});
 
     // Keep the buffer bounded in case nothing ever asks for an estimate:
-    const auto oldestToKeep =
-        state_.pending_odometry.rbegin()->first -
-        std::chrono::duration_cast<mrpt::Clock::duration>(
-            std::chrono::duration<double>(kPendingOdometryMaxAge));
+    const auto newest       = state_.pending_odometry.rbegin()->first.first;
+    const auto oldestToKeep = newest - std::chrono::duration_cast<mrpt::Clock::duration>(
+                                           std::chrono::duration<double>(kPendingOdometryMaxAge));
     state_.pending_odometry.erase(
-        state_.pending_odometry.begin(), state_.pending_odometry.lower_bound(oldestToKeep));
+        state_.pending_odometry.begin(),
+        state_.pending_odometry.lower_bound(std::make_pair(oldestToKeep, std::string())));
 }
 
 void StateEstimationSimple::fuse_pending_odometry_up_to(const mrpt::Clock::time_point& upTo)
@@ -596,7 +604,12 @@ void StateEstimationSimple::fuse_pending_odometry_up_to(const mrpt::Clock::time_
         return;
     }
 
-    const auto itEnd = state_.pending_odometry.upper_bound(upTo);
+    // Every entry at or before `upTo`, whatever its source name:
+    auto itEnd = state_.pending_odometry.begin();
+    while (itEnd != state_.pending_odometry.end() && itEnd->first.first <= upTo)
+    {
+        ++itEnd;
+    }
     for (auto it = state_.pending_odometry.begin(); it != itEnd; ++it)
     {
         const auto& e = it->second;
@@ -607,8 +620,7 @@ void StateEstimationSimple::fuse_pending_odometry_up_to(const mrpt::Clock::time_
         {
             fuse_odometry_3d_pose_locked(*o3d, e.name);
         }
-        else if (auto o2d =
-                     std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(e.obs);
+        else if (auto o2d = std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(e.obs);
                  o2d)
         {
             fuse_odometry_locked(*o2d, e.name);
@@ -623,7 +635,7 @@ void StateEstimationSimple::fuse_all_pending_odometry()
     {
         return;
     }
-    fuse_pending_odometry_up_to(state_.pending_odometry.rbegin()->first);
+    fuse_pending_odometry_up_to(state_.pending_odometry.rbegin()->first.first);
 }
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -643,6 +655,10 @@ std::optional<mola::Georeferencing> StateEstimationSimple::get_geo_reference() c
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     auto lck = std::scoped_lock(state_mtx_);
+    // Same reason as in the pose paths: apply the odometry readings this
+    // instant covers before using last_pose, so a GNSS correction never
+    // lands on a pose whose odometry updates are still queued.
+    fuse_pending_odometry_up_to(gps.timestamp);
 
     // GNSS fusion is opt-in and needs a geo-reference to place fixes in the map
     // frame. Without either, ignore (legacy behavior; see the smoother for a
