@@ -231,6 +231,27 @@ class StateEstimationSimple : public mola::NavStateFilter
         // would silently discard data that used to be fused.
         std::multimap<mrpt::Clock::time_point, PendingImu> pending_imu;
 
+        // An odometry reading waiting to be fused. Either flavor is kept as the
+        // observation itself, since fusing it re-reads several of its fields.
+        struct PendingOdometry
+        {
+            mrpt::obs::CObservation::ConstPtr obs;
+            std::string                       name;
+        };
+
+        // Odometry readings waiting to be fused, for the same reason as
+        // pending_imu above: without this, whether a reading is applied before
+        // or after a scan's fuse_pose() is decided by which thread ran first.
+        //
+        // Keyed by (timestamp, source name) rather than timestamp alone: two
+        // sources can share an instant, and both handlers mutate last_pose and
+        // the twist filter, so ordering those ties by insertion (i.e. by
+        // arrival) would put the delivery-order dependence straight back. The
+        // name is a stable property of the input. Still a multimap, so two
+        // readings from one source at one instant are both kept.
+        std::multimap<std::pair<mrpt::Clock::time_point, std::string>, PendingOdometry>
+            pending_odometry;
+
         // To be built from parameters strings when changed.
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
@@ -265,6 +286,29 @@ class StateEstimationSimple : public mola::NavStateFilter
     /** Fuses every buffered IMU reading, whatever its timestamp.
      *  Must be called with state_mtx_ already held. */
     void fuse_all_pending_imu();
+
+    /** Stores an incoming odometry observation (either flavor) for later,
+     *  timestamp-ordered fusion. Takes state_mtx_ itself. */
+    void bufferPendingOdometry(
+        const mrpt::obs::CObservation::ConstPtr& obs, const std::string& odomName);
+
+    /** Fuses the buffered odometry readings with a timestamp not newer than
+     *  `upTo`, in timestamp order, and drops them from the buffer. Each one
+     *  fuses the IMU readings preceding it first, so the two streams end up
+     *  interleaved by timestamp.
+     *  Must be called with state_mtx_ already held. */
+    void fuse_pending_odometry_up_to(const mrpt::Clock::time_point& upTo);
+
+    /** Fuses every buffered odometry reading, whatever its timestamp.
+     *  Must be called with state_mtx_ already held. */
+    void fuse_all_pending_odometry();
+
+    /** Bodies of fuse_odometry() / fuse_odometry_3d_pose() without taking
+     *  state_mtx_, so the buffered path can call them while holding it. */
+    void fuse_odometry_locked(
+        const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);
+    void fuse_odometry_3d_pose_locked(
+        const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName);
 
     State state_;
 
