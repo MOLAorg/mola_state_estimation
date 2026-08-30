@@ -359,11 +359,29 @@ void StateEstimationSimple::fuse_odometry_locked(
 {
     fuse_pending_imu_up_to(odom.timestamp);
 
-    // Advance last_pose by the incremental 2D odometry delta:
+    // Advance last_pose by the incremental 2D odometry delta.
+    //
+    // The increment is a HORIZONTAL (x, y, yaw) displacement: CObservationOdometry
+    // carries a CPose2D, so whatever vertical motion the source saw is already
+    // gone by the time it arrives here. Right-composing it onto last_pose would
+    // apply that horizontal displacement along the body's own axes, so on a
+    // pitched platform part of it turns into vertical motion that never
+    // happened (on a 25 deg slope, ~42 % of every step becomes spurious z).
+    // Apply it in the yaw-only frame instead, and leave z, pitch and roll to
+    // the sources that actually observe them.
     if (state_.last_odom_obs && state_.last_pose)
     {
-        const auto poseIncr    = odom.odometry - state_.last_odom_obs->odometry;
-        state_.last_pose->mean = state_.last_pose->mean + mrpt::poses::CPose3D(poseIncr);
+        const auto poseIncr = odom.odometry - state_.last_odom_obs->odometry;
+
+        auto&        p   = state_.last_pose->mean;
+        const double yaw = p.yaw();
+        const double cy  = std::cos(yaw);
+        const double sy  = std::sin(yaw);
+
+        p.x(p.x() + cy * poseIncr.x() - sy * poseIncr.y());
+        p.y(p.y() + sy * poseIncr.x() + cy * poseIncr.y());
+        p.setYawPitchRoll(yaw + poseIncr.phi(), p.pitch(), p.roll());
+
         state_.pose_already_updated_with_odom = true;
     }
     state_.last_odom_obs = odom;
