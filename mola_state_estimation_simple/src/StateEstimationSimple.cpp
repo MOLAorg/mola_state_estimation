@@ -46,6 +46,10 @@ namespace
 /// for a state, since any query or measurement drains everything older than
 /// its own timestamp.
 constexpr double kPendingImuMaxAge = 1.0;
+
+// Same role for buffered odometry. Generous: odometry sources run far slower
+// than an IMU, and dropping one silently loses a pose increment.
+constexpr double kPendingOdometryMaxAge = 5.0;
 }  // namespace
 
 StateEstimationSimple::StateEstimationSimple() = default;
@@ -86,12 +90,14 @@ void StateEstimationSimple::reset()
     // own timestamp covers. Discarding them here would instead make the
     // estimate depend on how many readings happened to be delivered before the
     // reset ran, i.e. on thread scheduling rather than on the input.
-    auto pendingImu = std::move(state_.pending_imu);
+    auto pendingImu  = std::move(state_.pending_imu);
+    auto pendingOdom = std::move(state_.pending_odometry);
 
     // reset:
     state_ = State();
 
-    state_.pending_imu = std::move(pendingImu);
+    state_.pending_imu       = std::move(pendingImu);
+    state_.pending_odometry  = std::move(pendingOdom);
 
     seedInitialTwistFromParams();
 
@@ -342,10 +348,15 @@ void StateEstimationSimple::update_vel_filter(
 }
 
 void StateEstimationSimple::fuse_odometry(
-    const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
+    const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
     auto lck = std::scoped_lock(state_mtx_);
+    fuse_odometry_locked(odom, odomName);
+}
 
+void StateEstimationSimple::fuse_odometry_locked(
+    const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
+{
     fuse_pending_imu_up_to(odom.timestamp);
 
     // Advance last_pose by the incremental 2D odometry delta:
@@ -393,7 +404,12 @@ void StateEstimationSimple::fuse_odometry_3d_pose(
     const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName)
 {
     auto lck = std::scoped_lock(state_mtx_);
+    fuse_odometry_3d_pose_locked(obs, odomName);
+}
 
+void StateEstimationSimple::fuse_odometry_3d_pose_locked(
+    const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName)
+{
     fuse_pending_imu_up_to(obs.timestamp);
 
     // Apply sensor-to-base correction if the sensor is not at the origin:
@@ -555,6 +571,59 @@ void StateEstimationSimple::fuse_all_pending_imu()
         return;
     }
     fuse_pending_imu_up_to(state_.pending_imu.rbegin()->first);
+}
+
+void StateEstimationSimple::bufferPendingOdometry(
+    const mrpt::obs::CObservation::ConstPtr& obs, const std::string& odomName)
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    state_.pending_odometry.emplace(obs->timestamp, State::PendingOdometry{obs, odomName});
+
+    // Keep the buffer bounded in case nothing ever asks for an estimate:
+    const auto oldestToKeep =
+        state_.pending_odometry.rbegin()->first -
+        std::chrono::duration_cast<mrpt::Clock::duration>(
+            std::chrono::duration<double>(kPendingOdometryMaxAge));
+    state_.pending_odometry.erase(
+        state_.pending_odometry.begin(), state_.pending_odometry.lower_bound(oldestToKeep));
+}
+
+void StateEstimationSimple::fuse_pending_odometry_up_to(const mrpt::Clock::time_point& upTo)
+{
+    if (state_.pending_odometry.empty())
+    {
+        return;
+    }
+
+    const auto itEnd = state_.pending_odometry.upper_bound(upTo);
+    for (auto it = state_.pending_odometry.begin(); it != itEnd; ++it)
+    {
+        const auto& e = it->second;
+        // Each of these fuses the IMU readings up to its own timestamp first,
+        // so both buffers are consumed interleaved in timestamp order:
+        if (auto o3d = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(e.obs);
+            o3d)
+        {
+            fuse_odometry_3d_pose_locked(*o3d, e.name);
+        }
+        else if (auto o2d =
+                     std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(e.obs);
+                 o2d)
+        {
+            fuse_odometry_locked(*o2d, e.name);
+        }
+    }
+    state_.pending_odometry.erase(state_.pending_odometry.begin(), itEnd);
+}
+
+void StateEstimationSimple::fuse_all_pending_odometry()
+{
+    if (state_.pending_odometry.empty())
+    {
+        return;
+    }
+    fuse_pending_odometry_up_to(state_.pending_odometry.rbegin()->first);
 }
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -743,6 +812,9 @@ void StateEstimationSimple::fuse_pose(
 
     // The IMU readings up to this measurement's own time belong before it in
     // the filter; newer ones stay buffered (see fuse_imu()):
+    // Apply the odometry readings this instant covers first, so the result
+    // depends on the measurement timestamps and not on delivery order:
+    fuse_pending_odometry_up_to(timestamp);
     fuse_pending_imu_up_to(timestamp);
 
     // Numerical sanity: variances >= 0 (== 0 allowed for some components only)
@@ -879,6 +951,9 @@ void StateEstimationSimple::fuse_twist(
 {
     auto lck = std::scoped_lock(state_mtx_);
 
+    // Apply the odometry readings this instant covers first, so the result
+    // depends on the measurement timestamps and not on delivery order:
+    fuse_pending_odometry_up_to(timestamp);
     fuse_pending_imu_up_to(timestamp);
 
     std::array<double, 6> z = {
@@ -947,6 +1022,9 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
     // Bring the filter up to the queried time, using only the IMU readings that
     // precede it (see fuse_imu()):
+    // Apply the odometry readings this instant covers first, so the result
+    // depends on the measurement timestamps and not on delivery order:
+    fuse_pending_odometry_up_to(timestamp);
     fuse_pending_imu_up_to(timestamp);
 
     if (!state_.last_pose_obs_tim)
@@ -1090,7 +1168,8 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
                                     params.do_process_odometry_labels_re)))
         {
-            this->fuse_odometry(*obsOdom, o->sensorLabel);
+            // Buffered, not fused on arrival: see fuse_pending_odometry_up_to().
+            bufferPendingOdometry(o, o->sensorLabel);
         }
         else
         {
@@ -1111,7 +1190,8 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
             // last_pose_obs_tim (which belongs to the LiDAR ICP source) and
             // applies the pose as an incremental delta in the SLAM frame rather
             // than replacing last_pose with the absolute odom-frame pose.
-            this->fuse_odometry_3d_pose(*obsPose, o->sensorLabel);
+            // Buffered, not fused on arrival: see fuse_pending_odometry_up_to().
+            bufferPendingOdometry(o, o->sensorLabel);
         }
         else
         {
@@ -1150,6 +1230,7 @@ std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist()
     auto lck = std::scoped_lock(state_mtx_);
 
     // No time of interest is given here, so everything received is fused:
+    fuse_all_pending_odometry();
     fuse_all_pending_imu();
 
     return state_.last_twist;
