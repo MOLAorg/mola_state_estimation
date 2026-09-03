@@ -16,14 +16,13 @@
 
   <author email="joseluisblancoc@gmail.com">Jose-Luis Blanco-Claraco</author>
 
-  <!-- <depend>cli11</depend> -->
+  <depend>cli11</depend>
   <depend>gtsam</depend>
   <depend>mola_common</depend>
   <depend>mola_gtsam_factors</depend>
   <depend>mola_yaml</depend>
   <depend>mp2p_icp</depend>
-  <depend>mrpt_libmaps</depend>
-  <depend>mrpt_libtclap</depend>
+  <depend>mrpt_maps</depend>
 
   <doc_depend>doxygen</doc_depend>
 

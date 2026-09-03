@@ -14,176 +14,72 @@
 
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mp2p_icp/metricmap.h>
-#include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/io/CFileGZOutputStream.h>
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 
+#include <CLI/CLI.hpp>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
 
-// CLI flags:
-
-struct Cli
+// ---------------------------------------------------------------------------
+// CLI flags
+// ---------------------------------------------------------------------------
+namespace
 {
-    TCLAP::CmdLine cmd{"mola-sm-georeferencing-cli"};
+CLI::App cmd{"mola-sm-georeferencing-cli"};
 
-    TCLAP::ValueArg<std::string> argInput{
-        "i", "input", "Input .simplemap file", true, "map.simplemap", "map.simplemap", cmd};
+std::string argInput = "map.simplemap";
 
-    TCLAP::ValueArg<std::string> argWriteMMInto{
-        "",    "write-into", "An existing .mm file in which to write the georeferencing metadata",
-        false, "map.mm",     "map.mm",
-        cmd};
+std::string argWriteMMInto = "map.mm";
+std::string argOutput      = "map.georef";
 
-    TCLAP::ValueArg<std::string> argOutput{
-        "o",
-        "output",
-        "Write the obtained georeferencing metadata to a file. The format is "
-        "determined by the file extension: binary gzip (`*.georef`) or YAML "
-        "(`*.yaml`, `*.yml`).",
-        false,
-        "map.georef",
-        "(map.georef|map.yaml)",
-        cmd};
+double       argHorz                        = 1.0;
+double       argIMUGravitySigmaDeg          = 3.0;
+double       argIMUAttitudeSigmaDeg         = 3.0;
+double       argIMUAttitudeYawSigmaDeg      = 15.0;
+double       argIMUAttitudeAzimuthOffsetDeg = 0.0;
+double       argMinUncertaintyXYZ           = 0.20;
+double       argGnssHuberK                  = 1.5;
+unsigned int argMinFixQuality               = 0;
+std::string  argPlugins;
+bool         argNoIMUGravity  = false;
+bool         argNoIMUAttitude = false;
+std::string  argSetEnuToMapXYZ;
+std::string  arg_verbosity_level = "INFO";
 
-    TCLAP::ValueArg<double> argHorz{
-        "",
-        "horizontality-sigma",
-        "For short trajectories (not >10x the GPS uncertainty), this helps to "
-        "avoid degeneracy.",
-        false,
-        1.0,
-        "1.0",
-        cmd};
+CLI::Option* optWriteMMInto;
+CLI::Option* optOutput;
+CLI::Option* optHorz;
+CLI::Option* optIMUGravitySigmaDeg;
+CLI::Option* optIMUAttitudeSigmaDeg;
+CLI::Option* optIMUAttitudeYawSigmaDeg;
+CLI::Option* optIMUAttitudeAzimuthOffsetDeg;
+CLI::Option* optMinUncertaintyXYZ;
+CLI::Option* optGnssHuberK;
+CLI::Option* optMinFixQuality;
+CLI::Option* optPlugins;
+CLI::Option* optSetEnuToMapXYZ;
 
-    TCLAP::ValueArg<double> argIMUGravitySigmaDeg{"",
-                                                  "imu-gravity-sigma-deg",
-                                                  "IMU gravity alignment uncertainty (degrees).",
-                                                  false,
-                                                  3.0,
-                                                  "3.0",
-                                                  cmd};
-
-    TCLAP::ValueArg<double> argIMUAttitudeSigmaDeg{
-        "",
-        "imu-attitude-sigma-deg",
-        "IMU absolute-attitude roll/pitch uncertainty (degrees).",
-        false,
-        3.0,
-        "3.0",
-        cmd};
-
-    TCLAP::ValueArg<double> argIMUAttitudeYawSigmaDeg{
-        "",
-        "imu-attitude-yaw-sigma-deg",
-        "IMU absolute-attitude yaw (azimuth) uncertainty (degrees). Defaults higher "
-        "than the roll/pitch sigma since fused yaw (often magnetometer-based) is "
-        "typically noisier.",
-        false,
-        15.0,
-        "15.0",
-        cmd};
-
-    TCLAP::ValueArg<double> argIMUAttitudeAzimuthOffsetDeg{
-        "",
-        "imu-attitude-azimuth-offset-deg",
-        "Fixed calibration offset (degrees) between the IMU's zero-yaw reading and "
-        "true azimuth, e.g. due to sensor mounting or magnetic declination.",
-        false,
-        0.0,
-        "0.0",
-        cmd};
-
-    TCLAP::ValueArg<double> argMinUncertaintyXYZ{
-        "",
-        "min-gnss-sigma",
-        "Minimum per-axis GNSS uncertainty (meters) used as a floor for the "
-        "ENU noise model. Default: 0.20",
-        false,
-        0.20,
-        "0.20",
-        cmd};
-
-    TCLAP::ValueArg<double> argGnssHuberK{
-        "",
-        "gnss-huber-k",
-        "Parameter 'k' of the Huber robust kernel applied to GNSS position "
-        "factors (whitened units). Default: 1.5",
-        false,
-        1.5,
-        "1.5",
-        cmd};
-
-    TCLAP::ValueArg<unsigned int> argMinFixQuality{
-        "",
-        "min-gnss-fix-quality",
-        "If non-zero, discard GNSS frames whose NMEA GGA fix quality is below "
-        "this value (1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float). Default: 0 "
-        "(filter disabled).",
-        false,
-        0,
-        "0",
-        cmd};
-
-    TCLAP::ValueArg<std::string> argPlugins{
-        "l",
-        "load-plugins",
-        "One or more (comma separated) *.so files to load as plugins, e.g. "
-        "defining new CMetricMap classes",
-        false,
-        "foobar.so",
-        "foobar.so",
-        cmd};
-
-    TCLAP::SwitchArg argNoIMUGravity{
-        "", "no-imu-gravity",
-        "Disable using IMU acceleration data for gravity alignment "
-        "(enabled by default).",
-        cmd, false};
-
-    TCLAP::SwitchArg argNoIMUAttitude{
-        "", "no-imu-attitude",
-        "Disable using IMU absolute-attitude (orientation) data for full attitude "
-        "alignment, including azimuth (enabled by default).",
-        cmd, false};
-
-    TCLAP::ValueArg<std::string> argSetEnuToMapXYZ{
-        "",
-        "set-t-enu-to-map-xyz",
-        "Instead of keeping the GNSS-derived translation of T_enu_to_map (which "
-        "may be several meters from the map origin), force it to the given "
-        "\"X,Y,Z\" (meters, map frame) and move the geodetic datum accordingly so "
-        "the map<->geodetic mapping is preserved. Use \"0,0,0\" to place the ENU "
-        "origin at the map origin. The estimated rotation is kept.",
-        false,
-        "0,0,0",
-        "X,Y,Z",
-        cmd};
-
-    TCLAP::ValueArg<std::string> arg_verbosity_level{
-        "v",   "verbosity", "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)",
-        false, "INFO",      "INFO",
-        cmd};
-};
+}  // namespace
 
 static bool is_binary_georef(const std::string& fil)
 {
     return mrpt::system::extractFileExtension(fil) == "georef";
 }
 
-void run_sm_georef(Cli& cli)
+void run_sm_georef()
 {
-    if (cli.argPlugins.isSet())
+    if (optPlugins->count() > 0)
     {
         std::string sErrs;
-        bool        ok = mrpt::system::loadPluginModules(cli.argPlugins.getValue(), sErrs);
+        bool        ok = mrpt::system::loadPluginModules(argPlugins, sErrs);
         if (!ok)
         {
-            std::cerr << "Errors loading plugins: " << cli.argPlugins.getValue() << std::endl;
+            std::cerr << "Errors loading plugins: " << argPlugins << std::endl;
             throw std::runtime_error(sErrs.c_str());
         }
     }
@@ -191,9 +87,9 @@ void run_sm_georef(Cli& cli)
     mrpt::system::COutputLogger logger;
     logger.setLoggerName("mola-sm-georeferencing-cli");
     logger.setVerbosityLevel(
-        mrpt::typemeta::str2enum<mrpt::system::VerbosityLevel>(cli.arg_verbosity_level.getValue()));
+        mrpt::typemeta::str2enum<mrpt::system::VerbosityLevel>(arg_verbosity_level));
 
-    const auto& filSM = cli.argInput.getValue();
+    const auto& filSM = argInput;
 
     mrpt::maps::CSimpleMap sm;
 
@@ -208,49 +104,49 @@ void run_sm_georef(Cli& cli)
     mola::SMGeoReferencingParams p;
     p.logger = &logger;
 
-    if (cli.argHorz.isSet())
+    if (optHorz->count() > 0)
     {
         p.fgParams.addHorizontalityConstraints = true;
-        p.fgParams.horizontalitySigmaZ         = cli.argHorz.getValue();
+        p.fgParams.horizontalitySigmaZ         = argHorz;
     }
-    if (cli.argMinUncertaintyXYZ.isSet())
+    if (optMinUncertaintyXYZ->count() > 0)
     {
-        p.fgParams.minimumUncertaintyXYZ = cli.argMinUncertaintyXYZ.getValue();
+        p.fgParams.minimumUncertaintyXYZ = argMinUncertaintyXYZ;
     }
-    if (cli.argGnssHuberK.isSet())
+    if (optGnssHuberK->count() > 0)
     {
-        p.fgParams.robustParamHuberK = cli.argGnssHuberK.getValue();
+        p.fgParams.robustParamHuberK = argGnssHuberK;
     }
 
-    if (cli.argMinFixQuality.isSet())
+    if (optMinFixQuality->count() > 0)
     {
-        p.minimumGNSSFixQuality = cli.argMinFixQuality.getValue();
+        p.minimumGNSSFixQuality = argMinFixQuality;
     }
 
-    if (cli.argNoIMUGravity.getValue())
+    if (argNoIMUGravity)
     {
         p.useIMUGravityAlignment = false;
     }
-    if (cli.argIMUGravitySigmaDeg.isSet())
+    if (optIMUGravitySigmaDeg->count() > 0)
     {
-        p.imuGravityParams.imuGravitySigmaDeg = cli.argIMUGravitySigmaDeg.getValue();
+        p.imuGravityParams.imuGravitySigmaDeg = argIMUGravitySigmaDeg;
     }
 
-    if (cli.argNoIMUAttitude.getValue())
+    if (argNoIMUAttitude)
     {
         p.useIMUAttitudeAlignment = false;
     }
-    if (cli.argIMUAttitudeSigmaDeg.isSet())
+    if (optIMUAttitudeSigmaDeg->count() > 0)
     {
-        p.imuAttitudeParams.imuAttitudeSigmaDeg = cli.argIMUAttitudeSigmaDeg.getValue();
+        p.imuAttitudeParams.imuAttitudeSigmaDeg = argIMUAttitudeSigmaDeg;
     }
-    if (cli.argIMUAttitudeYawSigmaDeg.isSet())
+    if (optIMUAttitudeYawSigmaDeg->count() > 0)
     {
-        p.imuAttitudeParams.imuAttitudeYawSigmaDeg = cli.argIMUAttitudeYawSigmaDeg.getValue();
+        p.imuAttitudeParams.imuAttitudeYawSigmaDeg = argIMUAttitudeYawSigmaDeg;
     }
-    if (cli.argIMUAttitudeAzimuthOffsetDeg.isSet())
+    if (optIMUAttitudeAzimuthOffsetDeg->count() > 0)
     {
-        p.imuAttitudeParams.azimuthOffsetDeg = cli.argIMUAttitudeAzimuthOffsetDeg.getValue();
+        p.imuAttitudeParams.azimuthOffsetDeg = argIMUAttitudeAzimuthOffsetDeg;
     }
 
     mola::SMGeoReferencingOutput smGeo = mola::simplemap_georeference(sm, p);
@@ -263,7 +159,7 @@ void run_sm_georef(Cli& cli)
 
     // Optional re-datuming: force T_enu_to_map to a user-defined translation,
     // moving the geodetic datum accordingly (see mola::recenter_georeference).
-    if (cli.argSetEnuToMapXYZ.isSet())
+    if (optSetEnuToMapXYZ->count() > 0)
     {
         if (!smGeo.has_geodetic_datum)
         {
@@ -273,7 +169,7 @@ void run_sm_georef(Cli& cli)
                 "re-datum).");
         }
 
-        std::string s = cli.argSetEnuToMapXYZ.getValue();
+        std::string s = argSetEnuToMapXYZ;
         std::replace(s.begin(), s.end(), ',', ' ');
         std::istringstream   iss(s);
         mrpt::math::TPoint3D xyz;
@@ -281,14 +177,14 @@ void run_sm_georef(Cli& cli)
         {
             THROW_EXCEPTION_FMT(
                 "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",
-                cli.argSetEnuToMapXYZ.getValue().c_str());
+                argSetEnuToMapXYZ.c_str());
         }
         iss >> std::ws;
         if (!iss.eof())
         {
             THROW_EXCEPTION_FMT(
                 "Cannot parse --set-t-enu-to-map-xyz value as \"X,Y,Z\": '%s'",
-                cli.argSetEnuToMapXYZ.getValue().c_str());
+                argSetEnuToMapXYZ.c_str());
         }
 
         smGeo.geo_ref = mola::recenter_georeference(*smGeo.geo_ref, xyz);
@@ -312,7 +208,7 @@ void run_sm_georef(Cli& cli)
               << "T_enu_to_map: " << geo_ref.T_enu_to_map.asString() << "\n";
 
     // Warn if the user has not requested any output at all.
-    if (!cli.argWriteMMInto.isSet() && !cli.argOutput.isSet())
+    if (optWriteMMInto->count() == 0 && optOutput->count() == 0)
     {
         std::cerr
             << "[mola-sm-georeferencing-cli] WARNING: Georeferencing was computed successfully "
@@ -322,39 +218,37 @@ void run_sm_georef(Cli& cli)
                "  The result will be discarded.\n";
     }
 
-    if (cli.argWriteMMInto.isSet())
+    if (optWriteMMInto->count() > 0)
     {
         mp2p_icp::metric_map_t mm;
 
-        std::cout << "[mola-sm-georeferencing-cli] Loading mm map: '"
-                  << cli.argWriteMMInto.getValue() << "'..." << std::endl;
+        std::cout << "[mola-sm-georeferencing-cli] Loading mm map: '" << argWriteMMInto << "'..."
+                  << std::endl;
 
-        const bool loadOk = mm.load_from_file(cli.argWriteMMInto.getValue());
+        const bool loadOk = mm.load_from_file(argWriteMMInto);
         if (!loadOk)
         {
-            THROW_EXCEPTION_FMT(
-                "Error loading input map file: '%s'", cli.argWriteMMInto.getValue().c_str());
+            THROW_EXCEPTION_FMT("Error loading input map file: '%s'", argWriteMMInto.c_str());
         }
 
         // overwrite metadata:
         mm.georeferencing = smGeo.geo_ref;
 
         // and save:
-        const auto saved_ok = mm.save_to_file(cli.argWriteMMInto.getValue());
+        const auto saved_ok = mm.save_to_file(argWriteMMInto);
         if (!saved_ok)
         {
-            std::cerr << "Error saving modified .mm file: '" << cli.argWriteMMInto.getValue()
-                      << "'\n";
+            std::cerr << "Error saving modified .mm file: '" << argWriteMMInto << "'\n";
             return;
         }
 
-        std::cout << "[mola-sm-georeferencing-cli] Writing modified mm map: '"
-                  << cli.argWriteMMInto.getValue() << "'..." << std::endl;
+        std::cout << "[mola-sm-georeferencing-cli] Writing modified mm map: '" << argWriteMMInto
+                  << "'..." << std::endl;
     }
 
-    if (cli.argOutput.isSet())
+    if (optOutput->count() > 0)
     {
-        const std::string outFil = cli.argOutput.getValue();
+        const std::string outFil = argOutput;
 
         std::cout << "[mola-sm-georeferencing-cli] Writing georef data file: '" << outFil << "'..."
                   << std::endl;
@@ -384,17 +278,90 @@ void run_sm_georef(Cli& cli)
 
 int main(int argc, char** argv)
 {
+    cmd.add_option("-i,--input", argInput, "Input .simplemap file")->required();
+
+    optWriteMMInto = cmd.add_option(
+        "--write-into", argWriteMMInto,
+        "An existing .mm file in which to write the georeferencing metadata");
+
+    optOutput = cmd.add_option(
+        "-o,--output", argOutput,
+        "Write the obtained georeferencing metadata to a file. The format is "
+        "determined by the file extension: binary gzip (`*.georef`) or YAML "
+        "(`*.yaml`, `*.yml`).");
+
+    optHorz = cmd.add_option(
+        "--horizontality-sigma", argHorz,
+        "For short trajectories (not >10x the GPS uncertainty), this helps to "
+        "avoid degeneracy.");
+
+    optIMUGravitySigmaDeg = cmd.add_option(
+        "--imu-gravity-sigma-deg", argIMUGravitySigmaDeg,
+        "IMU gravity alignment uncertainty (degrees).");
+
+    optIMUAttitudeSigmaDeg = cmd.add_option(
+        "--imu-attitude-sigma-deg", argIMUAttitudeSigmaDeg,
+        "IMU absolute-attitude roll/pitch uncertainty (degrees).");
+
+    optIMUAttitudeYawSigmaDeg = cmd.add_option(
+        "--imu-attitude-yaw-sigma-deg", argIMUAttitudeYawSigmaDeg,
+        "IMU absolute-attitude yaw (azimuth) uncertainty (degrees). Defaults higher "
+        "than the roll/pitch sigma since fused yaw (often magnetometer-based) is "
+        "typically noisier.");
+
+    optIMUAttitudeAzimuthOffsetDeg = cmd.add_option(
+        "--imu-attitude-azimuth-offset-deg", argIMUAttitudeAzimuthOffsetDeg,
+        "Fixed calibration offset (degrees) between the IMU's zero-yaw reading and "
+        "true azimuth, e.g. due to sensor mounting or magnetic declination.");
+
+    optMinUncertaintyXYZ = cmd.add_option(
+        "--min-gnss-sigma", argMinUncertaintyXYZ,
+        "Minimum per-axis GNSS uncertainty (meters) used as a floor for the "
+        "ENU noise model. Default: 0.20");
+
+    optGnssHuberK = cmd.add_option(
+        "--gnss-huber-k", argGnssHuberK,
+        "Parameter 'k' of the Huber robust kernel applied to GNSS position "
+        "factors (whitened units). Default: 1.5");
+
+    optMinFixQuality = cmd.add_option(
+        "--min-gnss-fix-quality", argMinFixQuality,
+        "If non-zero, discard GNSS frames whose NMEA GGA fix quality is below "
+        "this value (1=GPS, 2=DGPS, 4=RTK fixed, 5=RTK float). Default: 0 "
+        "(filter disabled).");
+
+    optPlugins = cmd.add_option(
+        "-l,--load-plugins", argPlugins,
+        "One or more (comma separated) *.so files to load as plugins, e.g. "
+        "defining new CMetricMap classes");
+
+    cmd.add_flag(
+        "--no-imu-gravity", argNoIMUGravity,
+        "Disable using IMU acceleration data for gravity alignment "
+        "(enabled by default).");
+
+    cmd.add_flag(
+        "--no-imu-attitude", argNoIMUAttitude,
+        "Disable using IMU absolute-attitude (orientation) data for full attitude "
+        "alignment, including azimuth (enabled by default).");
+
+    optSetEnuToMapXYZ = cmd.add_option(
+        "--set-t-enu-to-map-xyz", argSetEnuToMapXYZ,
+        "Instead of keeping the GNSS-derived translation of T_enu_to_map (which "
+        "may be several meters from the map origin), force it to the given "
+        "\"X,Y,Z\" (meters, map frame) and move the geodetic datum accordingly so "
+        "the map<->geodetic mapping is preserved. Use \"0,0,0\" to place the ENU "
+        "origin at the map origin. The estimated rotation is kept.");
+
+    cmd.add_option(
+        "-v,--verbosity", arg_verbosity_level,
+        "Verbosity level: ERROR|WARN|INFO|DEBUG (Default: INFO)");
+
+    CLI11_PARSE(cmd, argc, argv);
+
     try
     {
-        Cli cli;
-
-        // Parse arguments:
-        if (!cli.cmd.parse(argc, argv))
-        {
-            return 1;  // should exit.
-        }
-
-        run_sm_georef(cli);
+        run_sm_georef();
     }
     catch (const std::exception& e)
     {

@@ -27,7 +27,7 @@
   <depend>mola_imu_preintegration</depend>
   <depend>mola_gtsam_factors</depend>
 
-  <depend>mrpt_libobs</depend>
+  <depend>mrpt_obs</depend>
 
   <!-- GTSAM and its Boost deps -->
   <depend>gtsam</depend>

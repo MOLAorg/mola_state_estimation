@@ -36,7 +36,7 @@ project(mola_state_estimation_smoother LANGUAGES CXX)
 find_package(mola_common REQUIRED)
 
 # find CMake dependencies:
-find_package(mrpt-obs)
+find_package(mrpt_obs REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(GTSAM_UNSTABLE REQUIRED)
 
@@ -62,7 +62,7 @@ mola_add_library(
     include/mola_state_estimation_smoother/StateEstimationSmoother.h
     include/mola_state_estimation_smoother/pose_pdf_to_string_with_sigmas.h
   PUBLIC_LINK_LIBRARIES
-    mrpt::obs
+    mrpt::mrpt_obs
     mola::mola_kernel
     mola::mola_imu_preintegration
     mola::mola_gtsam_factors

@@ -18,7 +18,8 @@
   <depend>mola_kernel</depend>
   <depend>mola_imu_preintegration</depend>
   <depend>mola_yaml</depend>
-  <depend>mrpt_libobs</depend>
+  <depend>mrpt_obs</depend>
+  <build_depend>eigen</build_depend>
 
   <doc_depend>doxygen</doc_depend>
 

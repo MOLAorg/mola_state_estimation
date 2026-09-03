@@ -33,14 +33,13 @@ endif()
 project(mola_georeferencing LANGUAGES CXX)
 
 # MOLA CMake scripts: "mola_xxx()"
-#find_package(CLI11 REQUIRED)
+find_package(CLI11 REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(mola_common REQUIRED)
 find_package(mola_gtsam_factors REQUIRED)
 find_package(mola_yaml REQUIRED)
 find_package(mp2p_icp REQUIRED)
-find_package(mrpt-maps REQUIRED)
-find_package(mrpt-tclap REQUIRED)
+find_package(mrpt_maps REQUIRED)
 
 # -----------------------
 # define lib:
@@ -53,13 +52,13 @@ mola_add_library(
   PUBLIC_LINK_LIBRARIES
     gtsam
     mola::mp2p_icp
-    mrpt::maps
+    mrpt::mrpt_maps
   PRIVATE_LINK_LIBRARIES
     mola::mola_gtsam_factors
   CMAKE_DEPENDENCIES
     GTSAM
     mp2p_icp
-    mrpt-maps
+    mrpt_maps
 
 )
 
@@ -71,9 +70,9 @@ mola_add_executable(
   SOURCES apps/mola-sm-georeferencing-cli.cpp
   LINK_LIBRARIES
     ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-    #CLI11::CLI11
+    mrpt::mrpt_maps
+    CLI11::CLI11
+    
 )
 
 mola_add_executable(
@@ -81,9 +80,9 @@ mola_add_executable(
   SOURCES apps/mola-trajectory-georef-cli.cpp
   LINK_LIBRARIES
     ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-    #CLI11::CLI11
+    mrpt::mrpt_maps
+    CLI11::CLI11
+    
 )
 
 mola_add_executable(
@@ -91,9 +90,9 @@ mola_add_executable(
   SOURCES apps/mola-mm-add-geodetic-cli.cpp
   LINK_LIBRARIES
     ${PROJECT_NAME}
-    mrpt::maps
-    mrpt::tclap
-    #CLI11::CLI11
+    mrpt::mrpt_maps
+    CLI11::CLI11
+    
 )
 
 # -----------------------
