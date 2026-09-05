@@ -101,6 +101,12 @@ class Parameters
     /// regex for odometry inputs labels (ROS topics) to be accepted as inputs
     std::string do_process_odometry_labels_re = ".*";
 
+    /** Allow fusing CObservationRobotPose observations labeled "ground_truth",
+     *  which is how MOLA's dataset sources publish their reference trajectory.
+     *  Off by default: fusing it makes any accuracy number measured against
+     *  that same trajectory meaningless. */
+    bool fuse_ground_truth_label = false;
+
     /// regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
     std::string do_process_gnss_labels_re = ".*";
 

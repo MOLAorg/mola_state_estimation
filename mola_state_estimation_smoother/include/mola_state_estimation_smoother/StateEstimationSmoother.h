@@ -314,6 +314,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         };
         std::map<odometry_frameid_t, RawSourcePose> last_raw_pose_by_source;
 
+        /// Per-source bookkeeping for the relative-factor formulation of
+        /// fuse_pose() (see Parameters::relative_factors_frame_ids_re): the
+        /// keyframe carrying that source's one absolute anchor factor, and the
+        /// tail of its chain of increment factors.
+        struct RelativePoseChain
+        {
+            std::optional<frame_index_t>                   anchor_kf;
+            std::optional<frame_index_t>                   last_kf;
+            std::optional<mrpt::poses::CPose3DPDFGaussian> last_pose_in_odom;
+        };
+        std::map<odometry_frameid_t, RelativePoseChain> relative_pose_chains;
+
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
          *  last observation timestamp.
@@ -388,6 +400,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
         RegexCache do_process_gnss_labels_re;
+        RegexCache relative_factors_frame_ids_re;
     };
 
     State      state_;
