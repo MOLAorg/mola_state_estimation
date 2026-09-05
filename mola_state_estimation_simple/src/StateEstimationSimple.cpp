@@ -1216,9 +1216,23 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
-        if (std::regex_match(
-                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
-                                    params.do_process_odometry_labels_re)))
+        if (o->sensorLabel == "ground_truth" && !params.fuse_ground_truth_label)
+        {
+            // MOLA's dataset sources publish their reference trajectory as a
+            // CObservationRobotPose labeled "ground_truth" (KITTI, KITTI-360,
+            // MulRan, Paris-Luco). The offline mola-lidar-odometry-cli never
+            // sees it -- datasetGetObservations() carries only real sensors --
+            // but the online mola-cli replay path does, and fusing it would
+            // silently invalidate any accuracy number measured against that
+            // same trajectory.
+            MRPT_LOG_ONCE_WARN(
+                "Ignoring observations labeled 'ground_truth': fusing a dataset's own reference "
+                "trajectory would invalidate any accuracy evaluation against it. Set "
+                "'fuse_ground_truth_label: true' if that is really what you want.");
+        }
+        else if (std::regex_match(
+                     o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                         params.do_process_odometry_labels_re)))
         {
             // Route to the dedicated 3D-odometry path so it never touches
             // last_pose_obs_tim (which belongs to the LiDAR ICP source) and

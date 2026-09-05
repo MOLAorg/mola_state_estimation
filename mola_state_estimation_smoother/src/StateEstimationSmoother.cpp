@@ -1216,6 +1216,71 @@ void StateEstimationSmoother::fuse_pose_locked(
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out, gtsam::noiseModel::Gaussian::Covariance(cov_out));
     }
+    else if (
+        !params_.relative_factors_frame_ids_re.empty() &&
+        std::regex_match(
+            frame_id,
+            state_.relative_factors_frame_ids_re.get_regex(params_.relative_factors_frame_ids_re)))
+    {
+        // Relative formulation, for a source that DRIFTS: assert only the
+        // increment between consecutive readings, plus one absolute factor
+        // added once to resolve T_map_to_odom_i. Mirrors
+        // fuse_odometry_relative_locked(), generalized to any fuse_pose()
+        // source. See Parameters::relative_factors_frame_ids_re.
+        auto& chain = state_.relative_pose_chains[frame_id_idx];
+
+        if (!chain.anchor_kf.has_value())
+        {
+            state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
+                gtsam::noiseModel::Gaussian::Covariance(cov_out));
+            chain.anchor_kf = this_kf_id;
+
+            MRPT_LOG_DEBUG_FMT(
+                "[fuse_pose] frame '%s' anchored at KF %u (relative formulation)", frame_id.c_str(),
+                static_cast<unsigned>(this_kf_id));
+        }
+
+        // A relative transform is the same quantity in {map} and in {odom_i}:
+        // the two chains differ by one constant rigid T_map_to_odom_i, which
+        // cancels in T_prev^-1 * T_now.
+        if (chain.last_kf.has_value() && chain.last_pose_in_odom.has_value() &&
+            *chain.last_kf != this_kf_id)
+        {
+            // A NEW factor naming a marginalized variable would resurrect it as
+            // a free, unconstrained state: skip it and continue the chain here.
+            if (state_.last_estimated_states.count(*chain.last_kf) == 0)
+            {
+                MRPT_LOG_THROTTLE_DEBUG_FMT(
+                    5.0,
+                    "[fuse_pose] relative factor skipped: KF %u is no longer in the window; "
+                    "the '%s' chain continues from KF %u",
+                    static_cast<unsigned>(*chain.last_kf), frame_id.c_str(),
+                    static_cast<unsigned>(this_kf_id));
+            }
+            else
+            {
+                mrpt::poses::CPose3DPDFGaussian increment;
+                increment.mean = poseSanitized.mean - chain.last_pose_in_odom->mean;
+                // In this mode the caller's covariance describes ONE increment.
+                increment.cov = poseSanitized.cov;
+
+                gtsam::Pose3   incr_out;
+                gtsam::Matrix6 incrCov_out;
+                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
+
+                state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+                    T(*chain.last_kf), T(this_kf_id), incr_out,
+                    gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
+            }
+        }
+
+        chain.last_kf           = this_kf_id;
+        chain.last_pose_in_odom = poseSanitized;
+
+        state_.last_raw_pose_by_source[frame_id_idx] =
+            State::RawSourcePose{timestamp, poseSanitized};
+    }
     else
     {
         // ref is an odometry frame:
@@ -1570,6 +1635,34 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
     else if (auto obsPose = std::dynamic_pointer_cast<const mrpt::obs::CObservationRobotPose>(o);
              obsPose)
     {
+        // Same label filter the CObservationOdometry branch above uses (and
+        // that StateEstimationSimple already applies to this branch): without
+        // it, EVERY robot-pose observation reaching this module is fused,
+        // whatever it is.
+        if (!std::regex_match(
+                o->sensorLabel, state_.do_process_odometry_labels_re.get_regex(
+                                    params_.do_process_odometry_labels_re)))
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "Skipping robot pose reading labeled '%s' for not passing regex",
+                o->sensorLabel.c_str());
+            return;
+        }
+
+        // MOLA's offline dataset sources publish the reference trajectory as a
+        // CObservationRobotPose labeled "ground_truth" (KITTI, KITTI-360,
+        // MulRan, Paris-Luco). Fusing it would silently make every accuracy
+        // number measured against that same trajectory meaningless, so it takes
+        // an explicit opt-in.
+        if (o->sensorLabel == "ground_truth" && !params_.fuse_ground_truth_label)
+        {
+            MRPT_LOG_ONCE_WARN(
+                "Ignoring observations labeled 'ground_truth': fusing a dataset's own reference "
+                "trajectory would invalidate any accuracy evaluation against it. Set "
+                "'fuse_ground_truth_label: true' if that is really what you want.");
+            return;
+        }
+
         auto sensedSensorPose = obsPose->pose;
         if (obsPose->sensorPose != mrpt::poses::CPose3D())
         {
