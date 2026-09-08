@@ -151,11 +151,26 @@ Key traits:
   left the pose covariance ungrown.
 
 Sensor inputs:
-- `fuse_pose()` - localization / LiDAR odometry poses
+- `fuse_pose()` - localization / LiDAR odometry / visual odometry poses
 - `fuse_odometry()` - wheel odometry with uncertainty
 - `fuse_imu()` - gravity alignment, angular velocity, attitude
 - `fuse_gnss()` - GPS in ENU coordinates
 - `fuse_twist()` - direct velocity measurements
+
+`fuse_pose()` with a `frame_id` other than the reference frame asserts an
+ABSOLUTE pose in that source's own frame, i.e. that the source relates to
+`{map}` by one rigid transform. For a source that drifts (visual odometry),
+list its frame_id in `relative_factors_frame_ids_re` instead: it is then fused
+as increments between consecutive keyframes plus one absolute anchor, which is
+`odometry_relative_factors` generalized from wheel odometry. In that mode the
+covariance passed is read as the uncertainty of ONE INCREMENT. It is a trade,
+not a free win - see the parameter docs and `test-relative-pose-factors`.
+
+**Never fuse a dataset's own ground truth.** MOLA's dataset sources publish
+their reference trajectory as a `CObservationRobotPose` labeled
+`ground_truth`; both estimators refuse that label unless
+`fuse_ground_truth_label: true`. Belt and braces for a benchmark sweep:
+`MOLA_PUBLISH_GROUND_TRUTH=false` stops the dataset publishing it at all.
 
 ### 3. `mola_gtsam_factors`
 

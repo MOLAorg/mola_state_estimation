@@ -324,6 +324,21 @@ params:
   # Default accepts all: ".*"
   do_process_odometry_labels_re: ".*"
 
+  # Odometry frame_ids (fuse_pose) fused as RELATIVE increments between
+  # consecutive keyframes plus one absolute anchor, instead of as an absolute
+  # pose per reading. This is what a DRIFTING source needs: an absolute-pose
+  # factor claims the source relates to {map} by one rigid transform, which
+  # only holds while the drift accumulated across the sliding window stays
+  # under the covariance given. Visual odometry is the motivating case.
+  # In this mode the covariance a source passes is read as the uncertainty of
+  # ONE INCREMENT. Empty = every source stays on the absolute formulation.
+  relative_factors_frame_ids_re: "${MOLA_RELATIVE_FACTORS_FRAMES|}"
+
+  # Fusing a dataset's own reference trajectory (a CObservationRobotPose
+  # labeled "ground_truth") would invalidate any accuracy number measured
+  # against it. Opt-in only.
+  fuse_ground_truth_label: ${MOLA_FUSE_GROUND_TRUTH|false}
+
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
   do_process_gnss_labels_re: ".*"
