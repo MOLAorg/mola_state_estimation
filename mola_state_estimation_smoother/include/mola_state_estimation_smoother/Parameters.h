@@ -232,6 +232,37 @@ class Parameters
      */
     bool odometry_relative_factors = false;
 
+    /** Regex of odometry frame_ids (see fuse_pose()) whose poses are fused as
+     *  RELATIVE increments between consecutive keyframes, plus one absolute
+     *  factor added once to resolve T_map_to_odom_i, instead of as an absolute
+     *  pose per reading. This is the odometry_relative_factors formulation
+     *  above, generalized from wheel odometry to any fuse_pose() source.
+     *
+     *  It is what a DRIFTING source needs. An absolute-pose factor asserts that
+     *  the source's whole trajectory relates to {map} by one rigid transform,
+     *  which only holds while the drift accumulated across the sliding window
+     *  stays below the covariance given; a relative factor asserts only the
+     *  increment, which is drift-free by construction. Visual odometry is the
+     *  motivating case: its per-increment accuracy can be excellent while its
+     *  absolute pose in its own frame walks away steadily.
+     *
+     *  In relative mode the covariance passed to fuse_pose() is read as the
+     *  uncertainty of ONE INCREMENT, not of the absolute pose.
+     *
+     *  It is a trade, not a free win, and which way it goes depends on how much
+     *  the source drifts across the sliding window. Measured on the synthetic
+     *  case in test-relative-pose-factors: with a source whose frame slides
+     *  0.05 m/s (0.25 m across a 5 s window, fifty times its declared
+     *  per-increment sigma) the absolute formulation degrades by 2.3x while the
+     *  relative one does not move at all -- but with no drift at all the
+     *  absolute formulation is the better of the two, because N absolute poses
+     *  carry more information than N increments. Use this for a source that
+     *  really does drift; leave it off otherwise.
+     *
+     *  Empty (the default) keeps every source on the absolute formulation.
+     */
+    std::string relative_factors_frame_ids_re;
+
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.
      * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so
@@ -450,6 +481,12 @@ class Parameters
 
     /// regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
     std::string do_process_gnss_labels_re = ".*";
+
+    /** Allow fusing CObservationRobotPose observations labeled "ground_truth",
+     *  which is how MOLA's offline dataset sources publish their reference
+     *  trajectory. Off by default: fusing it makes any accuracy number measured
+     *  against that same trajectory meaningless. */
+    bool fuse_ground_truth_label = false;
 
     /** @} */
 
