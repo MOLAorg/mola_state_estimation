@@ -193,6 +193,22 @@ Offline georeferencing of MOLA SimpleMaps using GNSS and IMU observations.
 Main function: `simplemap_georeference()` -- takes a `CSimpleMap` with GNSS
 observations and returns an optimal ENU-to-map transformation + RMSE.
 
+Azimuth observability, two silent failure modes worth knowing:
+
+- The **degeneracy check** in `extract_gnss_frames_from_sm()` is HORIZONTAL
+  only (East/North bounding-box diagonal vs 3x the minimum horizontal sigma).
+  GNSS altitude neither observes azimuth nor behaves: indoors, a multipath
+  altitude drift of tens of meters is routine and, when Up was part of the
+  test, was enough to clear the flag on a map whose azimuth was unobservable.
+  The horizontal test is strictly stronger, so nothing a 3D test caught is
+  lost.
+- IMU **absolute attitude** is the only input that observes azimuth
+  independently of GNSS, and it only reaches the simplemap if the producer
+  stored `CObservationIMU` in the keyframes (MOLA-LO does so only with its
+  `simplemap.save_imu_max_age` option enabled). With no attitude frames,
+  `azimuthOffsetDeg` is a no-op and yaw rests entirely on GNSS -- so the
+  function warns in that case.
+
 ## Class hierarchy
 
 ```

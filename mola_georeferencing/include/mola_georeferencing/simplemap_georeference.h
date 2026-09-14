@@ -162,12 +162,15 @@ struct GNSSFrames
     std::vector<FrameGNSS>                           frames;
     std::optional<mrpt::topography::TGeodeticCoords> refCoord;
 
-    /// Set to true by extract_gnss_frames_from_sm() when the spatial spread of
-    /// the GNSS observations is too small with respect to their uncertainty
-    /// (specifically, when the ENU bounding-box diagonal is not larger than 3x
-    /// the minimum per-axis sigma). In such a degenerate configuration, the
-    /// georeferencing/global-attitude problem is ill-conditioned (e.g. the map
-    /// roll/pitch becomes unobservable and can take absurd values).
+    /// Set to true by extract_gnss_frames_from_sm() when the HORIZONTAL spread
+    /// of the GNSS observations is too small with respect to their uncertainty
+    /// (specifically, when the East/North bounding-box diagonal is not larger
+    /// than 3x the minimum horizontal per-axis sigma). In such a degenerate
+    /// configuration, the georeferencing/global-attitude problem is
+    /// ill-conditioned (e.g. the map azimuth becomes unobservable and can take
+    /// absurd values). The Up axis is deliberately excluded: it does not
+    /// observe azimuth, and a large multipath-driven altitude drift would
+    /// otherwise mask an unobservable one.
     bool possibly_degenerate = false;
 };
 

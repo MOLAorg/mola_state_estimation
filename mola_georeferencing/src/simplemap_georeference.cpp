@@ -95,6 +95,26 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
             params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
         }
 
+        // A simplemap with no absolute-orientation data leaves the azimuth to
+        // GNSS alone, which is silent but often ill-conditioned. Note that
+        // MOLA-LO only writes IMU observations into the simplemap when its
+        // `simplemap.save_imu_max_age` option is enabled.
+        if (params.useIMUAttitudeAlignment && nAttitude == 0 && params.logger)
+        {
+            std::stringstream ss;
+            ss << "[simplemap_georeference] IMU absolute-attitude alignment is enabled, but "
+                  "the simplemap carries no IMU orientation data: the map azimuth (yaw) will "
+                  "be determined by GNSS alone.";
+
+            if (params.imuAttitudeParams.azimuthOffsetDeg != 0)
+            {
+                ss << " The requested azimuthOffsetDeg="
+                   << params.imuAttitudeParams.azimuthOffsetDeg << " deg therefore has no effect.";
+            }
+
+            params.logger->logStr(mrpt::system::LVL_WARN, ss.str());
+        }
+
         if (params.useIMUGravityAlignment && nGravity > 0)
         {
             hasIMUGravityFactors = true;
@@ -346,24 +366,27 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
 
     // Degeneracy check: the spatial spread of the GNSS observations must be
     // large compared to their uncertainty, otherwise the global-attitude
-    // (roll/pitch/yaw) problem is ill-conditioned. We compare the ENU
-    // bounding-box diagonal against 3x the smallest per-axis sigma.
+    // (roll/pitch/yaw) problem is ill-conditioned. The test is HORIZONTAL only:
+    // the azimuth is observed by the East/North spread alone, and GNSS altitude
+    // is both the noisiest axis and the one prone to large multipath drifts, so
+    // including Up in the comparison lets a purely spurious vertical excursion
+    // hide an unobservable azimuth. Since the 3D diagonal is never smaller than
+    // the horizontal one, and the 3-axis minimum sigma never larger than the
+    // horizontal one, this test also flags everything a 3D test would.
     if (ret.frames.size() >= 2)
     {
-        mrpt::math::TPoint3D bbMin    = ret.frames.front().enu;
-        mrpt::math::TPoint3D bbMax    = ret.frames.front().enu;
+        mrpt::math::TPoint2D bbMin    = {ret.frames.front().enu.x, ret.frames.front().enu.y};
+        mrpt::math::TPoint2D bbMax    = bbMin;
         double               minSigma = std::numeric_limits<double>::max();
 
         for (const auto& f : ret.frames)
         {
             bbMin.x = std::min(bbMin.x, f.enu.x);
             bbMin.y = std::min(bbMin.y, f.enu.y);
-            bbMin.z = std::min(bbMin.z, f.enu.z);
             bbMax.x = std::max(bbMax.x, f.enu.x);
             bbMax.y = std::max(bbMax.y, f.enu.y);
-            bbMax.z = std::max(bbMax.z, f.enu.z);
 
-            minSigma = std::min({minSigma, f.sigma_E, f.sigma_N, f.sigma_U});
+            minSigma = std::min({minSigma, f.sigma_E, f.sigma_N});
         }
 
         const double bboxDiagonal = (bbMax - bbMin).norm();
@@ -376,13 +399,14 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
                       << "############################################################\n"
                       << "# [extract_gnss_frames_from_sm] WARNING: POSSIBLY DEGENERATE\n"
                       << "# GNSS configuration detected.\n"
-                      << "#   ENU bounding-box diagonal: " << bboxDiagonal << " m\n"
-                      << "#   minimum per-axis sigma:    " << minSigma << " m\n"
+                      << "#   ENU horizontal bounding-box diagonal: " << bboxDiagonal << " m\n"
+                      << "#   minimum horizontal sigma:             " << minSigma << " m\n"
                       << "#   (diagonal must be > 3x the minimum sigma = " << 3.0 * minSigma
                       << " m)\n"
-                      << "# The spatial spread of the " << ret.frames.size()
-                      << " GNSS observations is too small with respect to\n"
-                      << "# their uncertainty. The estimated global attitude (map roll/pitch/yaw)\n"
+                      << "# The horizontal spread of the " << ret.frames.size()
+                      << " GNSS observations is too small with respect\n"
+                      << "# to their uncertainty. The estimated global attitude (map "
+                         "roll/pitch/yaw)\n"
                       << "# is likely unobservable and may take absurd values.\n"
                       << "############################################################\n"
                       << std::endl;

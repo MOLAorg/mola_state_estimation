@@ -110,6 +110,32 @@ void test_non_degenerate_spread()
     expect(frames.frames.size() == 5, "all 5 GNSS frames should be extracted");
     expect(!frames.possibly_degenerate, "a wide spatial spread must NOT be flagged as degenerate");
 }
+
+// A tight horizontal cluster whose altitude drifts far (indoor GNSS multipath):
+// the vertical excursion must not hide the unobservable azimuth.
+void test_vertical_drift_does_not_mask_degeneracy()
+{
+    std::cout << "[test] vertical drift does not mask a degenerate horizontal spread...\n";
+
+    const double                                   baseLat = 37.0;
+    const double                                   baseLon = -2.0;
+    const double                                   baseH   = 100.0;
+    std::vector<mrpt::topography::TGeodeticCoords> coords;
+
+    // ~0.11 m of horizontal motion per step, but 5 m of altitude drift per step:
+    for (int i = 0; i < 5; i++)
+    {
+        coords.emplace_back(baseLat + i * 1e-6, baseLon + i * 1e-6, baseH + i * 5.0);
+    }
+
+    const auto sm     = make_sm_with_gnss(coords, /*sigma_m=*/0.5);
+    const auto frames = mola::extract_gnss_frames_from_sm(sm);
+
+    expect(frames.frames.size() == 5, "all 5 GNSS frames should be extracted");
+    expect(
+        frames.possibly_degenerate,
+        "a large vertical drift must not clear the degeneracy flag of a tiny horizontal spread");
+}
 }  // namespace
 
 int main()
@@ -118,6 +144,7 @@ int main()
     {
         test_degenerate_cluster();
         test_non_degenerate_spread();
+        test_vertical_drift_does_not_mask_degeneracy();
         std::cout << "\n[Success] GNSS degeneracy detection tests passed!\n";
         return 0;
     }
