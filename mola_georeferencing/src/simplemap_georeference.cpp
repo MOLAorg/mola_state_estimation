@@ -32,11 +32,54 @@
 #include <mola_gtsam_factors/FactorGnssEnu.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#if GTSAM_USES_BOOST
+#include <boost/pointer_cast.hpp>
+#endif
+
 #include <algorithm>
-#include <limits>
 #include <iomanip>
+#include <limits>
+
+namespace
+{
+template <typename Derived, typename Base>
+auto shared_dynamic_cast(const Base& p)
+{
+#if GTSAM_USES_BOOST
+    return boost::dynamic_pointer_cast<Derived>(p);
+#else
+    return std::dynamic_pointer_cast<Derived>(p);
+#endif
+}
+
+std::string factor_type_name(const gtsam::NonlinearFactor::shared_ptr& f)
+{
+    if (shared_dynamic_cast<mola::factors::FactorGnssEnu>(f))
+    {
+        return "FactorGnssEnu";
+    }
+    if (shared_dynamic_cast<mola::factors::MeasuredGravityFactor>(f))
+    {
+        return "MeasuredGravityFactor";
+    }
+    if (shared_dynamic_cast<mola::factors::Pose3RotationFactor>(f))
+    {
+        return "Pose3RotationFactor";
+    }
+    if (shared_dynamic_cast<gtsam::BetweenFactor<gtsam::Pose3>>(f))
+    {
+        return "BetweenFactor<Pose3>";
+    }
+    if (shared_dynamic_cast<gtsam::PriorFactor<gtsam::Pose3>>(f))
+    {
+        return "PriorFactor<Pose3>";
+    }
+    return typeid(*f).name();  // fallback: mangled name
+}
+}  // namespace
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -159,6 +202,70 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     if (DEBUG_PRINT_FG_ERRORS)
     {
         graph.printErrors(optimal, "\n===\nFG errors:\n");
+    }
+
+    thread_local bool DEBUG_PRINT_LARGE_ERRORS =
+        mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_LARGE_FACTOR_ERRORS", false);
+    if (DEBUG_PRINT_LARGE_ERRORS)
+    {
+        const double errThreshold =
+            mrpt::get_env<double>("MOLA_SM_GEOREF_LARGE_FACTOR_ERROR_THRESHOLD", 5.0);
+        const size_t maxPrint =
+            mrpt::get_env<int>("MOLA_SM_GEOREF_LARGE_FACTOR_ERROR_MAX_PRINT", 100);
+
+        std::vector<std::pair<double, size_t>> errs;  // (error, factor index in graph)
+        errs.reserve(graph.size());
+        for (size_t i = 0; i < graph.size(); i++)
+        {
+            const auto& f = graph.at(i);
+            if (!f)
+            {
+                continue;  // removed/null slots are possible in a NonlinearFactorGraph
+            }
+            errs.emplace_back(f->error(optimal), i);
+        }
+        std::sort(errs.begin(), errs.end(), std::greater<>());
+
+        std::stringstream ss;
+        ss << "\n===\nFactors with error > " << errThreshold << " (0.5*whitened residual^2), "
+           << "sorted descending, top " << maxPrint << ":\n";
+
+        size_t printed = 0;
+        for (const auto& [e, idx] : errs)
+        {
+            if (e < errThreshold || printed >= maxPrint)
+            {
+                break;
+            }
+            const auto& f = graph.at(idx);
+            ss << "  [" << idx << "] error=" << e << "  type=" << factor_type_name(f) << "  keys=";
+            for (auto k : f->keys())
+            {
+                ss << gtsam::DefaultKeyFormatter(k) << " ";
+            }
+            // If this factor touches a P(kf) key, print the keyframe's initial vehicle-pose
+            // translation for spatial context:
+            for (auto k : f->keys())
+            {
+                if (v.exists(k) && k != gtsam::symbol_shorthand::T(0))
+                {
+                    const auto& pose3 = v.at<gtsam::Pose3>(k);
+                    ss << " pos=(" << pose3.x() << "," << pose3.y() << "," << pose3.z() << ")";
+                }
+            }
+            ss << "\n";
+            printed++;
+        }
+        ss << "(" << errs.size() << " factors total, " << printed << " shown above threshold)\n";
+
+        if (params.logger)
+        {
+            params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+        }
+        else
+        {
+            std::cout << ss.str();
+        }
     }
 
     const double errInit = graph.error(v);
