@@ -48,7 +48,8 @@ mrpt::topography::TGeodeticCoords geodetic_of_map_point(
     mrpt::math::TPose3D enuPose;
     mrpt::topography::ENU_axes_from_WGS84(g.geo_coord, enuPose, /*only_angles=*/false);
     mrpt::math::TPoint3D geocentric;
-    mrpt::poses::CPose3D(enuPose).composePoint(p_enu.x, p_enu.y, p_enu.z, geocentric.x, geocentric.y, geocentric.z);
+    mrpt::poses::CPose3D(enuPose).composePoint(
+        p_enu.x, p_enu.y, p_enu.z, geocentric.x, geocentric.y, geocentric.z);
 
     // geocentric -> geodetic:
     mrpt::topography::TGeodeticCoords geo;
@@ -65,7 +66,7 @@ mp2p_icp::metric_map_t::Georeferencing make_georef()
     mp2p_icp::metric_map_t::Georeferencing g;
     g.geo_coord.lat    = 56.108686;  // deg
     g.geo_coord.lon    = 10.125739;  // deg
-    g.geo_coord.height = 100.0;      // m
+    g.geo_coord.height = 100.0;  // m
 
     // yaw=30deg, pitch=5deg, roll=-3deg; translation several meters:
     g.T_enu_to_map.mean = mrpt::poses::CPose3D(
