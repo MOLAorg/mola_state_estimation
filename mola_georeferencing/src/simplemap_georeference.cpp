@@ -285,7 +285,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         std::stringstream ss;
         ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
            << ", init error: " << errInit << " (rmse=" << rmseInit << "), final error: " << errEnd
-           << "(rmse=" << rmseEnd << ") , for " << smFrames.frames.size()
+           << " (rmse=" << rmseEnd << ") , for " << smFrames.frames.size()
            << " frames, GTSAM sigmas: " << mrpt::RAD2DEG(stds[0]) << " [deg], "
            << mrpt::RAD2DEG(stds[1]) << " [deg], " << mrpt::RAD2DEG(stds[2]) << " [deg], "
            << stds[3] << " [m], " << stds[4] << " [m], " << stds[5] << " [m]";
@@ -597,15 +597,59 @@ mola::IMUFrames mola::extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& s
 
         const auto p = pose->getMeanVal();
 
+        // 0) Prefer the averaged accelerometer reading from the local velocity
+        // buffer, if available for this keyframe: it already fuses every accel
+        // sample in the keyframe's window, so it is a better gravity estimate
+        // than any single raw CObservationIMU reading below. When present, it
+        // takes priority and the per-observation accel extraction in step 1 is
+        // skipped (attitude is unaffected: it has no buffered equivalent).
+        std::optional<gtsam::Vector3> bufferedAcc;
+
+#if defined(HAS_VELOCITY_BUFFER)
+        {
+            mola::imu::LocalVelocityBuffer lvb;
+            for (const auto& o : *sf)
+            {
+                mp2p_icp::update_velocity_buffer_from_obs(lvb, o);
+            }
+
+            gtsam::Vector3 avr_acc   = gtsam::Vector3::Zero();
+            size_t         avr_count = 0;
+
+            for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
+            {
+                const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
+                if (mola::factors::imu_accel_looks_like_gravity(acc))
+                {
+                    avr_count++;
+                    avr_acc += acc;
+                }
+            }
+
+            if (avr_count > 0)
+            {
+                bufferedAcc = (avr_acc / static_cast<double>(avr_count)).normalized();
+
+                auto& f               = ret.frames.emplace_back();
+                f.kf_index            = kfIdx;
+                f.vehiclePose         = p;
+                f.sensorPoseOnVehicle = mrpt::poses::CPose3D::Identity();
+                f.normalizedAcc       = bufferedAcc;
+            }
+        }
+#endif
+
         // 1) Process direct CObservationIMU observations, if available. A single
         // observation may carry a gravity (accelerometer) reading, an absolute
-        // attitude (orientation) reading, or both:
+        // attitude (orientation) reading, or both. The accel reading is skipped
+        // when step 0 already produced a buffered average for this keyframe;
+        // attitude has no buffered equivalent and is always extracted.
         mrpt::obs::CObservationIMU::Ptr obs;
         for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationIMU>(i)); i++)
         {
             std::optional<gtsam::Vector3> acc;
-            if (obs->has(mrpt::obs::IMU_X_ACC) && obs->has(mrpt::obs::IMU_Y_ACC) &&
-                obs->has(mrpt::obs::IMU_Z_ACC))
+            if (!bufferedAcc.has_value() && obs->has(mrpt::obs::IMU_X_ACC) &&
+                obs->has(mrpt::obs::IMU_Y_ACC) && obs->has(mrpt::obs::IMU_Z_ACC))
             {
                 const gtsam::Vector3 measuredGravity = {
                     obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
@@ -643,42 +687,6 @@ mola::IMUFrames mola::extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& s
             f.normalizedAcc       = acc;
             f.rawAttitude         = attitude;
         }
-
-        // 2) Process embedded IMU acceleration info embedded into the metadata.
-        // (No absolute-attitude equivalent here: the buffered orientation is only
-        // gravity-leveled, not azimuth-referenced, so it is not usable for this.)
-#if defined(HAS_VELOCITY_BUFFER)
-        mola::imu::LocalVelocityBuffer lvb;
-        for (const auto& o : *sf)
-        {
-            mp2p_icp::update_velocity_buffer_from_obs(lvb, o);
-        }
-
-        // Get the current linear accelerations map (in the vehicle frame of reference)
-        // Average them all so there are not too many factors:
-        gtsam::Vector3 avr_acc   = gtsam::Vector3::Zero();
-        size_t         avr_count = 0;
-
-        for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
-        {
-            const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
-            if (mola::factors::imu_accel_looks_like_gravity(acc))
-            {
-                avr_count++;
-                avr_acc += acc;
-            }
-        }
-
-        if (avr_count > 0)
-        {
-            auto& f               = ret.frames.emplace_back();
-            f.kf_index            = kfIdx;
-            f.vehiclePose         = p;
-            f.sensorPoseOnVehicle = mrpt::poses::CPose3D::Identity();
-            f.normalizedAcc       = (avr_acc / static_cast<double>(avr_count)).normalized();
-        }
-
-#endif
     }  // end for each SM keyframe
 
     return ret;
