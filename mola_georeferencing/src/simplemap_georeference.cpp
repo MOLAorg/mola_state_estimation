@@ -30,13 +30,280 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#if GTSAM_USES_BOOST
+#include <boost/pointer_cast.hpp>
+#endif
+
 #include <algorithm>
-#include <limits>
+#include <fstream>
 #include <iomanip>
+#include <limits>
+
+namespace
+{
+template <typename Derived, typename Base>
+auto shared_dynamic_cast(const Base& p)
+{
+#if GTSAM_USES_BOOST
+    return boost::dynamic_pointer_cast<Derived>(p);
+#else
+    return std::dynamic_pointer_cast<Derived>(p);
+#endif
+}
+
+std::string factor_type_name(const gtsam::NonlinearFactor::shared_ptr& f)
+{
+    if (shared_dynamic_cast<mola::factors::FactorGnssEnu>(f))
+    {
+        return "FactorGnssEnu";
+    }
+    if (shared_dynamic_cast<mola::factors::FactorGnssMapEnu>(f))
+    {
+        return "FactorGnssMapEnu";
+    }
+    if (shared_dynamic_cast<mola::factors::MeasuredGravityFactor>(f))
+    {
+        return "MeasuredGravityFactor";
+    }
+    if (shared_dynamic_cast<mola::factors::Pose3RotationFactor>(f))
+    {
+        return "Pose3RotationFactor";
+    }
+    if (shared_dynamic_cast<gtsam::BetweenFactor<gtsam::Pose3>>(f))
+    {
+        return "BetweenFactor<Pose3>";
+    }
+    if (shared_dynamic_cast<gtsam::PriorFactor<gtsam::Pose3>>(f))
+    {
+        return "PriorFactor<Pose3>";
+    }
+    return typeid(*f).name();  // fallback: mangled name
+}
+
+/// Timestamp both diagnostic dumps report each observation's age against: the
+/// first observation in the keyframe that is neither IMU nor GNSS, i.e. the
+/// sensor that defines the keyframe (typically the LiDAR scan). Falls back to
+/// the earliest timestamp present when the keyframe carries none, so the two
+/// dumps always measure offsets against the very same instant.
+mrpt::system::TTimeStamp keyframe_reference_timestamp(const mrpt::obs::CSensoryFrame& sf)
+{
+    mrpt::system::TTimeStamp ret      = INVALID_TIMESTAMP;
+    mrpt::system::TTimeStamp earliest = INVALID_TIMESTAMP;
+
+    for (const auto& o : sf)
+    {
+        if (o->timestamp == INVALID_TIMESTAMP)
+        {
+            continue;
+        }
+        if (earliest == INVALID_TIMESTAMP || o->timestamp < earliest)
+        {
+            earliest = o->timestamp;
+        }
+        if (ret != INVALID_TIMESTAMP)
+        {
+            continue;
+        }
+        if (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o) ||
+            std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o))
+        {
+            continue;
+        }
+        ret = o->timestamp;
+    }
+
+    return ret != INVALID_TIMESTAMP ? ret : earliest;
+}
+
+/// Optional per-keyframe dump of every GNSS observation and its residual
+/// against the optimized solution. Enabled by MOLA_SM_GEOREF_DUMP_GNSS=<file>.
+void dump_gnss_residuals(
+    const mrpt::maps::CSimpleMap& sm, const mola::GNSSFrames& smFrames,
+    const gtsam::Values& optimal, mrpt::system::COutputLogger* logger)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+
+    const std::string outFile = mrpt::get_env<std::string>("MOLA_SM_GEOREF_DUMP_GNSS", "");
+    if (outFile.empty())
+    {
+        return;
+    }
+
+    std::ofstream f(outFile);
+    f << "# kf_idx t_kf obs_e obs_n obs_u pred_e pred_n pred_u res_e res_n res_u "
+         "map_x map_y map_z dt_gnss_minus_kf\n";
+    f << std::fixed << std::setprecision(6);
+
+    const auto T0opt = optimal.at<gtsam::Pose3>(T(0));
+
+    for (const auto& frame : smFrames.frames)
+    {
+        const auto key = P(frame.kf_index);
+        if (!optimal.exists(key))
+        {
+            continue;
+        }
+
+        const auto Pi      = optimal.at<gtsam::Pose3>(key);
+        const auto antenna = mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
+        const gtsam::Point3 pred = (T0opt * Pi).transformFrom(antenna);
+
+        double tRefSeconds = std::numeric_limits<double>::quiet_NaN();
+        double dtGnss      = std::numeric_limits<double>::quiet_NaN();
+        {
+            const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
+
+            const auto tRef = keyframe_reference_timestamp(*kfSf);
+            if (tRef != INVALID_TIMESTAMP)
+            {
+                tRefSeconds = mrpt::Clock::toDouble(tRef);
+                dtGnss      = mrpt::system::timeDifference(tRef, frame.obs->timestamp);
+            }
+        }
+
+        f << frame.kf_index << " " << tRefSeconds << " "  //
+          << frame.enu.x << " " << frame.enu.y << " " << frame.enu.z << " "  //
+          << pred.x() << " " << pred.y() << " " << pred.z() << " "  //
+          << (frame.enu.x - pred.x()) << " " << (frame.enu.y - pred.y()) << " "
+          << (frame.enu.z - pred.z()) << " "  //
+          << Pi.x() << " " << Pi.y() << " " << Pi.z() << " " << dtGnss << "\n";
+    }
+
+    if (logger)
+    {
+        logger->logFmt(
+            mrpt::system::LVL_INFO, "[simplemap_georeference] GNSS dump written to: %s",
+            outFile.c_str());
+    }
+}
+
+/// Optional per-keyframe dump of every IMU absolute-attitude observation and its
+/// residual against the optimized solution, plus the reading's age with respect
+/// to the keyframe's own observations. Together these tell a constant
+/// convention/mounting offset and a stream time skew apart from sensor noise.
+/// Enabled by MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE=<file>.
+void dump_imu_attitude_residuals(
+    const mrpt::maps::CSimpleMap& sm, const mola::IMUFrames& imuFrames,
+    const gtsam::Values& optimal, const mola::AddIMUAttitudeFactorParams& attParams,
+    mrpt::system::COutputLogger* logger)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+    using mrpt::RAD2DEG;
+
+    const std::string outFile = mrpt::get_env<std::string>("MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE", "");
+    if (outFile.empty())
+    {
+        return;
+    }
+
+    std::ofstream f(outFile);
+    f << "# kf_idx x y z kf_yaw kf_pitch kf_roll sens_yaw sens_pitch sens_roll "
+         "raw_yaw raw_pitch raw_roll meas_yaw meas_pitch meas_roll "
+         "pred_yaw pred_pitch pred_roll res_x res_y res_z res_norm dt_imu_minus_kf t_kf "
+         "imu_wz kf_twist_wz\n";
+    f << std::fixed << std::setprecision(6);
+
+    const auto T0opt = optimal.at<gtsam::Pose3>(T(0));
+
+    const auto ypr = [](const gtsam::Rot3& R)
+    {
+        const auto v = mrpt::poses::CPose3D(
+                           mrpt::gtsam_wrappers::toTPose3D(gtsam::Pose3(R, gtsam::Point3::Zero())))
+                           .asVectorVal();
+        return std::array<double, 3>{RAD2DEG(v[3]), RAD2DEG(v[4]), RAD2DEG(v[5])};
+    };
+
+    for (const auto& frame : imuFrames.frames)
+    {
+        if (!frame.rawAttitude.has_value())
+        {
+            continue;
+        }
+        const auto key = P(frame.kf_index);
+        if (!optimal.exists(key))
+        {
+            continue;
+        }
+
+        const auto Pi              = optimal.at<gtsam::Pose3>(key);
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+        const auto measured        = mola::factors::imu_apply_enu_azimuth_correction(
+                   *frame.rawAttitude, attParams.azimuthOffsetDeg);
+
+        const gtsam::Rot3    predicted = (T0opt * Pi * sensorOnVehicle).rotation();
+        const gtsam::Vector3 res       = measured.localCoordinates(predicted);
+
+        double dtImuMinusKf = std::numeric_limits<double>::quiet_NaN();
+        double tRefSeconds  = std::numeric_limits<double>::quiet_NaN();
+        double imuWz        = std::numeric_limits<double>::quiet_NaN();
+        double kfTwistWz    = std::numeric_limits<double>::quiet_NaN();
+        {
+            const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
+
+            mrpt::system::TTimeStamp tImu = INVALID_TIMESTAMP;
+            for (const auto& o : *kfSf)
+            {
+                if (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o))
+                {
+                    tImu = o->timestamp;
+                }
+            }
+            const auto tRef = keyframe_reference_timestamp(*kfSf);
+
+            if (tImu != INVALID_TIMESTAMP && tRef != INVALID_TIMESTAMP)
+            {
+                dtImuMinusKf = mrpt::system::timeDifference(tRef, tImu);
+                tRefSeconds  = mrpt::Clock::toDouble(tRef);
+            }
+            if (kfTwist.has_value())
+            {
+                kfTwistWz = kfTwist->wz;
+            }
+
+            mrpt::obs::CObservationIMU::Ptr oi;
+            for (size_t k = 0; !!(oi = kfSf->getObservationByClass<mrpt::obs::CObservationIMU>(k));
+                 k++)
+            {
+                if (oi->has(mrpt::obs::IMU_WZ))
+                {
+                    imuWz = oi->get(mrpt::obs::IMU_WZ);
+                }
+            }
+        }
+
+        const auto kfY   = ypr(Pi.rotation());
+        const auto sensY = ypr(sensorOnVehicle.rotation());
+        const auto rawY  = ypr(*frame.rawAttitude);
+        const auto measY = ypr(measured);
+        const auto predY = ypr(predicted);
+
+        f << frame.kf_index << " " << Pi.x() << " " << Pi.y() << " " << Pi.z() << " "  //
+          << kfY[0] << " " << kfY[1] << " " << kfY[2] << " "  //
+          << sensY[0] << " " << sensY[1] << " " << sensY[2] << " "  //
+          << rawY[0] << " " << rawY[1] << " " << rawY[2] << " "  //
+          << measY[0] << " " << measY[1] << " " << measY[2] << " "  //
+          << predY[0] << " " << predY[1] << " " << predY[2] << " "  //
+          << RAD2DEG(res[0]) << " " << RAD2DEG(res[1]) << " " << RAD2DEG(res[2]) << " "
+          << RAD2DEG(res.norm()) << " " << dtImuMinusKf << " " << tRefSeconds << " " << imuWz << " "
+          << kfTwistWz << "\n";
+    }
+
+    if (logger)
+    {
+        logger->logFmt(
+            mrpt::system::LVL_INFO, "[simplemap_georeference] IMU attitude dump written to: %s",
+            outFile.c_str());
+    }
+}
+}  // namespace
 
 mola::SMGeoReferencingOutput mola::simplemap_georeference(
     const mrpt::maps::CSimpleMap& sm, const SMGeoReferencingParams& params)
@@ -73,11 +340,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         existingPoseKeys.insert(f.kf_index);
     }
 
-    bool hasIMUGravityFactors  = false;
-    bool hasIMUAttitudeFactors = false;
+    bool      hasIMUGravityFactors  = false;
+    bool      hasIMUAttitudeFactors = false;
+    IMUFrames imuFrames;
     if (params.useIMUGravityAlignment || params.useIMUAttitudeAlignment)
     {
-        const IMUFrames imuFrames = extract_imu_frames_from_sm(sm);
+        imuFrames = extract_imu_frames_from_sm(sm);
 
         const auto nGravity = std::count_if(
             imuFrames.frames.begin(), imuFrames.frames.end(),
@@ -93,6 +361,26 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
                << " IMU gravity (accelerometer) frames, " << nAttitude
                << " IMU absolute-attitude frames";
             params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+        }
+
+        // A simplemap with no absolute-orientation data leaves the azimuth to
+        // GNSS alone, which is silent but often ill-conditioned. Note that
+        // MOLA-LO only writes IMU observations into the simplemap when its
+        // `simplemap.save_imu_max_age` option is enabled.
+        if (params.useIMUAttitudeAlignment && nAttitude == 0 && params.logger)
+        {
+            std::stringstream ss;
+            ss << "[simplemap_georeference] IMU absolute-attitude alignment is enabled, but "
+                  "the simplemap carries no IMU orientation data: the map azimuth (yaw) will "
+                  "be determined by GNSS alone.";
+
+            if (params.imuAttitudeParams.azimuthOffsetDeg != 0)
+            {
+                ss << " The requested azimuthOffsetDeg="
+                   << params.imuAttitudeParams.azimuthOffsetDeg << " deg therefore has no effect.";
+            }
+
+            params.logger->logStr(mrpt::system::LVL_WARN, ss.str());
         }
 
         if (params.useIMUGravityAlignment && nGravity > 0)
@@ -141,6 +429,73 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         graph.printErrors(optimal, "\n===\nFG errors:\n");
     }
 
+    dump_gnss_residuals(sm, smFrames, optimal, params.logger);
+    dump_imu_attitude_residuals(sm, imuFrames, optimal, params.imuAttitudeParams, params.logger);
+
+    thread_local bool DEBUG_PRINT_LARGE_ERRORS =
+        mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_LARGE_FACTOR_ERRORS", false);
+    if (DEBUG_PRINT_LARGE_ERRORS)
+    {
+        const double errThreshold =
+            mrpt::get_env<double>("MOLA_SM_GEOREF_LARGE_FACTOR_ERROR_THRESHOLD", 5.0);
+        const size_t maxPrint =
+            mrpt::get_env<int>("MOLA_SM_GEOREF_LARGE_FACTOR_ERROR_MAX_PRINT", 100);
+
+        std::vector<std::pair<double, size_t>> errs;  // (error, factor index in graph)
+        errs.reserve(graph.size());
+        for (size_t i = 0; i < graph.size(); i++)
+        {
+            const auto& f = graph.at(i);
+            if (!f)
+            {
+                continue;  // removed/null slots are possible in a NonlinearFactorGraph
+            }
+            errs.emplace_back(f->error(optimal), i);
+        }
+        std::sort(errs.begin(), errs.end(), std::greater<>());
+
+        std::stringstream ss;
+        ss << "\n===\nFactors with error > " << errThreshold << " (0.5*whitened residual^2), "
+           << "sorted descending, top " << maxPrint << ":\n";
+
+        size_t printed = 0;
+        for (const auto& [e, idx] : errs)
+        {
+            if (e < errThreshold || printed >= maxPrint)
+            {
+                break;
+            }
+            const auto& f = graph.at(idx);
+            ss << "  [" << idx << "] error=" << e << "  type=" << factor_type_name(f) << "  keys=";
+            for (auto k : f->keys())
+            {
+                ss << gtsam::DefaultKeyFormatter(k) << " ";
+            }
+            // If this factor touches a P(kf) key, print the keyframe's initial vehicle-pose
+            // translation for spatial context:
+            for (auto k : f->keys())
+            {
+                if (v.exists(k) && k != gtsam::symbol_shorthand::T(0))
+                {
+                    const auto& pose3 = v.at<gtsam::Pose3>(k);
+                    ss << " pos=(" << pose3.x() << "," << pose3.y() << "," << pose3.z() << ")";
+                }
+            }
+            ss << "\n";
+            printed++;
+        }
+        ss << "(" << errs.size() << " factors total, " << printed << " shown above threshold)\n";
+
+        if (params.logger)
+        {
+            params.logger->logStr(mrpt::system::LVL_INFO, ss.str());
+        }
+        else
+        {
+            std::cout << ss.str();
+        }
+    }
+
     const double errInit = graph.error(v);
     const double errEnd  = graph.error(optimal);
 
@@ -158,7 +513,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         std::stringstream ss;
         ss << "[simplemap_georeference] LM iterations: " << lm.iterations()
            << ", init error: " << errInit << " (rmse=" << rmseInit << "), final error: " << errEnd
-           << "(rmse=" << rmseEnd << ") , for " << smFrames.frames.size()
+           << " (rmse=" << rmseEnd << ") , for " << smFrames.frames.size()
            << " frames, GTSAM sigmas: " << mrpt::RAD2DEG(stds[0]) << " [deg], "
            << mrpt::RAD2DEG(stds[1]) << " [deg], " << mrpt::RAD2DEG(stds[2]) << " [deg], "
            << stds[3] << " [m], " << stds[4] << " [m], " << stds[5] << " [m]";
@@ -346,24 +701,27 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
 
     // Degeneracy check: the spatial spread of the GNSS observations must be
     // large compared to their uncertainty, otherwise the global-attitude
-    // (roll/pitch/yaw) problem is ill-conditioned. We compare the ENU
-    // bounding-box diagonal against 3x the smallest per-axis sigma.
+    // (roll/pitch/yaw) problem is ill-conditioned. The test is HORIZONTAL only:
+    // the azimuth is observed by the East/North spread alone, and GNSS altitude
+    // is both the noisiest axis and the one prone to large multipath drifts, so
+    // including Up in the comparison lets a purely spurious vertical excursion
+    // hide an unobservable azimuth. Since the 3D diagonal is never smaller than
+    // the horizontal one, and the 3-axis minimum sigma never larger than the
+    // horizontal one, this test also flags everything a 3D test would.
     if (ret.frames.size() >= 2)
     {
-        mrpt::math::TPoint3D bbMin    = ret.frames.front().enu;
-        mrpt::math::TPoint3D bbMax    = ret.frames.front().enu;
+        mrpt::math::TPoint2D bbMin    = {ret.frames.front().enu.x, ret.frames.front().enu.y};
+        mrpt::math::TPoint2D bbMax    = bbMin;
         double               minSigma = std::numeric_limits<double>::max();
 
         for (const auto& f : ret.frames)
         {
             bbMin.x = std::min(bbMin.x, f.enu.x);
             bbMin.y = std::min(bbMin.y, f.enu.y);
-            bbMin.z = std::min(bbMin.z, f.enu.z);
             bbMax.x = std::max(bbMax.x, f.enu.x);
             bbMax.y = std::max(bbMax.y, f.enu.y);
-            bbMax.z = std::max(bbMax.z, f.enu.z);
 
-            minSigma = std::min({minSigma, f.sigma_E, f.sigma_N, f.sigma_U});
+            minSigma = std::min({minSigma, f.sigma_E, f.sigma_N});
         }
 
         const double bboxDiagonal = (bbMax - bbMin).norm();
@@ -376,13 +734,14 @@ mola::GNSSFrames mola::extract_gnss_frames_from_sm(
                       << "############################################################\n"
                       << "# [extract_gnss_frames_from_sm] WARNING: POSSIBLY DEGENERATE\n"
                       << "# GNSS configuration detected.\n"
-                      << "#   ENU bounding-box diagonal: " << bboxDiagonal << " m\n"
-                      << "#   minimum per-axis sigma:    " << minSigma << " m\n"
+                      << "#   ENU horizontal bounding-box diagonal: " << bboxDiagonal << " m\n"
+                      << "#   minimum horizontal sigma:             " << minSigma << " m\n"
                       << "#   (diagonal must be > 3x the minimum sigma = " << 3.0 * minSigma
                       << " m)\n"
-                      << "# The spatial spread of the " << ret.frames.size()
-                      << " GNSS observations is too small with respect to\n"
-                      << "# their uncertainty. The estimated global attitude (map roll/pitch/yaw)\n"
+                      << "# The horizontal spread of the " << ret.frames.size()
+                      << " GNSS observations is too small with respect\n"
+                      << "# to their uncertainty. The estimated global attitude (map "
+                         "roll/pitch/yaw)\n"
                       << "# is likely unobservable and may take absurd values.\n"
                       << "############################################################\n"
                       << std::endl;
@@ -409,11 +768,13 @@ void mola::add_gnss_factors(
     v.insert(T(0), gtsam::Pose3::Identity());
 
     // Expression to optimize (i=0...N):
-    // P (+) kf_pose{i} = gps_enu{i}
+    // T(0) (+) P(i) (+) antenna{i} = gps_enu{i}
 
-    auto noisePoses         = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
-    auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
-        gtsam::Vector6(1e3, 1e3, 1e3, 1e6, 1e6, params.horizontalitySigmaZ));
+    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+
+    // Only the ENU altitude of each keyframe is constrained; East/North are left free:
+    auto noiseHorizontality =
+        gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(1e6, 1e6, params.horizontalitySigmaZ));
 
     for (size_t i = 0; i < frames.frames.size(); i++)
     {
@@ -431,8 +792,12 @@ void mola::add_gnss_factors(
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        fg.emplace_shared<mola::factors::FactorGnssEnu>(
-            P(frame.kf_index), sensorPointOnVeh, observedENU, robustNoise);
+        // P(i) holds the vehicle pose in the {map} frame, so the ENU-to-map transform
+        // must appear explicitly in the measurement model. Keeping P(i) in {map} is
+        // what lets the IMU gravity/attitude factors, which compose T(0) themselves,
+        // share these very same pose variables.
+        fg.emplace_shared<mola::factors::FactorGnssMapEnu>(
+            T(0), P(frame.kf_index), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
@@ -441,13 +806,18 @@ void mola::add_gnss_factors(
             v.insert(P(frame.kf_index), vehiclePose);
         }
 
-        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            T(0), P(frame.kf_index), vehiclePose, noisePoses);
+        fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            P(frame.kf_index), vehiclePose, noisePoses);
 
         if (params.addHorizontalityConstraints)
         {
-            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                P(frame.kf_index), gtsam::Pose3::Identity(), noiseHorizontality);
+            const gtsam::Pose3_ T0_(T(0));
+            const gtsam::Pose3_ Pi_(P(frame.kf_index));
+
+            fg.emplace_shared<gtsam::ExpressionFactor<gtsam::Point3>>(
+                noiseHorizontality, gtsam::Point3::Zero(),
+                gtsam::Point3_(gtsam::transformFrom(
+                    gtsam::compose(T0_, Pi_), gtsam::Point3_(gtsam::Point3::Zero()))));
         }
     }
 }
@@ -466,15 +836,59 @@ mola::IMUFrames mola::extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& s
 
         const auto p = pose->getMeanVal();
 
+        // 0) Prefer the averaged accelerometer reading from the local velocity
+        // buffer, if available for this keyframe: it already fuses every accel
+        // sample in the keyframe's window, so it is a better gravity estimate
+        // than any single raw CObservationIMU reading below. When present, it
+        // takes priority and the per-observation accel extraction in step 1 is
+        // skipped (attitude is unaffected: it has no buffered equivalent).
+        std::optional<gtsam::Vector3> bufferedAcc;
+
+#if defined(HAS_VELOCITY_BUFFER)
+        {
+            mola::imu::LocalVelocityBuffer lvb;
+            for (const auto& o : *sf)
+            {
+                mp2p_icp::update_velocity_buffer_from_obs(lvb, o);
+            }
+
+            gtsam::Vector3 avr_acc   = gtsam::Vector3::Zero();
+            size_t         avr_count = 0;
+
+            for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
+            {
+                const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
+                if (mola::factors::imu_accel_looks_like_gravity(acc))
+                {
+                    avr_count++;
+                    avr_acc += acc;
+                }
+            }
+
+            if (avr_count > 0)
+            {
+                bufferedAcc = (avr_acc / static_cast<double>(avr_count)).normalized();
+
+                auto& f               = ret.frames.emplace_back();
+                f.kf_index            = kfIdx;
+                f.vehiclePose         = p;
+                f.sensorPoseOnVehicle = mrpt::poses::CPose3D::Identity();
+                f.normalizedAcc       = bufferedAcc;
+            }
+        }
+#endif
+
         // 1) Process direct CObservationIMU observations, if available. A single
         // observation may carry a gravity (accelerometer) reading, an absolute
-        // attitude (orientation) reading, or both:
+        // attitude (orientation) reading, or both. The accel reading is skipped
+        // when step 0 already produced a buffered average for this keyframe;
+        // attitude has no buffered equivalent and is always extracted.
         mrpt::obs::CObservationIMU::Ptr obs;
         for (size_t i = 0; !!(obs = sf->getObservationByClass<mrpt::obs::CObservationIMU>(i)); i++)
         {
             std::optional<gtsam::Vector3> acc;
-            if (obs->has(mrpt::obs::IMU_X_ACC) && obs->has(mrpt::obs::IMU_Y_ACC) &&
-                obs->has(mrpt::obs::IMU_Z_ACC))
+            if (!bufferedAcc.has_value() && obs->has(mrpt::obs::IMU_X_ACC) &&
+                obs->has(mrpt::obs::IMU_Y_ACC) && obs->has(mrpt::obs::IMU_Z_ACC))
             {
                 const gtsam::Vector3 measuredGravity = {
                     obs->get(mrpt::obs::IMU_X_ACC), obs->get(mrpt::obs::IMU_Y_ACC),
@@ -512,42 +926,6 @@ mola::IMUFrames mola::extract_imu_frames_from_sm(const mrpt::maps::CSimpleMap& s
             f.normalizedAcc       = acc;
             f.rawAttitude         = attitude;
         }
-
-        // 2) Process embedded IMU acceleration info embedded into the metadata.
-        // (No absolute-attitude equivalent here: the buffered orientation is only
-        // gravity-leveled, not azimuth-referenced, so it is not usable for this.)
-#if defined(HAS_VELOCITY_BUFFER)
-        mola::imu::LocalVelocityBuffer lvb;
-        for (const auto& o : *sf)
-        {
-            mp2p_icp::update_velocity_buffer_from_obs(lvb, o);
-        }
-
-        // Get the current linear accelerations map (in the vehicle frame of reference)
-        // Average them all so there are not too many factors:
-        gtsam::Vector3 avr_acc   = gtsam::Vector3::Zero();
-        size_t         avr_count = 0;
-
-        for (const auto& [t, measuredGravity] : lvb.get_linear_accelerations())
-        {
-            const auto acc = mrpt::gtsam_wrappers::toPoint3(measuredGravity);
-            if (mola::factors::imu_accel_looks_like_gravity(acc))
-            {
-                avr_count++;
-                avr_acc += acc;
-            }
-        }
-
-        if (avr_count > 0)
-        {
-            auto& f               = ret.frames.emplace_back();
-            f.kf_index            = kfIdx;
-            f.vehiclePose         = p;
-            f.sensorPoseOnVehicle = mrpt::poses::CPose3D::Identity();
-            f.normalizedAcc       = (avr_acc / static_cast<double>(avr_count)).normalized();
-        }
-
-#endif
     }  // end for each SM keyframe
 
     return ret;

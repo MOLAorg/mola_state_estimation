@@ -42,23 +42,23 @@ namespace
 {
 const bool VERBOSE = mrpt::get_env<bool>("VERBOSE", false);
 
-constexpr double IMU_PERIOD    = 1.0 / 400;  // raw IMU rate [s] (decimated inside)
-constexpr double LIDAR_PERIOD  = 0.1;  // scan-matching pose rate [s]
-constexpr double LIDAR_T0      = 3.0;  // first ICP pose: the front end levels itself first [s]
-constexpr double LIDAR_OFFSET  = 0.037;  // pose stamps deliberately off the IMU keyframe grid
-constexpr double LIDAR_DRIFT   = 0.001;  // per-scan stamp drift: sweeps every keyframe gap size
-constexpr double LIDAR_LAG     = 0.09;  // scan-matching latency: the pose is fused this late [s]
-constexpr double DURATION      = 20.0;  // total simulated time [s]
-constexpr double VX_TRUE       = 1.0;  // [m/s]
-constexpr double WZ_TRUE       = 1.0;  // [rad/s]
-constexpr double GRAVITY       = 9.81;
-constexpr double GYRO_NOISE    = 0.1;  // raw gyro per-sample noise [rad/s]
+constexpr double IMU_PERIOD     = 1.0 / 400;  // raw IMU rate [s] (decimated inside)
+constexpr double LIDAR_PERIOD   = 0.1;  // scan-matching pose rate [s]
+constexpr double LIDAR_T0       = 3.0;  // first ICP pose: the front end levels itself first [s]
+constexpr double LIDAR_OFFSET   = 0.037;  // pose stamps deliberately off the IMU keyframe grid
+constexpr double LIDAR_DRIFT    = 0.001;  // per-scan stamp drift: sweeps every keyframe gap size
+constexpr double LIDAR_LAG      = 0.09;  // scan-matching latency: the pose is fused this late [s]
+constexpr double DURATION       = 20.0;  // total simulated time [s]
+constexpr double VX_TRUE        = 1.0;  // [m/s]
+constexpr double WZ_TRUE        = 1.0;  // [rad/s]
+constexpr double GRAVITY        = 9.81;
+constexpr double GYRO_NOISE     = 0.1;  // raw gyro per-sample noise [rad/s]
 constexpr double POSE_NOISE_XYZ = 0.01;  // scan-matching position noise [m]
 constexpr double POSE_NOISE_ANG = 0.005;  // scan-matching orientation noise [rad]
 // The front end starts its map frame at the identity, wherever the vehicle
 // happened to be standing, so the map is NOT gravity-levelled: every gravity
 // factor must be absorbed by the shared T_enu_to_map variable.
-constexpr double MAP_TILT_DEG  = 6.5;
+constexpr double MAP_TILT_DEG = 6.5;
 
 auto& rng = mrpt::random::getRandomGenerator();
 
@@ -135,6 +135,7 @@ Result run_session(double gyroSigma, uint32_t seed)
     const auto gtPoseAt = [](double t)
     {
         const double tm = std::max(0.0, t - LIDAR_T0);
+
         mrpt::math::CVectorFixedDouble<6> d;
         d.setZero();
         d[0] = VX_TRUE * tm;
