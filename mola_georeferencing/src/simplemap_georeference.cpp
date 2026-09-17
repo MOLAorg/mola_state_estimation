@@ -30,6 +30,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <mola_gtsam_factors/FactorGnssEnu.h>
+#include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
@@ -40,6 +41,7 @@
 #endif
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 
@@ -61,6 +63,10 @@ std::string factor_type_name(const gtsam::NonlinearFactor::shared_ptr& f)
     {
         return "FactorGnssEnu";
     }
+    if (shared_dynamic_cast<mola::factors::FactorGnssMapEnu>(f))
+    {
+        return "FactorGnssMapEnu";
+    }
     if (shared_dynamic_cast<mola::factors::MeasuredGravityFactor>(f))
     {
         return "MeasuredGravityFactor";
@@ -78,6 +84,201 @@ std::string factor_type_name(const gtsam::NonlinearFactor::shared_ptr& f)
         return "PriorFactor<Pose3>";
     }
     return typeid(*f).name();  // fallback: mangled name
+}
+
+/// Optional per-keyframe dump of every GNSS observation and its residual
+/// against the optimized solution. Enabled by MOLA_SM_GEOREF_DUMP_GNSS=<file>.
+void dump_gnss_residuals(
+    const mrpt::maps::CSimpleMap& sm, const mola::GNSSFrames& smFrames,
+    const gtsam::Values& optimal, mrpt::system::COutputLogger* logger)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+
+    const std::string outFile = mrpt::get_env<std::string>("MOLA_SM_GEOREF_DUMP_GNSS", "");
+    if (outFile.empty())
+    {
+        return;
+    }
+
+    std::ofstream f(outFile);
+    f << "# kf_idx t_kf obs_e obs_n obs_u pred_e pred_n pred_u res_e res_n res_u "
+         "map_x map_y map_z dt_gnss_minus_kf\n";
+    f << std::fixed << std::setprecision(6);
+
+    const auto T0opt = optimal.at<gtsam::Pose3>(T(0));
+
+    for (const auto& frame : smFrames.frames)
+    {
+        const auto key = P(frame.kf_index);
+        if (!optimal.exists(key))
+        {
+            continue;
+        }
+
+        const auto Pi      = optimal.at<gtsam::Pose3>(key);
+        const auto antenna = mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
+        const gtsam::Point3 pred = (T0opt * Pi).transformFrom(antenna);
+
+        double tRefSeconds = std::numeric_limits<double>::quiet_NaN();
+        double dtGnss      = std::numeric_limits<double>::quiet_NaN();
+        {
+            const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
+
+            mrpt::system::TTimeStamp tRef = INVALID_TIMESTAMP;
+            for (const auto& o : *kfSf)
+            {
+                if (!std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o) &&
+                    !std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o))
+                {
+                    tRef = o->timestamp;
+                    break;
+                }
+            }
+            if (tRef != INVALID_TIMESTAMP)
+            {
+                tRefSeconds = mrpt::Clock::toDouble(tRef);
+                dtGnss      = mrpt::system::timeDifference(tRef, frame.obs->timestamp);
+            }
+        }
+
+        f << frame.kf_index << " " << tRefSeconds << " "  //
+          << frame.enu.x << " " << frame.enu.y << " " << frame.enu.z << " "  //
+          << pred.x() << " " << pred.y() << " " << pred.z() << " "  //
+          << (frame.enu.x - pred.x()) << " " << (frame.enu.y - pred.y()) << " "
+          << (frame.enu.z - pred.z()) << " "  //
+          << Pi.x() << " " << Pi.y() << " " << Pi.z() << " " << dtGnss << "\n";
+    }
+
+    if (logger)
+    {
+        logger->logFmt(
+            mrpt::system::LVL_INFO, "[simplemap_georeference] GNSS dump written to: %s",
+            outFile.c_str());
+    }
+}
+
+/// Optional per-keyframe dump of every IMU absolute-attitude observation and its
+/// residual against the optimized solution, plus the reading's age with respect
+/// to the keyframe's own observations. Together these tell a constant
+/// convention/mounting offset and a stream time skew apart from sensor noise.
+/// Enabled by MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE=<file>.
+void dump_imu_attitude_residuals(
+    const mrpt::maps::CSimpleMap& sm, const mola::IMUFrames& imuFrames,
+    const gtsam::Values& optimal, const mola::AddIMUAttitudeFactorParams& attParams,
+    mrpt::system::COutputLogger* logger)
+{
+    using gtsam::symbol_shorthand::P;
+    using gtsam::symbol_shorthand::T;
+    using mrpt::RAD2DEG;
+
+    const std::string outFile = mrpt::get_env<std::string>("MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE", "");
+    if (outFile.empty())
+    {
+        return;
+    }
+
+    std::ofstream f(outFile);
+    f << "# kf_idx x y z kf_yaw kf_pitch kf_roll sens_yaw sens_pitch sens_roll "
+         "raw_yaw raw_pitch raw_roll meas_yaw meas_pitch meas_roll "
+         "pred_yaw pred_pitch pred_roll res_x res_y res_z res_norm dt_imu_minus_kf t_kf "
+         "imu_wz kf_twist_wz\n";
+    f << std::fixed << std::setprecision(6);
+
+    const auto T0opt = optimal.at<gtsam::Pose3>(T(0));
+
+    const auto ypr = [](const gtsam::Rot3& R)
+    {
+        const auto v = mrpt::poses::CPose3D(
+                           mrpt::gtsam_wrappers::toTPose3D(gtsam::Pose3(R, gtsam::Point3::Zero())))
+                           .asVectorVal();
+        return std::array<double, 3>{RAD2DEG(v[3]), RAD2DEG(v[4]), RAD2DEG(v[5])};
+    };
+
+    for (const auto& frame : imuFrames.frames)
+    {
+        if (!frame.rawAttitude.has_value())
+        {
+            continue;
+        }
+        const auto key = P(frame.kf_index);
+        if (!optimal.exists(key))
+        {
+            continue;
+        }
+
+        const auto Pi              = optimal.at<gtsam::Pose3>(key);
+        const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(frame.sensorPoseOnVehicle);
+        const auto measured        = mola::factors::imu_apply_enu_azimuth_correction(
+                   *frame.rawAttitude, attParams.azimuthOffsetDeg);
+
+        const gtsam::Rot3    predicted = (T0opt * Pi * sensorOnVehicle).rotation();
+        const gtsam::Vector3 res       = measured.localCoordinates(predicted);
+
+        double dtImuMinusKf = std::numeric_limits<double>::quiet_NaN();
+        double tRefSeconds  = std::numeric_limits<double>::quiet_NaN();
+        double imuWz        = std::numeric_limits<double>::quiet_NaN();
+        double kfTwistWz    = std::numeric_limits<double>::quiet_NaN();
+        {
+            const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
+
+            mrpt::system::TTimeStamp tImu = INVALID_TIMESTAMP;
+            mrpt::system::TTimeStamp tRef = INVALID_TIMESTAMP;
+            for (const auto& o : *kfSf)
+            {
+                if (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o))
+                {
+                    tImu = o->timestamp;
+                }
+                else if (tRef == INVALID_TIMESTAMP)
+                {
+                    tRef = o->timestamp;
+                }
+            }
+            if (tImu != INVALID_TIMESTAMP && tRef != INVALID_TIMESTAMP)
+            {
+                dtImuMinusKf = mrpt::system::timeDifference(tRef, tImu);
+                tRefSeconds  = mrpt::Clock::toDouble(tRef);
+            }
+            if (kfTwist.has_value())
+            {
+                kfTwistWz = kfTwist->wz;
+            }
+
+            mrpt::obs::CObservationIMU::Ptr oi;
+            for (size_t k = 0; !!(oi = kfSf->getObservationByClass<mrpt::obs::CObservationIMU>(k));
+                 k++)
+            {
+                if (oi->has(mrpt::obs::IMU_WZ))
+                {
+                    imuWz = oi->get(mrpt::obs::IMU_WZ);
+                }
+            }
+        }
+
+        const auto kfY   = ypr(Pi.rotation());
+        const auto sensY = ypr(sensorOnVehicle.rotation());
+        const auto rawY  = ypr(*frame.rawAttitude);
+        const auto measY = ypr(measured);
+        const auto predY = ypr(predicted);
+
+        f << frame.kf_index << " " << Pi.x() << " " << Pi.y() << " " << Pi.z() << " "  //
+          << kfY[0] << " " << kfY[1] << " " << kfY[2] << " "  //
+          << sensY[0] << " " << sensY[1] << " " << sensY[2] << " "  //
+          << rawY[0] << " " << rawY[1] << " " << rawY[2] << " "  //
+          << measY[0] << " " << measY[1] << " " << measY[2] << " "  //
+          << predY[0] << " " << predY[1] << " " << predY[2] << " "  //
+          << RAD2DEG(res[0]) << " " << RAD2DEG(res[1]) << " " << RAD2DEG(res[2]) << " "
+          << RAD2DEG(res.norm()) << " " << dtImuMinusKf << " " << tRefSeconds << " " << imuWz << " "
+          << kfTwistWz << "\n";
+    }
+
+    if (logger)
+    {
+        logger->logFmt(
+            mrpt::system::LVL_INFO, "[simplemap_georeference] IMU attitude dump written to: %s",
+            outFile.c_str());
+    }
 }
 }  // namespace
 
@@ -116,11 +317,12 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
         existingPoseKeys.insert(f.kf_index);
     }
 
-    bool hasIMUGravityFactors  = false;
-    bool hasIMUAttitudeFactors = false;
+    bool      hasIMUGravityFactors  = false;
+    bool      hasIMUAttitudeFactors = false;
+    IMUFrames imuFrames;
     if (params.useIMUGravityAlignment || params.useIMUAttitudeAlignment)
     {
-        const IMUFrames imuFrames = extract_imu_frames_from_sm(sm);
+        imuFrames = extract_imu_frames_from_sm(sm);
 
         const auto nGravity = std::count_if(
             imuFrames.frames.begin(), imuFrames.frames.end(),
@@ -203,6 +405,9 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     {
         graph.printErrors(optimal, "\n===\nFG errors:\n");
     }
+
+    dump_gnss_residuals(sm, smFrames, optimal, params.logger);
+    dump_imu_attitude_residuals(sm, imuFrames, optimal, params.imuAttitudeParams, params.logger);
 
     thread_local bool DEBUG_PRINT_LARGE_ERRORS =
         mrpt::get_env<bool>("MOLA_SM_GEOREF_PRINT_LARGE_FACTOR_ERRORS", false);
@@ -540,11 +745,13 @@ void mola::add_gnss_factors(
     v.insert(T(0), gtsam::Pose3::Identity());
 
     // Expression to optimize (i=0...N):
-    // P (+) kf_pose{i} = gps_enu{i}
+    // T(0) (+) P(i) (+) antenna{i} = gps_enu{i}
 
-    auto noisePoses         = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
-    auto noiseHorizontality = gtsam::noiseModel::Diagonal::Sigmas(
-        gtsam::Vector6(1e3, 1e3, 1e3, 1e6, 1e6, params.horizontalitySigmaZ));
+    auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
+
+    // Only the ENU altitude of each keyframe is constrained; East/North are left free:
+    auto noiseHorizontality =
+        gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(1e6, 1e6, params.horizontalitySigmaZ));
 
     for (size_t i = 0; i < frames.frames.size(); i++)
     {
@@ -562,8 +769,12 @@ void mola::add_gnss_factors(
         const auto sensorPointOnVeh =
             mrpt::gtsam_wrappers::toPoint3(frame.obs->sensorPose.translation());
 
-        fg.emplace_shared<mola::factors::FactorGnssEnu>(
-            P(frame.kf_index), sensorPointOnVeh, observedENU, robustNoise);
+        // P(i) holds the vehicle pose in the {map} frame, so the ENU-to-map transform
+        // must appear explicitly in the measurement model. Keeping P(i) in {map} is
+        // what lets the IMU gravity/attitude factors, which compose T(0) themselves,
+        // share these very same pose variables.
+        fg.emplace_shared<mola::factors::FactorGnssMapEnu>(
+            T(0), P(frame.kf_index), sensorPointOnVeh, observedENU, robustNoise);
 
         const auto vehiclePose = mrpt::gtsam_wrappers::toPose3(frame.pose);
 
@@ -572,13 +783,18 @@ void mola::add_gnss_factors(
             v.insert(P(frame.kf_index), vehiclePose);
         }
 
-        fg.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            T(0), P(frame.kf_index), vehiclePose, noisePoses);
+        fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+            P(frame.kf_index), vehiclePose, noisePoses);
 
         if (params.addHorizontalityConstraints)
         {
-            fg.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                P(frame.kf_index), gtsam::Pose3::Identity(), noiseHorizontality);
+            const gtsam::Pose3_ T0_(T(0));
+            const gtsam::Pose3_ Pi_(P(frame.kf_index));
+
+            fg.emplace_shared<gtsam::ExpressionFactor<gtsam::Point3>>(
+                noiseHorizontality, gtsam::Point3::Zero(),
+                gtsam::Point3_(gtsam::transformFrom(
+                    gtsam::compose(T0_, Pi_), gtsam::Point3_(gtsam::Point3::Zero()))));
         }
     }
 }
