@@ -209,6 +209,34 @@ Azimuth observability, two silent failure modes worth knowing:
   `azimuthOffsetDeg` is a no-op and yaw rests entirely on GNSS -- so the
   function warns in that case.
 
+**Frame convention of the graph variables (load-bearing).** The graph has one
+`T(0)` (the sought `T_enu_to_map`) and one `P(i)` per keyframe, and **`P(i)` is
+the vehicle pose in the {map} frame**. Every measurement model must therefore
+compose `T(0)` itself to reach ENU: GNSS uses `FactorGnssMapEnu(T(0), P(i))`,
+and `MeasuredGravityFactor`/`Pose3RotationFactor` take `(T(0), P(i))` for the
+same reason. Anchoring `P(i)` with a `BetweenFactor(T(0), P(i), kf_pose)`
+instead of a plain `PriorFactor(P(i), kf_pose)` silently redefines `P(i)` as an
+ENU pose; the GNSS-only and IMU-only paths each stay self-consistent under that
+change, so nothing fails, but mixing the two applies `T_enu_to_map` twice inside
+the IMU factors and biases the solution. Tests that exercise only one sensor
+type cannot see this: `test_gnss_and_imu_attitude` exists to cover the mix.
+
+**Diagnostics** (all env-var gated, all off by default):
+`MOLA_SM_GEOREF_PRINT_FACTOR_GRAPH`, `MOLA_SM_GEOREF_PRINT_FG_ERRORS`, and
+`MOLA_SM_GEOREF_PRINT_LARGE_FACTOR_ERRORS` (+
+`MOLA_SM_GEOREF_LARGE_FACTOR_ERROR_THRESHOLD`,
+`..._MAX_PRINT`) print the graph and its worst factors.
+`MOLA_SM_GEOREF_DUMP_GNSS=<file>` and
+`MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE=<file>` write one whitespace-separated row per
+observation with the measurement, the prediction at the optimum, the residual,
+and the reading's timestamp offset from its keyframe. Both dumps measure that
+offset against the same per-keyframe reference (the first observation that is
+neither IMU nor GNSS, i.e. the sensor that defines the keyframe; the earliest
+timestamp present when there is none), so their age columns are comparable. That
+column is what separates a frame-convention or calibration error (a constant
+residual) from sensor noise (white) from a stream time skew (a residual
+proportional to the turn rate).
+
 ## Class hierarchy
 
 ```
