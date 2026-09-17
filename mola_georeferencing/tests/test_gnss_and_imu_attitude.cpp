@@ -23,6 +23,7 @@
 #include <gtsam/geometry/Rot3.h>
 #include <mola_georeferencing/simplemap_georeference.h>
 #include <mrpt/maps/CSimpleMap.h>
+#include <mrpt/obs/CObservationComment.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
@@ -30,9 +31,15 @@
 #include <mrpt/topography/conversions.h>
 
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -48,6 +55,39 @@ void expect(bool cond, const std::string& msg)
 double angle_diff_deg(double a_deg, double b_deg)
 {
     return std::fmod(a_deg - b_deg + 540.0, 360.0) - 180.0;
+}
+
+// Per-sensor ages baked into the synthetic keyframes, in seconds:
+constexpr double kGnssAge = 0.04;  // GNSS reading precedes the keyframe instant
+constexpr double kImuAge  = 0.02;  // IMU reading follows it
+
+/// Reads a whitespace-separated diagnostic dump into rows of columns, skipping
+/// the leading comment line.
+std::vector<std::vector<std::string>> read_dump(const std::string& path)
+{
+    std::vector<std::vector<std::string>> rows;
+
+    std::ifstream f(path);
+    expect(f.is_open(), "diagnostic dump should have been written to " + path);
+
+    std::string line;
+    while (std::getline(f, line))
+    {
+        if (line.empty() || line[0] == '#')
+        {
+            continue;
+        }
+        std::istringstream       ss(line);
+        std::vector<std::string> cols;
+        std::string              tok;
+        while (ss >> tok)
+        {
+            cols.push_back(tok);
+        }
+        rows.push_back(cols);
+    }
+
+    return rows;
 }
 
 mrpt::topography::TGeodeticCoords geodetic_from_enu(
@@ -69,7 +109,7 @@ mrpt::topography::TGeodeticCoords geodetic_from_enu(
 /// The path turns as it advances, so azimuth is observable from GNSS alone too.
 mrpt::maps::CSimpleMap build_gnss_plus_attitude_map(
     const mrpt::poses::CPose3D& T_enu_to_map, const mrpt::topography::TGeodeticCoords& origin,
-    size_t nKeyframes, bool addGravity)
+    size_t nKeyframes, bool addGravity, bool addReferenceObs = false)
 {
     mrpt::maps::CSimpleMap sm;
 
@@ -90,6 +130,12 @@ mrpt::maps::CSimpleMap build_gnss_plus_attitude_map(
 
         auto sf = mrpt::obs::CSensoryFrame::Create();
 
+        // Distinct, deterministic per-sensor timestamps, so the diagnostic dumps
+        // have something meaningful to report as each reading's age:
+        const auto tKf   = mrpt::Clock::fromDouble(1.0e9 + 0.1 * s);
+        const auto tGnss = mrpt::Clock::fromDouble(1.0e9 + 0.1 * s - kGnssAge);
+        const auto tImu  = mrpt::Clock::fromDouble(1.0e9 + 0.1 * s + kImuAge);
+
         // --- GNSS ---
         {
             const mrpt::poses::CPose3D T_enu_to_antenna =
@@ -108,11 +154,24 @@ mrpt::maps::CSimpleMap build_gnss_plus_attitude_map(
             obs->setMsg(gga);
 
             obs->sensorPose = T_veh_to_antenna;
+            obs->timestamp  = tGnss;
 
             mrpt::math::CMatrixDouble33 cov;
             cov.setDiagonal(0.05 * 0.05);
             obs->covariance_enu = cov;
 
+            sf->insert(obs);
+        }
+
+        // The observation that defines the keyframe (a LiDAR scan on a real
+        // robot). Deliberately inserted after the GNSS one, so that picking the
+        // keyframe's time reference by observation order alone would pick the
+        // wrong one. Optional, to also exercise the GNSS+IMU-only keyframe:
+        if (addReferenceObs)
+        {
+            auto obs         = mrpt::obs::CObservationComment::Create();
+            obs->timestamp   = tKf;
+            obs->sensorLabel = "metadata";
             sf->insert(obs);
         }
 
@@ -122,6 +181,7 @@ mrpt::maps::CSimpleMap build_gnss_plus_attitude_map(
 
             auto obs        = mrpt::obs::CObservationIMU::Create();
             obs->sensorPose = T_veh_to_imu;
+            obs->timestamp  = tImu;
 
             if (addGravity)
             {
@@ -228,6 +288,104 @@ void test_gnss_attitude_and_gravity_agree()
     expect_close(all, T_enu_to_map, 0.10, 0.5, "GNSS + attitude + gravity");
 }
 
+// The two diagnostic dumps must describe the same keyframes against the same
+// time reference, otherwise their offset columns cannot be compared to each
+// other, which is the whole point of having them.
+void check_dumps_share_one_time_reference(bool withReferenceObs)
+{
+    const mrpt::poses::CPose3D T_enu_to_map(3.0, 1.0, -1.0, mrpt::DEG2RAD(-150.0), 0, 0);
+
+    const mrpt::topography::TGeodeticCoords origin(36.878, -2.338, 100.0);
+
+    const size_t nKeyframes = 12;
+    const auto   sm         = build_gnss_plus_attitude_map(
+                  T_enu_to_map, origin, nKeyframes, /*addGravity=*/false, withReferenceObs);
+
+    const auto tmpDir   = std::filesystem::temp_directory_path();
+    const auto gnssFile = (tmpDir / "test_georef_dump_gnss.txt").string();
+    const auto attFile  = (tmpDir / "test_georef_dump_att.txt").string();
+
+    std::filesystem::remove(gnssFile);
+    std::filesystem::remove(attFile);
+
+    ::setenv("MOLA_SM_GEOREF_DUMP_GNSS", gnssFile.c_str(), 1);
+    ::setenv("MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE", attFile.c_str(), 1);
+
+    solve(sm, origin, /*useAttitude=*/true, /*useGravity=*/false);
+
+    ::unsetenv("MOLA_SM_GEOREF_DUMP_GNSS");
+    ::unsetenv("MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE");
+
+    const auto gnssRows = read_dump(gnssFile);
+    const auto attRows  = read_dump(attFile);
+
+    expect(gnssRows.size() == nKeyframes, "GNSS dump should hold one row per keyframe");
+    expect(attRows.size() == nKeyframes, "IMU attitude dump should hold one row per keyframe");
+
+    // Column layout, as written by the dump headers:
+    constexpr size_t kGnssColKf = 0, kGnssColTkf = 1, kGnssColDt = 14;
+    constexpr size_t kAttColKf = 0, kAttColDt = 23, kAttColTkf = 24;
+
+    std::map<std::string, std::string> tkfByKeyframe;
+    std::map<std::string, double>      dtGnssByKeyframe;
+    for (const auto& r : gnssRows)
+    {
+        expect(r.size() > kGnssColDt, "GNSS dump row should have every documented column");
+        tkfByKeyframe[r[kGnssColKf]]    = r[kGnssColTkf];
+        dtGnssByKeyframe[r[kGnssColKf]] = std::stod(r[kGnssColDt]);
+
+        if (withReferenceObs)
+        {
+            expect(
+                std::abs(std::stod(r[kGnssColDt]) + kGnssAge) < 1e-3,
+                "GNSS dump should report the reading's true age wrt the keyframe");
+        }
+    }
+
+    for (const auto& r : attRows)
+    {
+        expect(r.size() > kAttColTkf, "IMU dump row should have every documented column");
+
+        const auto it = tkfByKeyframe.find(r[kAttColKf]);
+        expect(it != tkfByKeyframe.end(), "both dumps should cover the same keyframes");
+
+        // The actual regression: one shared per-keyframe time reference. Whichever
+        // observation it comes from, the two dumps must agree on it, so that the
+        // gap between their age columns is the true GNSS-to-IMU gap:
+        expect(
+            it->second == r[kAttColTkf],
+            "both dumps must report the same keyframe time reference, got '" + it->second +
+                "' vs '" + r[kAttColTkf] + "'");
+        expect(std::stod(r[kAttColTkf]) > 0, "the keyframe time reference should be defined");
+
+        expect(
+            std::abs(
+                (std::stod(r[kAttColDt]) - dtGnssByKeyframe.at(r[kAttColKf])) -
+                (kImuAge + kGnssAge)) < 1e-3,
+            "the two age columns must be measured against the same instant");
+
+        if (withReferenceObs)
+        {
+            expect(
+                std::abs(std::stod(r[kAttColDt]) - kImuAge) < 1e-3,
+                "IMU dump should report the reading's true age wrt the keyframe");
+        }
+    }
+
+    std::filesystem::remove(gnssFile);
+    std::filesystem::remove(attFile);
+}
+
+void test_diagnostic_dumps()
+{
+    // With a LiDAR-like observation defining the keyframe, and without one
+    // (only GNSS + IMU), which takes the fallback path:
+    check_dumps_share_one_time_reference(/*withReferenceObs=*/true);
+    check_dumps_share_one_time_reference(/*withReferenceObs=*/false);
+
+    std::cout << "  [diagnostic dumps] both dumps agree on the keyframe time reference\n";
+}
+
 }  // namespace
 
 int main()
@@ -236,6 +394,7 @@ int main()
     {
         test_gnss_and_attitude_agree();
         test_gnss_attitude_and_gravity_agree();
+        test_diagnostic_dumps();
 
         std::cout << "\n[Success] GNSS + IMU attitude fusion tests passed!" << std::endl;
         return 0;

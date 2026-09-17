@@ -86,6 +86,41 @@ std::string factor_type_name(const gtsam::NonlinearFactor::shared_ptr& f)
     return typeid(*f).name();  // fallback: mangled name
 }
 
+/// Timestamp both diagnostic dumps report each observation's age against: the
+/// first observation in the keyframe that is neither IMU nor GNSS, i.e. the
+/// sensor that defines the keyframe (typically the LiDAR scan). Falls back to
+/// the earliest timestamp present when the keyframe carries none, so the two
+/// dumps always measure offsets against the very same instant.
+mrpt::system::TTimeStamp keyframe_reference_timestamp(const mrpt::obs::CSensoryFrame& sf)
+{
+    mrpt::system::TTimeStamp ret      = INVALID_TIMESTAMP;
+    mrpt::system::TTimeStamp earliest = INVALID_TIMESTAMP;
+
+    for (const auto& o : sf)
+    {
+        if (o->timestamp == INVALID_TIMESTAMP)
+        {
+            continue;
+        }
+        if (earliest == INVALID_TIMESTAMP || o->timestamp < earliest)
+        {
+            earliest = o->timestamp;
+        }
+        if (ret != INVALID_TIMESTAMP)
+        {
+            continue;
+        }
+        if (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o) ||
+            std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o))
+        {
+            continue;
+        }
+        ret = o->timestamp;
+    }
+
+    return ret != INVALID_TIMESTAMP ? ret : earliest;
+}
+
 /// Optional per-keyframe dump of every GNSS observation and its residual
 /// against the optimized solution. Enabled by MOLA_SM_GEOREF_DUMP_GNSS=<file>.
 void dump_gnss_residuals(
@@ -125,16 +160,7 @@ void dump_gnss_residuals(
         {
             const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
 
-            mrpt::system::TTimeStamp tRef = INVALID_TIMESTAMP;
-            for (const auto& o : *kfSf)
-            {
-                if (!std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o) &&
-                    !std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o))
-                {
-                    tRef = o->timestamp;
-                    break;
-                }
-            }
+            const auto tRef = keyframe_reference_timestamp(*kfSf);
             if (tRef != INVALID_TIMESTAMP)
             {
                 tRefSeconds = mrpt::Clock::toDouble(tRef);
@@ -223,18 +249,15 @@ void dump_imu_attitude_residuals(
             const auto& [kfPose, kfSf, kfTwist] = sm.get(frame.kf_index);
 
             mrpt::system::TTimeStamp tImu = INVALID_TIMESTAMP;
-            mrpt::system::TTimeStamp tRef = INVALID_TIMESTAMP;
             for (const auto& o : *kfSf)
             {
                 if (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o))
                 {
                     tImu = o->timestamp;
                 }
-                else if (tRef == INVALID_TIMESTAMP)
-                {
-                    tRef = o->timestamp;
-                }
             }
+            const auto tRef = keyframe_reference_timestamp(*kfSf);
+
             if (tImu != INVALID_TIMESTAMP && tRef != INVALID_TIMESTAMP)
             {
                 dtImuMinusKf = mrpt::system::timeDifference(tRef, tImu);

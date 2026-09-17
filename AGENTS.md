@@ -229,10 +229,13 @@ type cannot see this: `test_gnss_and_imu_attitude` exists to cover the mix.
 `MOLA_SM_GEOREF_DUMP_GNSS=<file>` and
 `MOLA_SM_GEOREF_DUMP_IMU_ATTITUDE=<file>` write one whitespace-separated row per
 observation with the measurement, the prediction at the optimum, the residual,
-and the reading's timestamp offset from its keyframe. The timestamp column is
-what separates a frame-convention or calibration error (a constant residual) from
-sensor noise (white) from a stream time skew (a residual proportional to the
-turn rate).
+and the reading's timestamp offset from its keyframe. Both dumps measure that
+offset against the same per-keyframe reference (the first observation that is
+neither IMU nor GNSS, i.e. the sensor that defines the keyframe; the earliest
+timestamp present when there is none), so their age columns are comparable. That
+column is what separates a frame-convention or calibration error (a constant
+residual) from sensor noise (white) from a stream time skew (a residual
+proportional to the turn rate).
 
 ## Class hierarchy
 
