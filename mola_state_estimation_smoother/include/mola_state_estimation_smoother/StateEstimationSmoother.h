@@ -323,6 +323,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             std::optional<frame_index_t>                   anchor_kf;
             std::optional<frame_index_t>                   last_kf;
             std::optional<mrpt::poses::CPose3DPDFGaussian> last_pose_in_odom;
+
+            /// Timestamp of the last accepted sample: readings not strictly
+            /// newer are dropped, since the chain tail is what the next
+            /// increment is measured from.
+            std::optional<mrpt::Clock::time_point> last_stamp;
         };
         std::map<odometry_frameid_t, RelativePoseChain> relative_pose_chains;
 

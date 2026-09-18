@@ -1229,6 +1229,20 @@ void StateEstimationSmoother::fuse_pose_locked(
         // source. See Parameters::relative_factors_frame_ids_re.
         auto& chain = state_.relative_pose_chains[frame_id_idx];
 
+        // Only strictly newer readings may extend the chain: an out-of-order or
+        // repeated sample would otherwise rewind the tail, and the next fresh
+        // reading would then assert the whole rewound span as ONE increment,
+        // with a one-increment covariance.
+        if (chain.last_stamp.has_value() && timestamp <= *chain.last_stamp)
+        {
+            MRPT_LOG_THROTTLE_WARN_FMT(
+                5.0,
+                "[fuse_pose] frame='%s': dropping non-monotonic reading (t=%f, chain tail t=%f)",
+                frame_id.c_str(), mrpt::Clock::toDouble(timestamp),
+                mrpt::Clock::toDouble(*chain.last_stamp));
+            return;
+        }
+
         if (!chain.anchor_kf.has_value())
         {
             state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -1277,6 +1291,7 @@ void StateEstimationSmoother::fuse_pose_locked(
 
         chain.last_kf           = this_kf_id;
         chain.last_pose_in_odom = poseSanitized;
+        chain.last_stamp        = timestamp;
 
         state_.last_raw_pose_by_source[frame_id_idx] =
             State::RawSourcePose{timestamp, poseSanitized};
