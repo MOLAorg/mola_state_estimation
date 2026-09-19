@@ -1595,6 +1595,70 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     }
 }
 
+std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimated_trajectory(
+    const mrpt::Clock::time_point& start_time, const mrpt::Clock::time_point& end_time,
+    const std::string& frame_id)
+{
+    if (!params_.keep_finalized_trajectory)
+    {
+        return {};
+    }
+    auto lck = mrpt::lockHelper(stateMutex_);
+
+    // The stored poses are keyframe poses in the reference frame. For an
+    // odometry frame they are converted with the LATEST estimate of
+    // T_frame_wrt_map, held constant over the whole trajectory: exact while the
+    // two frames coincide, which is the case of an offline odometry run, and
+    // the best available answer otherwise, since no per-keyframe anchor is kept.
+    std::optional<mrpt::poses::CPose3D> T_frame_wrt_map;
+    if (frame_id != params_.reference_frame_name)
+    {
+        const auto itId = state_.known_odom_frames.find_key(frame_id);
+        if (itId == state_.known_odom_frames.getDirectMap().end())
+        {
+            return {};
+        }
+        const auto itFrame = state_.last_estimated_frames.find(itId->second);
+        if (itFrame == state_.last_estimated_frames.end())
+        {
+            return {};
+        }
+        T_frame_wrt_map = itFrame->second.mean;
+    }
+
+    // Everything already marginalized out, plus what is still in the window at
+    // its current value, so the tail of an offline run is not lost.
+    mrpt::poses::CPose3DInterpolator ret;
+    const auto                       inRange = [&](const mrpt::Clock::time_point& t)
+    { return t >= start_time && t <= end_time; };
+
+    const auto toRequestedFrame = [&](const mrpt::poses::CPose3D& pInMap)
+    { return T_frame_wrt_map ? (pInMap - *T_frame_wrt_map).asTPose() : pInMap.asTPose(); };
+
+    for (const auto& [t, p] : finalizedTrajectory_)
+    {
+        if (inRange(t))
+        {
+            ret.insert(t, toRequestedFrame(mrpt::poses::CPose3D(p)));
+        }
+    }
+    for (const auto& [t, frame_idx] : state_.stamp2frame_index)
+    {
+        const auto it = state_.last_estimated_states.find(frame_idx);
+        if (it == state_.last_estimated_states.end() || !inRange(t))
+        {
+            continue;
+        }
+        ret.insert(t, toRequestedFrame(it->second.pose));
+    }
+
+    if (ret.empty())
+    {
+        return {};
+    }
+    return ret;
+}
+
 std::set<std::string> StateEstimationSmoother::known_odometry_frame_ids()
 {
     auto lck = mrpt::lockHelper(stateMutex_);
@@ -1932,16 +1996,35 @@ void StateEstimationSmoother::delete_too_old_entries()
     // never pruned.
     const auto& newestStamp = state_.stamp2frame_index.getDirectMap().rbegin()->first;
 
-    std::set<mrpt::Clock::time_point> stamps_to_erase;
-    std::set<frame_index_t>           ids_to_erase;
+    std::set<mrpt::Clock::time_point>                stamps_to_erase;
+    std::set<frame_index_t>                          ids_to_erase;
+    std::map<mrpt::Clock::time_point, frame_index_t> stamp2erasedFrame;
     for (const auto& [existing_t, frame_idx] : state_.stamp2frame_index)
     {
         if (mrpt::system::timeDifference(existing_t, newestStamp) > params_.sliding_window_length)
         {
             stamps_to_erase.insert(existing_t);
             ids_to_erase.insert(frame_idx);
+            stamp2erasedFrame[existing_t] = frame_idx;
         }
     }
+    // A keyframe leaving the window carries the last value the smoother wrote
+    // back for it, which is its final one: no future measurement can reach it
+    // any more. Record it before it is dropped, so an offline run can read the
+    // smoothed trajectory instead of the front end's registered poses.
+    if (params_.keep_finalized_trajectory)
+    {
+        for (const auto& [t_erase, frame_idx] : stamp2erasedFrame)
+        {
+            const auto it = state_.last_estimated_states.find(frame_idx);
+            if (it == state_.last_estimated_states.end())
+            {
+                continue;
+            }
+            finalizedTrajectory_.insert(t_erase, it->second.pose.asTPose());
+        }
+    }
+
     for (const auto& t_erase : stamps_to_erase)
     {
         state_.stamp2frame_index.erase_by_key(t_erase);
