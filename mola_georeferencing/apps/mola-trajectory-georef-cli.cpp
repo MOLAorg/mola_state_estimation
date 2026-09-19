@@ -13,44 +13,39 @@
 */
 
 #include <mp2p_icp/metricmap.h>
-#include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/io/CFileGZInputStream.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/serialization/CArchive.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/topography/conversions.h>
 
+#include <CLI/CLI.hpp>
 #include <fstream>
 
-// CLI flags:
-struct Cli
+// ---------------------------------------------------------------------------
+// CLI flags
+// ---------------------------------------------------------------------------
+namespace
 {
-    TCLAP::CmdLine cmd{"mola-trajectory-georef-cli"};
+CLI::App cmd{"mola-trajectory-georef-cli"};
 
-    TCLAP::ValueArg<std::string> argMM{
-        "m", "map", "Input .mm map with georef info", false, "map.mm", "map.mm", cmd};
+std::string argMM     = "map.mm";
+std::string argGeoRef = "map.georef";
+std::string argTraj;
+std::string argOutKML;
 
-    TCLAP::ValueArg<std::string> argGeoRef{
-        "g",          "geo-ref", "Input .georef file with georef info", false, "map.georef",
-        "map.georef", cmd};
+CLI::Option* optMM;
+CLI::Option* optGeoRef;
 
-    TCLAP::ValueArg<std::string> argTraj{
-        "t",  "trajectory", "Input .tum trajectory, in map local coordinates",
-        true, "traj.tum",   "traj.tum",
-        cmd};
+}  // namespace
 
-    TCLAP::ValueArg<std::string> argOutKML{
-        "o",        "output", "The name of the google earth kml file to write to", true, "path.kml",
-        "path.kml", cmd};
-};
-
-void run_traj_georef(Cli& cli)
+void run_traj_georef()
 {
     std::optional<mp2p_icp::metric_map_t::Georeferencing> geo;
 
-    if (cli.argMM.isSet())
+    if (optMM->count() > 0)
     {
-        const auto filMM = cli.argMM.getValue();
+        const auto& filMM = argMM;
 
         mp2p_icp::metric_map_t mm;
 
@@ -69,9 +64,9 @@ void run_traj_georef(Cli& cli)
         ASSERT_(mm.georeferencing.has_value());
         geo = mm.georeferencing;
     }
-    else if (cli.argGeoRef.isSet())
+    else if (optGeoRef->count() > 0)
     {
-        mrpt::io::CFileGZInputStream f(cli.argGeoRef.getValue());
+        mrpt::io::CFileGZInputStream f(argGeoRef);
 
         auto arch = mrpt::serialization::archiveFrom(f);
         arch >> geo;
@@ -87,7 +82,7 @@ void run_traj_georef(Cli& cli)
 
     // trajectory:
     mrpt::poses::CPose3DInterpolator traj;
-    bool                             trajLoadOk = traj.loadFromTextFile_TUM(cli.argTraj.getValue());
+    bool                             trajLoadOk = traj.loadFromTextFile_TUM(argTraj);
     ASSERT_(trajLoadOk);
 
     const auto WGS84 = mrpt::topography::TEllipsoid::Ellipsoid_WGS84();
@@ -108,7 +103,7 @@ void run_traj_georef(Cli& cli)
     }
 
     // Generate KML:
-    std::ofstream f(cli.argOutKML.getValue());
+    std::ofstream f(argOutKML);
     ASSERT_(f.is_open());
 
     f << mrpt::format(
@@ -120,7 +115,7 @@ void run_traj_georef(Cli& cli)
       <LineString>
         <tessellate>1</tessellate>
         <coordinates>)xml",
-        mrpt::system::extractFileName(cli.argTraj.getValue()).c_str());
+        mrpt::system::extractFileName(argTraj).c_str());
 
     for (const auto& d : geoPath)
     {
@@ -138,17 +133,18 @@ void run_traj_georef(Cli& cli)
 
 int main(int argc, char** argv)
 {
+    optMM     = cmd.add_option("-m,--map", argMM, "Input .mm map with georef info");
+    optGeoRef = cmd.add_option("-g,--geo-ref", argGeoRef, "Input .georef file with georef info");
+    cmd.add_option("-t,--trajectory", argTraj, "Input .tum trajectory, in map local coordinates")
+        ->required();
+    cmd.add_option("-o,--output", argOutKML, "The name of the google earth kml file to write to")
+        ->required();
+
+    CLI11_PARSE(cmd, argc, argv);
+
     try
     {
-        Cli cli;
-
-        // Parse arguments:
-        if (!cli.cmd.parse(argc, argv))
-        {
-            return 1;  // should exit.
-        }
-
-        run_traj_georef(cli);
+        run_traj_georef();
     }
     catch (const std::exception& e)
     {
