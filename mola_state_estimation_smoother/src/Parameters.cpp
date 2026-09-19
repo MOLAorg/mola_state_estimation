@@ -42,6 +42,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_REQ(cfg, max_time_to_use_velocity_model);
 
     MCP_LOAD_REQ(cfg, sliding_window_length);
+    MCP_LOAD_OPT(cfg, keep_finalized_trajectory);
 
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_linear);
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
