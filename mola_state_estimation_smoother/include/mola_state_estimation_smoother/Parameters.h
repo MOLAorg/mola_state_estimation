@@ -272,6 +272,46 @@ class Parameters
      */
     std::string relative_factors_frame_ids_re;
 
+    /** High-rate same-sensor decimation for fuse_pose() sources. If > 0,
+     * readings of a given frame_id arriving less than this many seconds after
+     * the last *kept* one of that same frame_id are dropped before they reach
+     * the graph. A pose source publishing in the hundreds of Hz otherwise
+     * packs the sliding window with keyframes that carry no new information,
+     * and the solver pays for every one of them.
+     *
+     * Nothing is lost under the relative formulation: a dropped reading does
+     * not advance the source's chain, so the next kept one asserts the whole
+     * merged span as a single increment. Under the absolute formulation there
+     * is nothing to accumulate either, since each reading stands alone.
+     *
+     * 0 disables it. Independent of, and coarser than,
+     * min_time_difference_to_create_new_frame. [seconds]
+     */
+    double pose_min_sample_period = 0.0;  // [s]
+
+    /** \name Known per-increment accuracy of a relative fuse_pose() source
+     *  @{ */
+
+    /** If > 0, this REPLACES the linear part of the covariance a relative
+     * fuse_pose() source supplies, for the increment factors only. A drifting
+     * source usually publishes the covariance of its absolute dead-reckoned
+     * pose, which grows without bound and says nothing about the quality of
+     * one increment; when the per-increment accuracy is known independently
+     * (from the platform's kinematics, say), asserting it here is both simpler
+     * and far more informative than trusting the accumulated number.
+     *
+     * Pair it with pose_min_sample_period deliberately: the value describes
+     * ONE increment, so merging more readings into each increment without
+     * loosening this asserts more than the source can support. 0 keeps the
+     * source's own covariance. [m]
+     */
+    double relative_pose_increment_sigma_lin = 0.0;  // [m]
+
+    /** Angular counterpart of relative_pose_increment_sigma_lin. [rad] */
+    double relative_pose_increment_sigma_ang = 0.0;  // [rad]
+
+    /** @} */
+
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.
      * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so

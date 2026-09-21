@@ -349,6 +349,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         };
         std::map<odometry_frameid_t, RelativePoseChain> relative_pose_chains;
 
+        /// Per fuse_pose() source, the timestamp of the last reading that was
+        /// allowed through, for Parameters::pose_min_sample_period.
+        std::map<odometry_frameid_t, mrpt::Clock::time_point> last_kept_pose_stamp;
+
         /** For real-time mode operation (not offline): returns the current extrapolated stamp,
          *  by adding the difference between the last observation wallclock time and now to the
          *  last observation timestamp.

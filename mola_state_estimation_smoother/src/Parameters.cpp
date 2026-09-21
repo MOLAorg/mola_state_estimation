@@ -138,6 +138,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, fuse_ground_truth_label);
     MCP_LOAD_OPT(cfg, relative_factors_frame_ids_re);
+    MCP_LOAD_OPT(cfg, pose_min_sample_period);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_lin);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     if (cfg.has("initial_twist"))

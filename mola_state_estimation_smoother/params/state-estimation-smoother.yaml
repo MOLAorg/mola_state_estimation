@@ -344,6 +344,28 @@ params:
   # ONE INCREMENT. Empty = every source stays on the absolute formulation.
   relative_factors_frame_ids_re: "${MOLA_RELATIVE_FACTORS_FRAMES|}"
 
+  # High-rate same-sensor decimation for fuse_pose() sources [seconds]. A pose
+  # source publishing in the hundreds of Hz otherwise packs the sliding window
+  # with keyframes carrying no new information, and the solver pays for each.
+  # Readings arriving less than this after the last KEPT one of the same
+  # frame_id are dropped before reaching the graph. Nothing is lost under the
+  # relative formulation: a dropped reading does not advance the source's
+  # chain, so the next kept one asserts the whole merged span as a single
+  # increment. 0 = disabled, which is the behavior before this key existed.
+  pose_min_sample_period: ${MOLA_POSE_MIN_SAMPLE_PERIOD|0.0}
+
+  # Known accuracy of ONE INCREMENT of a relative fuse_pose() source. A
+  # drifting source usually publishes the covariance of its absolute
+  # dead-reckoned pose, which grows without bound and says nothing about the
+  # quality of one increment; when the per-increment accuracy is known from the
+  # platform instead, asserting it here is both simpler and far more
+  # informative. Pair with pose_min_sample_period deliberately: the value
+  # describes one increment, so merging more readings into each increment
+  # without loosening this asserts more than the source can support.
+  # 0 = keep whatever covariance the source supplies.
+  relative_pose_increment_sigma_lin: ${MOLA_REL_POSE_INCR_SIGMA_LIN|0.0}  # [m]
+  relative_pose_increment_sigma_ang: ${MOLA_REL_POSE_INCR_SIGMA_ANG|0.0}  # [rad]
+
   # Fusing a dataset's own reference trajectory (a CObservationRobotPose
   # labeled "ground_truth") would invalidate any accuracy number measured
   # against it. Opt-in only.

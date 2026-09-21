@@ -1166,6 +1166,25 @@ void StateEstimationSmoother::fuse_pose_locked(
     // get this numerical frame_id :
     const auto frame_id_idx = add_or_get_odom_frame_id(frame_id);
 
+    // High-rate decimation: drop this reading if it arrives too soon after the
+    // last kept one of the same source. Done BEFORE the keyframe is created, so
+    // a dropped reading costs nothing and, under the relative formulation,
+    // leaves the source's chain tail where it was: the next kept reading then
+    // asserts the whole merged span as one increment, losing no motion.
+    if (params_.pose_min_sample_period > 0)
+    {
+        if (auto it = state_.last_kept_pose_stamp.find(frame_id_idx);
+            it != state_.last_kept_pose_stamp.end())
+        {
+            const double dt = mrpt::system::timeDifference(it->second, timestamp);
+            if (dt < params_.pose_min_sample_period)
+            {
+                return;
+            }
+        }
+        state_.last_kept_pose_stamp[frame_id_idx] = timestamp;
+    }
+
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
 
@@ -1279,6 +1298,27 @@ void StateEstimationSmoother::fuse_pose_locked(
                 // In this mode the caller's covariance describes ONE increment.
                 increment.cov = poseSanitized.cov;
 
+                // A drifting source usually publishes the covariance of its
+                // absolute dead-reckoned pose, which says nothing about one
+                // increment. Assert the known per-increment accuracy instead,
+                // when the caller has configured one.
+                if (params_.relative_pose_increment_sigma_lin > 0)
+                {
+                    const double v = mrpt::square(params_.relative_pose_increment_sigma_lin);
+                    for (int i = 0; i < 3; i++)
+                    {
+                        increment.cov(i, i) = v;
+                    }
+                }
+                if (params_.relative_pose_increment_sigma_ang > 0)
+                {
+                    const double v = mrpt::square(params_.relative_pose_increment_sigma_ang);
+                    for (int i = 3; i < 6; i++)
+                    {
+                        increment.cov(i, i) = v;
+                    }
+                }
+
                 gtsam::Pose3   incr_out;
                 gtsam::Matrix6 incrCov_out;
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
@@ -1289,9 +1329,22 @@ void StateEstimationSmoother::fuse_pose_locked(
             }
         }
 
-        chain.last_kf           = this_kf_id;
-        chain.last_pose_in_odom = poseSanitized;
-        chain.last_stamp        = timestamp;
+        // Advance the chain's measurement anchor ONLY when the keyframe
+        // actually changed. Several readings can land on the same keyframe
+        // (min_time_difference_to_create_new_frame merges near-simultaneous
+        // ones), and no factor is created for those; moving the anchor anyway
+        // would leave the motion between the first and last of them out of
+        // every increment, so the chain would report less motion than the
+        // source measured. Holding the anchor makes the next increment span
+        // the whole keyframe-to-keyframe interval.
+        const bool keyframeAdvanced = !chain.last_kf.has_value() || *chain.last_kf != this_kf_id;
+
+        chain.last_kf = this_kf_id;
+        if (keyframeAdvanced || !chain.last_pose_in_odom.has_value())
+        {
+            chain.last_pose_in_odom = poseSanitized;
+        }
+        chain.last_stamp = timestamp;
 
         state_.last_raw_pose_by_source[frame_id_idx] =
             State::RawSourcePose{timestamp, poseSanitized};
