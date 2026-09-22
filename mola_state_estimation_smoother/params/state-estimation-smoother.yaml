@@ -339,12 +339,28 @@ params:
   # dead-reckoned pose, which grows without bound and says nothing about the
   # quality of one increment; when the per-increment accuracy is known from the
   # platform instead, asserting it here is both simpler and far more
-  # informative. Pair with pose_min_sample_period deliberately: the value
-  # describes one increment, so merging more readings into each increment
-  # without loosening this asserts more than the source can support.
-  # 0 = keep whatever covariance the source supplies.
+  # informative. The value describes one increment, whatever it spans; put
+  # motion-dependent error in the *_per_sqrt_* growth terms below, which scale
+  # with the increment. 0 = keep whatever covariance the source supplies.
   relative_pose_increment_sigma_lin: ${MOLA_REL_POSE_INCR_SIGMA_LIN|0.0}  # [m]
   relative_pose_increment_sigma_ang: ${MOLA_REL_POSE_INCR_SIGMA_ANG|0.0}  # [rad]
+
+  # Growth of the per-increment uncertainty with the size of the increment,
+  # as a random walk: variance = sigma_lin^2 + k^2 * distance (and likewise
+  # for the rotated angle). Slips and skids happen while moving, independently
+  # along the path; growing the VARIANCE linearly keeps the total asserted over
+  # a path independent of how it is split into increments. Requires the
+  # matching flat sigma above to be > 0, which acts as the stationary floor.
+  # 0 = disabled.
+  relative_pose_increment_sigma_per_sqrt_meter: ${MOLA_REL_POSE_INCR_SIGMA_PER_SQRT_M|0.0}  # [m/sqrt(m)]
+  relative_pose_increment_sigma_per_sqrt_rad: ${MOLA_REL_POSE_INCR_SIGMA_PER_SQRT_RAD|0.0}  # [rad/sqrt(rad)]
+
+  # Huber m-estimator threshold for fuse_pose() factors, absolute and relative
+  # alike, in whitened units (sigmas of the covariance given for each factor,
+  # so only meaningful with calibrated covariances). A dead-reckoning source
+  # produces occasional gross errors, a slipped foot or a skidded wheel, and
+  # under a plain Gaussian each one pulls with unbounded weight. 0 = disabled.
+  pose_robust_huber_threshold: ${MOLA_POSE_ROBUST_HUBER|0.0}
 
   # Fusing a dataset's own reference trajectory (a CObservationRobotPose
   # labeled "ground_truth") would invalidate any accuracy number measured

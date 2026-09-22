@@ -177,8 +177,15 @@ covariance passed is read as the uncertainty of ONE INCREMENT. A drifting
 source usually publishes its absolute dead-reckoned covariance instead, so
 `relative_pose_increment_sigma_lin`/`_ang` can replace it with the known
 per-increment accuracy (the replaced block's cross terms are dropped too, or
-the result may be indefinite). It is a trade, not a free win - see the
-parameter docs and `test-relative-pose-factors`.
+the result may be indefinite). `relative_pose_increment_sigma_per_sqrt_meter`/
+`_per_sqrt_rad` grow that VARIANCE linearly with the increment size (a random
+walk), so the total asserted over a path does not depend on the keyframe rate
+or `pose_min_sample_period`; the flat sigma is the stationary floor and must
+be > 0. `pose_robust_huber_threshold` wraps every per-reading `fuse_pose()`
+factor (not the one-time anchor) in a Huber kernel; only Huber is offered
+because a redescending kernel can switch off a correct reading whose new
+keyframe is seeded at its neighbor's pose. It is a trade, not a free win - see
+the parameter docs and `test-relative-pose-factors`.
 
 **Never fuse a dataset's own ground truth.** MOLA's dataset sources publish
 their reference trajectory as a `CObservationRobotPose` labeled
