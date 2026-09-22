@@ -41,6 +41,7 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
+#include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
@@ -203,6 +204,23 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
     [[nodiscard]] std::optional<NavState> estimated_navstate(
         const mrpt::Clock::time_point& timestamp, const std::string& frame_id) override;
+
+    /** Implements NavStateFilter::estimated_trajectory().
+     *
+     *  Returns the smoothed trajectory: each keyframe's pose as it was when it
+     *  left the sliding window, i.e. after every measurement the window could
+     *  bring to bear on it, plus the keyframes still inside the window at their
+     *  current value. This is a different quantity from estimated_navstate(),
+     *  which anchors on the newest keyframe and extrapolates: the newest state
+     *  is the least optimized one, the oldest is the most.
+     *
+     *  Requires `keep_finalized_trajectory` (off by default). An odometry
+     *  frame is served through the latest estimate of that frame's transform,
+     *  held constant over the trajectory.
+     */
+    [[nodiscard]] std::optional<mrpt::poses::CPose3DInterpolator> estimated_trajectory(
+        const mrpt::Clock::time_point& start_time, const mrpt::Clock::time_point& end_time,
+        const std::string& frame_id) override;
 
     /// Returns a list of known odometry frame_ids:
     [[nodiscard]] auto known_odometry_frame_ids() -> std::set<std::string>;
@@ -410,7 +428,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     State      state_;
     std::mutex stateMutex_;
-    bool       params_loaded_ = false;
+
+    /// Poses of the keyframes already marginalized out, in the reference frame,
+    /// each recorded at the moment it left the window. Only filled when
+    /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
+    /// of the factor graph does not discard the history already collected.
+    mrpt::poses::CPose3DInterpolator finalizedTrajectory_;
+    bool                             params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.

@@ -62,6 +62,11 @@ params:
   # Time window to keep past observations in the filter [seconds]
   sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|6.0}
 
+  # Keep each keyframe's pose as it leaves the window (its final optimized
+  # value) and serve them via estimated_trajectory(). Offline instrumentation:
+  # the container grows with the run, so it stays off in a live system.
+  keep_finalized_trajectory: ${MOLA_SMOOTHER_KEEP_TRAJECTORY|false}
+
   # Minimum time difference between frames to create a new frame [seconds]
   min_time_difference_to_create_new_frame: 0.01
 
