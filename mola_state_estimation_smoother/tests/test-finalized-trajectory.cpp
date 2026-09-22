@@ -61,7 +61,14 @@ constexpr double   SPEED   = 1.0;
 constexpr double   DT      = 0.1;
 constexpr unsigned N_POSES = 50;
 
-void feed(mola::state_estimation_smoother::StateEstimationSmoother& nav)
+// The first warmupSteps poses are each followed by a solve, matching a front
+// end that queries per observation, so the window reaches its steady state
+// before anything is batched. After that, batchSize poses are queued per
+// solve instead, the way the async backend defers process_pending_gtsam_updates()
+// to whatever arrived since it last woke up.
+void feed(
+    mola::state_estimation_smoother::StateEstimationSmoother& nav, unsigned batchSize = 1,
+    unsigned warmupSteps = 0)
 {
     const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-4);
 
@@ -72,9 +79,12 @@ void feed(mola::state_estimation_smoother::StateEstimationSmoother& nav)
             mrpt::poses::CPose3D::FromXYZYawPitchRoll(SPEED * t, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
         nav.fuse_pose(mrpt::Clock::fromDouble(t), mrpt::poses::CPose3DPDFGaussian(p, cov), "odom");
 
-        // A front end queries the estimator once per observation; that is what
-        // runs the solve whose values are written back into the keyframes.
-        (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
+        const bool doSolve =
+            i < warmupSteps ? true : ((i - warmupSteps + 1) % batchSize == 0) || i + 1 == N_POSES;
+        if (doSolve)
+        {
+            (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
+        }
     }
 }
 }  // namespace
@@ -126,6 +136,35 @@ void test_covers_the_whole_run()
     }
 }
 
+// Same as test_covers_the_whole_run, but after a warmup that lets the window
+// (10 keyframes, sliding_window_length=1.0s, DT=0.1s) reach steady state,
+// pairs of fuse_pose() calls are queued per solve instead of one -- the way
+// the async backend batches whatever arrived since it last woke up. Each pair
+// ages one already-solved, mature keyframe out of the window before the
+// pair's own solve runs. Finalizing it right there, rather than after that
+// solve's writeback, would record it at the value from one solve earlier,
+// missing whatever the two new poses just contributed to it.
+void test_covers_the_whole_run_without_intermediate_solves()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(params_with(true)));
+    feed(nav, /*batchSize=*/2, /*warmupSteps=*/20);
+
+    const auto traj = nav.estimated_trajectory(
+        mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
+    ASSERT_(traj.has_value());
+    ASSERT_GT_(traj->size(), N_POSES / 2);
+    ASSERT_GT_(traj->size() * DT, 2.0);
+
+    for (const auto& [t, p] : *traj)
+    {
+        const double tt = mrpt::Clock::toDouble(t);
+        ASSERT_NEAR_(p.y, 0.0, 0.05);
+        ASSERT_NEAR_(p.z, 0.0, 0.05);
+        ASSERT_NEAR_(p.x, SPEED * tt, 0.05);
+    }
+}
+
 // An unknown frame cannot be served, and must not be silently answered in the
 // reference frame.
 void test_unknown_frame()
@@ -144,6 +183,8 @@ int main(int argc, char** argv)
     const std::map<std::string, std::function<void()>> tests = {
         {"disabled_by_default", &test_disabled_by_default},
         {"covers_the_whole_run", &test_covers_the_whole_run},
+        {"covers_the_whole_run_without_intermediate_solves",
+         &test_covers_the_whole_run_without_intermediate_solves},
         {"unknown_frame", &test_unknown_frame},
     };
 

@@ -2149,8 +2149,9 @@ StateEstimationSmoother::frame_index_t
         add_kinematic_factor_between(newFrameIdx, idx_after);
     }
 
-    // Remove really old entries in our bimap. GTSAM fixed lag handles removing actual factors.
-    delete_too_old_entries();
+    // Pruning (and, with it, finalized-trajectory recording) is deferred to
+    // process_pending_gtsam_updates_locked(), once the solver has written back
+    // this batch's estimate: see delete_too_old_entries() for why.
 
     return newFrameIdx;
 }
@@ -2416,6 +2417,17 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 enforce_planar_twist(kf.twist);
             }
         }
+    }
+
+    // Age out keyframes that fell outside the window, now that the writeback
+    // above has given every one of them its final solved value. Done here,
+    // once per batch, rather than per fuse_*() call: in async mode several
+    // keyframes can be created before this function next runs, and finalizing
+    // one on creation would record a stale (or altogether missing) pose
+    // instead of this batch's solve.
+    if (!state_.stamp2frame_index.empty())
+    {
+        delete_too_old_entries();
     }
 
     // Drive the predict-twist low-pass with the newest keyframe's optimized
