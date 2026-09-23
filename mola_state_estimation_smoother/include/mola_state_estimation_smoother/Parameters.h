@@ -200,52 +200,11 @@ class Parameters
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
     /** @} */
 
-    /** Fuse each wheel-odometry increment as a RELATIVE constraint between the
-     * two keyframes it spans, `BetweenFactor(T(kf_prev), T(kf_now), increment,
-     * incrementCov)`, in addition to the absolute pose-in-{odom_i} factor that
-     * is always added.
-     *
-     * Why it exists: the absolute factor asserts a dead-reckoned pose, so the
-     * covariance that must go with it is the whole accumulated dead-reckoning
-     * uncertainty -- which is honest, but by the time it is honest it is also
-     * nearly uninformative, and it throws away the one thing wheel odometry is
-     * genuinely good at: short-baseline relative motion. The relative factor
-     * states exactly that, with exactly the covariance the motion model
-     * computes for it, and nothing accumulates.
-     *
-     * When enabled, exactly ONE absolute pose-in-{odom_i} factor is ever added,
-     * on the first kept reading, because one is all it takes: `T_map_to_odom_i`
-     * is a single rigid variable, so given that anchor plus the relative chain,
-     * every later "keyframe k is at odom pose p_k" is already implied. Extra
-     * absolute factors do not observe the frame any better; they re-inject the
-     * accumulated dead-reckoning error into the map poses.
-     *
-     * It also needs no renewal when its keyframe ages out: keyframes leave
-     * through the fixed-lag smoother's marginalization, which folds their
-     * factors into a linear marginal on the surviving variables, so the anchor
-     * keeps constraining `T_map_to_odom_i` after its own keyframe is gone.
-     *
-     * A relative factor is skipped, rather than forced, when the previous
-     * odometry keyframe has already been marginalized out: a factor on a
-     * variable the smoother no longer holds would resurrect it as a free state.
-     *
-     * Off by default on a measured trade, not out of caution. It is the better
-     * of the two ways to fuse on real data (BotanicGarden, better APE on 5 of 7
-     * sequences than the absolute-only formulation), but it costs
-     * geo-referencing: the ENU->map rotation error in
-     * test-navstate-odom-gnss-fusion grows past that test's 5 deg gate, where
-     * the absolute-only formulation stays inside it. Asserting the dead-reckoned
-     * pose absolutely, however weakly, is apparently what makes that yaw well
-     * observed. Enable this if you fuse wheel odometry and do not estimate
-     * geo-referencing.
-     */
-    bool odometry_relative_factors = false;
-
     /** Regex of odometry frame_ids (see fuse_pose()) whose poses are fused as
      *  RELATIVE increments between consecutive keyframes, plus one absolute
      *  factor added once to resolve T_map_to_odom_i, instead of as an absolute
-     *  pose per reading. This is the odometry_relative_factors formulation
-     *  above, generalized from wheel odometry to any fuse_pose() source.
+     *  pose per reading. This is how wheel odometry is always fused,
+     *  generalized to any fuse_pose() source.
      *
      *  It is what a DRIFTING source needs. An absolute-pose factor asserts that
      *  the source's whole trajectory relates to {map} by one rigid transform,
@@ -271,6 +230,53 @@ class Parameters
      *  Empty (the default) keeps every source on the absolute formulation.
      */
     std::string relative_factors_frame_ids_re;
+
+    /** High-rate same-sensor decimation for fuse_pose() sources. If > 0,
+     * readings of a given frame_id arriving less than this many seconds after
+     * the last *kept* one of that same frame_id are dropped before they reach
+     * the graph. A pose source publishing in the hundreds of Hz otherwise
+     * packs the sliding window with keyframes that carry no new information,
+     * and the solver pays for every one of them.
+     *
+     * Nothing is lost under the relative formulation: a dropped reading does
+     * not advance the source's chain, so the next kept one asserts the whole
+     * merged span as a single increment. Under the absolute formulation there
+     * is nothing to accumulate either, since each reading stands alone.
+     *
+     * It applies to EVERY fuse_pose() source, e.g. LiDAR odometry too. Keep
+     * it well below the period of any source that must not be thinned: at
+     * about that period, timestamp jitter alone drops every other reading.
+     * A dropped reading still refreshes the source's own-frame pose that
+     * estimated_navstate() extrapolates from.
+     *
+     * 0 disables it. Independent of, and coarser than,
+     * min_time_difference_to_create_new_frame. [seconds]
+     */
+    double pose_min_sample_period = 0.0;  // [s]
+
+    /** \name Known per-increment accuracy of a relative fuse_pose() source
+     *  @{ */
+
+    /** If > 0, this REPLACES the linear part of the covariance a relative
+     * fuse_pose() source supplies, for the increment factors only. A drifting
+     * source usually publishes the covariance of its absolute dead-reckoned
+     * pose, which grows without bound and says nothing about the quality of
+     * one increment; when the per-increment accuracy is known independently
+     * (from the platform's kinematics, say), asserting it here is both simpler
+     * and far more informative than trusting the accumulated number.
+     *
+     * Pair it with pose_min_sample_period deliberately: the value describes
+     * ONE increment, so merging more readings into each increment without
+     * loosening this asserts more than the source can support. 0 keeps the
+     * source's own covariance. Its correlations with the angular part are
+     * discarded too. [m]
+     */
+    double relative_pose_increment_sigma_lin = 0.0;  // [m]
+
+    /** Angular counterpart of relative_pose_increment_sigma_lin. [rad] */
+    double relative_pose_increment_sigma_ang = 0.0;  // [rad]
+
+    /** @} */
 
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
      * less than this many seconds after the last *processed* one are skipped.

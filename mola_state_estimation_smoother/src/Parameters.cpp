@@ -48,7 +48,15 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
-    MCP_LOAD_OPT(cfg, odometry_relative_factors);
+    // Wheel odometry is always fused as relative increments. The key is still
+    // accepted when set to true, so existing configuration files keep working.
+    if (cfg.has("odometry_relative_factors"))
+    {
+        ASSERTMSG_(
+            cfg["odometry_relative_factors"].as<bool>(),
+            "odometry_relative_factors=false is no longer supported: wheel odometry is always "
+            "fused as relative increments between keyframes");
+    }
     MCP_LOAD_OPT(cfg, sigma_integrator_position);
     MCP_LOAD_OPT(cfg, sigma_integrator_orientation);
     MCP_LOAD_OPT(cfg, sigma_relative_pose_linear);
@@ -138,7 +146,15 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, fuse_ground_truth_label);
     MCP_LOAD_OPT(cfg, relative_factors_frame_ids_re);
+    MCP_LOAD_OPT(cfg, pose_min_sample_period);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_lin);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
+
+    ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
+    ASSERTMSG_(
+        relative_pose_increment_sigma_lin >= 0 && relative_pose_increment_sigma_ang >= 0,
+        "relative_pose_increment_sigma_lin/_ang must be >= 0");
 
     if (cfg.has("initial_twist"))
     {
