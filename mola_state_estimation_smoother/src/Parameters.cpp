@@ -48,7 +48,15 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
-    MCP_LOAD_OPT(cfg, odometry_relative_factors);
+    // Wheel odometry is always fused as relative increments. The key is still
+    // accepted when set to true, so existing configuration files keep working.
+    if (cfg.has("odometry_relative_factors"))
+    {
+        ASSERTMSG_(
+            cfg["odometry_relative_factors"].as<bool>(),
+            "odometry_relative_factors=false is no longer supported: wheel odometry is always "
+            "fused as relative increments between keyframes");
+    }
     MCP_LOAD_OPT(cfg, sigma_integrator_position);
     MCP_LOAD_OPT(cfg, sigma_integrator_orientation);
     MCP_LOAD_OPT(cfg, sigma_relative_pose_linear);

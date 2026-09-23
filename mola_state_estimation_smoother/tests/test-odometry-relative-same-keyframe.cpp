@@ -54,7 +54,6 @@ params:
     estimate_geo_reference: false
     min_time_difference_to_create_new_frame: 0.01
     odometry_min_sample_period: 0.0
-    odometry_relative_factors: true
 )###";
 
 void run_test()

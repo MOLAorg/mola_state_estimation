@@ -62,8 +62,15 @@ constexpr double ODOMETRY_NOISE_PHI = 0.1_deg;
 // weight from an over-confident one, and must not be used as the gate on that
 // axis. It still earns its place as a regression guard on the fusion working at
 // all; the threshold is sized for that.
+//
+// The ENU->map rotation gate has the same blind spot. Asserting absolute
+// dead-reckoned poses counts the shared odometry history once per reading,
+// which on this noise-only source reads as extra, correct heading information.
+// Fusing wheel odometry as relative increments only, as the estimator now always
+// does, spreads the 40 runs over 2.2-6.1 deg (median 3.7) where the absolute
+// formulation gave 1.3-4.7 deg (median 3.5).
 constexpr double MAXIMUM_SE3_FINAL_ERROR        = 0.45;
-constexpr double MAXIMUM_ENU2MAP_ROTATION_ERROR = 5.0_deg;
+constexpr double MAXIMUM_ENU2MAP_ROTATION_ERROR = 7.0_deg;
 
 constexpr const char* ODOMETRY_NAME = "odom";
 

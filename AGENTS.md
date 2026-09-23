@@ -159,7 +159,10 @@ Key traits:
 
 Sensor inputs:
 - `fuse_pose()` - localization / LiDAR odometry / visual odometry poses
-- `fuse_odometry()` - wheel odometry with uncertainty
+- `fuse_odometry()` - wheel odometry with uncertainty, ALWAYS fused as relative
+  increments between keyframes (plus one anchor factor resolving
+  `T_map_to_odom_i`): the dead-reckoned pose is a sum of increments, so
+  asserting it absolutely would count the shared history once per reading.
 - `fuse_imu()` - gravity alignment, angular velocity, attitude
 - `fuse_gnss()` - GPS in ENU coordinates
 - `fuse_twist()` - direct velocity measurements
@@ -169,7 +172,7 @@ ABSOLUTE pose in that source's own frame, i.e. that the source relates to
 `{map}` by one rigid transform. For a source that drifts (visual odometry),
 list its frame_id in `relative_factors_frame_ids_re` instead: it is then fused
 as increments between consecutive keyframes plus one absolute anchor, which is
-`odometry_relative_factors` generalized from wheel odometry. In that mode the
+how wheel odometry is always fused, generalized. In that mode the
 covariance passed is read as the uncertainty of ONE INCREMENT. A drifting
 source usually publishes its absolute dead-reckoned covariance instead, so
 `relative_pose_increment_sigma_lin`/`_ang` can replace it with the known
@@ -331,7 +334,11 @@ Optional additional TF outputs (both default off, additive, distinct
 independently):
 
 - `publish_map_to_odom_tf`: advertise `map -> odom` (method `/map_odom`) taken
-  directly from the estimator's own `T_map_to_odom` graph variable. It is smooth
+  from the estimator's own `T_map_to_odom` graph variable. For a source fused
+  as relative increments (wheel odometry, `relative_factors_frame_ids_re`) that
+  variable is pinned only by the one anchor and does not follow drift, so the
+  published value is `X(chain tail kf) (+) pose_in_odom(tail)^-1` instead
+  (`test-relative-source-map-to-odom`). It is smooth
   and time-consistent, so the bridge forwards it to `/tf` verbatim (its
   `child_frame != base_link` path), avoiding the stale
   `(map->base_link)*(odom->base_link)^-1` composition that otherwise injects

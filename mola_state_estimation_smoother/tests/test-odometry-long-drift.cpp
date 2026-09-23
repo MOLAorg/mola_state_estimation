@@ -19,35 +19,11 @@
  * @author Jose Luis Blanco Claraco
  * @date   Aug 21, 2026
  *
- * Measured when this was written, and worth knowing before reading a result
- * from it: **both odometry formulations pass this, and by two orders of
- * magnitude.** With 600 m of true travel, a 4% scale error and periodic 4x slip
- * bursts -- 209 m of accumulated odometry error in total -- the fused
- * trajectory ends 0.02 m from the truth whether the increments enter as
- * absolute poses in {odom_i} or as relative constraints between keyframes.
- *
- * That is not the fixture being weak; it is the graph being right, and the
- * reason is `T_map_to_odom_i`. It is a free variable with only a weak prior,
- * it is re-optimized on every update, and it is never marginalized (its key
- * timestamp is bumped to the newest observation each time). So it SLIDES to
- * absorb accumulated odometry drift -- which is exactly what a REP-105
- * map->odom correction is for. The absolute factor's mean is therefore not
- * "wrong by 200 m" in the graph's own terms: the frame it is measured against
- * moved with it. The inference is forced by the numbers above -- had that frame
- * stayed put, factors asserting a pose 200 m away with ~0.2 m sigma could not
- * have left the estimate at 0.02 m.
- *
- * So this file does NOT discriminate between the two formulations, and must not
- * be cited as evidence for either. What it does guard is real and was worth
- * pinning down: that unbounded dead-reckoning drift, smooth or bursty, does not
- * leak into the fused trajectory when an accurate pose source is present.
- *
- * The case that DOES separate them is not reachable from here: on
- * BotanicGarden the relative formulation is better on 5 of 7 sequences, and
- * that is a closed loop -- the estimator's output becomes the front end's ICP
- * prior, which shapes the next pose it is fed. A standalone estimator test
- * feeds poses that do not depend on what the estimator said, so it cannot
- * reproduce that at all.
+ * Wheel odometry is fused as relative increments between keyframes plus one
+ * anchor factor resolving T_map_to_odom_i. With 600 m of true travel, a 4% scale
+ * error and periodic 4x slip bursts, an accurate pose source must still keep the
+ * fused trajectory near the truth: unbounded dead-reckoning drift, smooth or
+ * bursty, must not leak into it.
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
@@ -132,18 +108,14 @@ params:
     estimate_geo_reference: false
 )###";
 
-void run_test(bool relativeFactors)
+void run_test()
 {
-    std::cout << "\n--- odometry_relative_factors: " << (relativeFactors ? "true" : "false")
-              << " ---\n";
-
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     if (VERBOSE)
     {
         stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
     auto params = mrpt::containers::yaml::FromText(navStateParams);
-    params["params"]["odometry_relative_factors"] = relativeFactors;
     stateEst.initialize(params);
 
     mrpt::poses::CPose3D gtPose = mrpt::poses::CPose3D::Identity();
@@ -260,12 +232,7 @@ int main()
 {
     try
     {
-        // Both formulations, because the point of the fixture is that neither
-        // lets unbounded dead-reckoning drift into the fused trajectory -- and
-        // because a formulation nothing exercises is a formulation nothing
-        // guards.
-        run_test(false);
-        run_test(true);
+        run_test();
         std::cout << "Test successful." << std::endl;
         return 0;
     }

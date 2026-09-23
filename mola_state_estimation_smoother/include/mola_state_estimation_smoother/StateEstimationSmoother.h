@@ -383,17 +383,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// accumulated increment.
         std::optional<mrpt::Clock::time_point> last_wheels_odometry_stamp;
 
-        /// Wheel odometry is fused as an ABSOLUTE pose in its own {odom_i}
-        /// frame, so the covariance that goes with it must be the uncertainty
-        /// accumulated over the whole dead-reckoning history, not that of the
-        /// single latest increment. This carries that accumulation: the pose is
+        /// Absolute dead-reckoned wheel-odometry pose in its own {odom_i}
+        /// frame, with the uncertainty accumulated over the whole history, for
+        /// the one factor resolving T_map_to_odom_i and for the source's
+        /// own-frame pose estimated_navstate() extrapolates from. The pose is
         /// the same one the source reports, and the covariance is the composed
         /// motion-model covariance of every increment since the first reading.
         /// Reset with the estimator.
         std::optional<mrpt::poses::CPose3DPDFGaussian> wheels_odometry_accumulated;
 
-        /// Tail keyframe of the relative-factor chain built when
-        /// `odometry_relative_factors` is enabled. Reset with the estimator.
+        /// Tail keyframe of the wheel-odometry relative-factor chain. Reset
+        /// with the estimator.
         std::optional<frame_index_t> last_wheels_odometry_kf;
 
         /// Odometry reading representing last_wheels_odometry_kf: the first
@@ -402,7 +402,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry_at_kf;
 
         /// Keyframe carrying the single absolute pose-in-{odom_i} factor that
-        /// resolves T_map_to_odom_i under `odometry_relative_factors`. Set once
+        /// resolves T_map_to_odom_i for wheel odometry. Set once
         /// and never renewed: the fixed-lag smoother marginalizes keyframes
         /// rather than dropping their factors, so that information survives its
         /// own keyframe. See fuse_odometry_relative_locked().
@@ -496,9 +496,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id);
 
-    /// Relative formulation of wheel-odometry fusion: BetweenFactors between
-    /// consecutive odometry keyframes, plus one absolute factor, added once, to
-    /// resolve T_map_to_odom_i. See Parameters::odometry_relative_factors.
+    /// Wheel-odometry fusion: BetweenFactors between consecutive odometry
+    /// keyframes, plus one absolute factor, added once, to resolve
+    /// T_map_to_odom_i.
     void fuse_odometry_relative_locked(
         const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
         const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom);

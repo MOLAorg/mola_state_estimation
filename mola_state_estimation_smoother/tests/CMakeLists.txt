@@ -56,6 +56,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-relative-source-map-to-odom
+  SOURCES test-relative-source-map-to-odom.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-relative-pose-factors
   SOURCES test-relative-pose-factors.cpp
   LINK_LIBRARIES

@@ -787,24 +787,12 @@ void StateEstimationSmoother::fuse_odometry_locked(
     // Use a probabilistic motion model:
     const auto incrementPdf = odometry_increment_pdf(params_, odom.odometry - lastOdom);
 
-    // Compose this increment onto the accumulated dead-reckoning pose, so the
-    // covariance handed to fuse_pose_locked() is the uncertainty of the
-    // ABSOLUTE pose in {odom_i} -- which is what that factor asserts -- rather
-    // than the uncertainty of this one increment.
-    //
-    // This matters because the resulting factor is
-    // BetweenFactor(T_map_to_odom_i, T(kf), pose_in_odom, cov). T_map_to_odom_i
-    // is a single rigid variable, so with a per-increment covariance every
-    // keyframe in the window is told it lies within ~1 cm of one common frame,
-    // no matter how far the wheels have dead-reckoned since. On a platform with
-    // any slip those constraints are mutually inconsistent and the only way the
-    // optimizer can satisfy them is to distort the poses.
-    //
-    // Growing with distance travelled is the point: the factor is informative
-    // while the dead reckoning is fresh and fades as it stales, which is what it
-    // actually knows. The composition is conservative for nearby keyframe pairs
-    // (it ignores the correlation between two accumulations sharing a history),
-    // and conservative is the safe direction here.
+    // Keep the absolute dead-reckoned pose in {odom_i} with its accumulated
+    // covariance. Motion enters the graph only as relative increments (see
+    // fuse_odometry_relative_locked()); this pose is used for the one factor
+    // resolving T_map_to_odom_i and as the source's own-frame pose that
+    // estimated_navstate() extrapolates from, and both need the uncertainty
+    // of the whole dead-reckoning history, not that of one increment.
     ASSERT_(state_.wheels_odometry_accumulated.has_value());
     *state_.wheels_odometry_accumulated = *state_.wheels_odometry_accumulated + incrementPdf;
 
@@ -828,26 +816,22 @@ void StateEstimationSmoother::fuse_odometry_locked(
     state_.last_wheels_odometry       = odom.odometry;
     state_.last_wheels_odometry_stamp = odom.timestamp;
 
-    if (!params_.odometry_relative_factors)
-    {
-        // Fuse this new probabilistic pose observation:
-        fuse_pose_locked(odom.timestamp, newOdomPosePdf, odomName);
-        return;
-    }
-
+    // Wheel odometry is always fused as relative increments: an absolute
+    // dead-reckoned pose asserts that the whole odometry trajectory relates to
+    // {map} by one rigid transform, which slip and scale errors break.
     fuse_odometry_relative_locked(odom, odomName, newOdomPosePdf);
 }
 
 // Relative formulation: the motion goes into BetweenFactors between consecutive
 // odometry keyframes, and exactly ONE absolute pose-in-{odom_i} factor is ever
 // added, on the first kept reading of each source, to resolve T_map_to_odom_i.
+// It is the only formulation used for wheel odometry.
 //
 // One is all it takes, and it stays that way for the whole run. T_map_to_odom_i
 // is a single rigid variable: given that anchor plus the relative chain, every
 // later "keyframe k is at odom pose p_k" is already implied, up to the odometry
 // drift in between. A second absolute factor observes the frame no better -- it
-// re-injects the accumulated dead-reckoning error into the map poses, which is
-// the defect the covariance accumulation mitigates rather than removes.
+// re-injects the accumulated dead-reckoning error into the map poses.
 //
 // Nor does the anchor need renewing when its keyframe ages out. Keyframes leave
 // through IncrementalFixedLagSmoother's MARGINALIZATION, not through
@@ -2624,6 +2608,45 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     {
         const auto tleOdomMarg =
             mola::ProfilerEntry(profiler_, "process_pending.marginals.odom_frames");
+        // A source fused as relative increments constrains its T_map_to_odom_i
+        // only through the one anchor factor, so that variable keeps the
+        // initial alignment while the source drifts away from it. The live
+        // map->odom of such a source is the correction that makes it agree
+        // with the fused pose at the tail keyframe of its chain.
+        const auto liveRelativeFrame =
+            [this](odometry_frameid_t idx) -> std::optional<mrpt::poses::CPose3D>
+        {
+            std::optional<frame_index_t>        tailKf;
+            std::optional<mrpt::poses::CPose3D> tailPoseInOdom;
+            if (const auto it = state_.relative_pose_chains.find(idx);
+                it != state_.relative_pose_chains.end() && it->second.last_pose_in_odom)
+            {
+                tailKf         = it->second.last_kf;
+                tailPoseInOdom = it->second.last_pose_in_odom->mean;
+            }
+            else if (state_.last_wheels_odometry_name && state_.last_wheels_odometry_at_kf)
+            {
+                const auto itName =
+                    state_.known_odom_frames.find_key(*state_.last_wheels_odometry_name);
+                if (itName != state_.known_odom_frames.getDirectMap().end() &&
+                    itName->second == idx)
+                {
+                    tailKf         = state_.last_wheels_odometry_kf;
+                    tailPoseInOdom = mrpt::poses::CPose3D(*state_.last_wheels_odometry_at_kf);
+                }
+            }
+            if (!tailKf || !tailPoseInOdom)
+            {
+                return {};
+            }
+            const auto itKf = state_.last_estimated_states.find(*tailKf);
+            if (itKf == state_.last_estimated_states.end())
+            {
+                return {};
+            }
+            return itKf->second.pose + (-*tailPoseInOdom);
+        };
+
         for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
         {
             const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
@@ -2632,8 +2655,10 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
-            pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
-            pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+            const auto live = liveRelativeFrame(odomFrameIdx);
+            pdf.mean =
+                live ? *live : mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
+            pdf.cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
         }
     }
 
