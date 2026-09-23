@@ -392,10 +392,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Reset with the estimator.
         std::optional<mrpt::poses::CPose3DPDFGaussian> wheels_odometry_accumulated;
 
-        /// Keyframe the last KEPT wheel-odometry reading was fused into, i.e.
-        /// the tail of the relative-factor chain built when
+        /// Tail keyframe of the relative-factor chain built when
         /// `odometry_relative_factors` is enabled. Reset with the estimator.
         std::optional<frame_index_t> last_wheels_odometry_kf;
+
+        /// Odometry reading representing last_wheels_odometry_kf: the first
+        /// one that landed on it. The next increment factor starts here, so
+        /// later readings on the same keyframe lose no motion.
+        std::optional<mrpt::poses::CPose2D> last_wheels_odometry_at_kf;
 
         /// Keyframe carrying the single absolute pose-in-{odom_i} factor that
         /// resolves T_map_to_odom_i under `odometry_relative_factors`. Set once
@@ -497,7 +501,6 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// resolve T_map_to_odom_i. See Parameters::odometry_relative_factors.
     void fuse_odometry_relative_locked(
         const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
-        const mrpt::poses::CPose3DPDFGaussian& increment,
         const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom);
     void fuse_odometry_locked(
         const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);

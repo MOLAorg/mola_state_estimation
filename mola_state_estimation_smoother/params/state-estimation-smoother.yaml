@@ -351,7 +351,10 @@ params:
   # frame_id are dropped before reaching the graph. Nothing is lost under the
   # relative formulation: a dropped reading does not advance the source's
   # chain, so the next kept one asserts the whole merged span as a single
-  # increment. 0 = disabled, which is the behavior before this key existed.
+  # increment. It applies to EVERY fuse_pose() source (LiDAR odometry too):
+  # keep it well below the period of any source that must not be thinned, or
+  # timestamp jitter alone drops every other reading of it.
+  # 0 = disabled, which is the behavior before this key existed.
   pose_min_sample_period: ${MOLA_POSE_MIN_SAMPLE_PERIOD|0.0}
 
   # Known accuracy of ONE INCREMENT of a relative fuse_pose() source. A

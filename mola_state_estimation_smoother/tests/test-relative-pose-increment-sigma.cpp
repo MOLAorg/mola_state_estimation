@@ -25,6 +25,7 @@
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
+#include <Eigen/Eigenvalues>
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -70,8 +71,10 @@ params:
 )###";
 }
 
-/// Returns the reported position sigma at the last keyframe.
-double run(double incrementSigmaLin)
+/// Returns the reported position sigma at the last keyframe. `correlated`
+/// makes the source covariance carry the strong x-y and x-yaw correlations an
+/// absolute dead-reckoned pose typically has.
+double run(double incrementSigmaLin, bool correlated = false)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     if (VERBOSE)
@@ -97,6 +100,15 @@ double run(double incrementSigmaLin)
         for (int k = 3; k < 6; k++)
         {
             pdf.cov(k, k) = mrpt::square(0.05);
+        }
+        if (correlated)
+        {
+            // indices: x,y,z,yaw,pitch,roll
+            pdf.cov(0, 1) = pdf.cov(1, 0) = 0.9 * SOURCE_SIGMA * SOURCE_SIGMA;
+            pdf.cov(0, 3) = pdf.cov(3, 0) = 0.8 * SOURCE_SIGMA * 0.05;
+            pdf.cov(1, 3) = pdf.cov(3, 1) = 0.7 * SOURCE_SIGMA * 0.05;
+            // A valid covariance, so any failure is the estimator's:
+            ASSERT_GT_(pdf.cov.asEigen().eigenvalues().real().minCoeff(), 0.0);
         }
         est.fuse_pose(stamp, pdf, "odom_wheels");
     }
@@ -134,6 +146,15 @@ void run_test()
     // Sanity: the asserted value should land in the same order of magnitude as
     // what was asserted, not collapse to zero or stay at the source's number.
     ASSERT_LT_(sigmaAsserted, 10 * INCREMENT_SIGMA);
+
+    // A correlated source covariance: the override must drop the source's
+    // cross terms along with its diagonal. Keeping them next to a much smaller
+    // diagonal gives an indefinite matrix, which the solver cannot factor.
+    const double sigmaCorrelated = run(INCREMENT_SIGMA, true);
+    std::cout << "reported sigma_x, asserted 15 mm, correlated source: " << sigmaCorrelated
+              << " m\n";
+    ASSERT_(std::isfinite(sigmaCorrelated));
+    ASSERT_LT_(std::abs(sigmaCorrelated - sigmaAsserted), 0.5 * sigmaAsserted);
 }
 
 }  // namespace

@@ -134,10 +134,56 @@ void check(bool relative)
     ASSERT_LT_(linksDecim * 3, linksFull);
 }
 
+// A dropped reading is not fused, but it is still the freshest pose of the
+// source in its own frame: a frame-local query must anchor on it.
+void check_dropped_reading_refreshes_anchor()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother est;
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(0.05, false)));
+
+    const auto makePdf = [](double x, double y)
+    {
+        mrpt::poses::CPose3DPDFGaussian pdf;
+        pdf.mean = mrpt::poses::CPose3D::FromXYZYawPitchRoll(x, y, 0.0, 0.0, 0.0, 0.0);
+        for (int k = 0; k < 3; k++)
+        {
+            pdf.cov(k, k) = SOURCE_SIGMA * SOURCE_SIGMA;
+        }
+        for (int k = 3; k < 6; k++)
+        {
+            pdf.cov(k, k) = mrpt::square(0.01);
+        }
+        return pdf;
+    };
+
+    // 10 Hz: every reading is kept.
+    constexpr double T_END = 1.0;
+    for (int i = 0; i <= 10; i++)
+    {
+        const double t = 0.1 * i;
+        est.fuse_pose(mrpt::Clock::fromDouble(t), makePdf(VELOCITY_X * t, 0.0), "legged_odom");
+    }
+
+    // 20 ms later, within the decimation period: dropped. Its lateral jump is
+    // something no motion model extrapolates, so it is only reported if this
+    // reading became the anchor.
+    constexpr double DT_EXTRA = 0.02;
+    constexpr double Y_JUMP   = 0.20;
+    const auto       tExtra   = mrpt::Clock::fromDouble(T_END + DT_EXTRA);
+    est.fuse_pose(tExtra, makePdf(VELOCITY_X * (T_END + DT_EXTRA), Y_JUMP), "legged_odom");
+
+    const auto nav = est.estimated_navstate(tExtra, "legged_odom");
+    ASSERT_(nav.has_value());
+    std::cout << "[dropped reading] frame-local y: " << nav->pose.mean.y() << " (source: " << Y_JUMP
+              << ")\n";
+    ASSERT_LT_(std::abs(nav->pose.mean.y() - Y_JUMP), 0.02);
+}
+
 void run_test()
 {
     check(false);
     check(true);
+    check_dropped_reading_refreshes_anchor();
 }
 
 }  // namespace

@@ -284,6 +284,12 @@ class Parameters
      * merged span as a single increment. Under the absolute formulation there
      * is nothing to accumulate either, since each reading stands alone.
      *
+     * It applies to EVERY fuse_pose() source, e.g. LiDAR odometry too. Keep
+     * it well below the period of any source that must not be thinned: at
+     * about that period, timestamp jitter alone drops every other reading.
+     * A dropped reading still refreshes the source's own-frame pose that
+     * estimated_navstate() extrapolates from.
+     *
      * 0 disables it. Independent of, and coarser than,
      * min_time_difference_to_create_new_frame. [seconds]
      */
@@ -303,7 +309,8 @@ class Parameters
      * Pair it with pose_min_sample_period deliberately: the value describes
      * ONE increment, so merging more readings into each increment without
      * loosening this asserts more than the source can support. 0 keeps the
-     * source's own covariance. [m]
+     * source's own covariance. Its correlations with the angular part are
+     * discarded too. [m]
      */
     double relative_pose_increment_sigma_lin = 0.0;  // [m]
 

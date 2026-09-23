@@ -143,6 +143,11 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
+    ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
+    ASSERTMSG_(
+        relative_pose_increment_sigma_lin >= 0 && relative_pose_increment_sigma_ang >= 0,
+        "relative_pose_increment_sigma_lin/_ang must be >= 0");
+
     if (cfg.has("initial_twist"))
     {
         ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);

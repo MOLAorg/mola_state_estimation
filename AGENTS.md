@@ -108,14 +108,21 @@ Key traits:
 - Optional ENU-to-map georeferencing from GNSS.
 - Thread-safe (`std::recursive_mutex`).
 - Configuration via YAML with `${ENV_VAR|default}` substitution.
-- Optional high-rate same-sensor decimation (both default `0` = off):
-  `odometry_min_sample_period` and `imu_min_sample_period` cap how often a
-  high-rate stream spawns keyframes/factors (solve cost grows with keyframe
-  count). Wheel-odom drops are *merged* (the pose anchor is held across the
-  dropped span, so the next kept reading fuses the accumulated increment +
-  covariance -- no motion lost); IMU drops are skipped (attitude/gravity are
-  absolute). Distinct from `min_time_difference_to_create_new_frame`, which only
-  merges near-simultaneous readings from different sensors.
+- Optional high-rate same-sensor decimation (all default `0` = off):
+  `odometry_min_sample_period`, `imu_min_sample_period` and
+  `pose_min_sample_period` cap how often a high-rate stream spawns
+  keyframes/factors (solve cost grows with keyframe count). Wheel-odom drops are
+  *merged* (the pose anchor is held across the dropped span, so the next kept
+  reading fuses the accumulated increment + covariance -- no motion lost); IMU
+  drops are skipped (attitude/gravity are absolute). `fuse_pose()` drops are
+  merged the same way under the relative formulation, and still refresh the
+  source's own-frame anchor for `estimated_navstate()`; that period applies to
+  EVERY `fuse_pose()` source, LiDAR odometry included. Distinct from
+  `min_time_difference_to_create_new_frame`, which only merges
+  near-simultaneous readings from different sensors. Readings of one source
+  landing on the same keyframe are handled by holding that relative chain's
+  anchor at the first of them (wheel odometry and `fuse_pose()` alike), so
+  their motion goes into the next increment.
 - Optional async backend (`async_backend: true`, default `false`): the iSAM2
   window solve runs in a dedicated thread and `estimated_navstate()` is served
   by a lock-free `FastPredictor` (`src/FastPredictor.{h,cpp}`) that extrapolates
@@ -163,8 +170,12 @@ ABSOLUTE pose in that source's own frame, i.e. that the source relates to
 list its frame_id in `relative_factors_frame_ids_re` instead: it is then fused
 as increments between consecutive keyframes plus one absolute anchor, which is
 `odometry_relative_factors` generalized from wheel odometry. In that mode the
-covariance passed is read as the uncertainty of ONE INCREMENT. It is a trade,
-not a free win - see the parameter docs and `test-relative-pose-factors`.
+covariance passed is read as the uncertainty of ONE INCREMENT. A drifting
+source usually publishes its absolute dead-reckoned covariance instead, so
+`relative_pose_increment_sigma_lin`/`_ang` can replace it with the known
+per-increment accuracy (the replaced block's cross terms are dropped too, or
+the result may be indefinite). It is a trade, not a free win - see the
+parameter docs and `test-relative-pose-factors`.
 
 **Never fuse a dataset's own ground truth.** MOLA's dataset sources publish
 their reference trajectory as a `CObservationRobotPose` labeled

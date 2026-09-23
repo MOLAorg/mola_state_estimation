@@ -187,6 +187,49 @@ void navstate_dump_row(
     st->flush();
 }
 
+/// Replaces the 3x3 diagonal block of a 6x6 pose covariance starting at
+/// `first` (0: translation, 3: rotation) with `variance * I`, and clears its
+/// correlations with the other block. Keeping cross terms that belong to a
+/// different (and possibly much larger) covariance would, in general, make the
+/// result indefinite.
+void replace_cov_block(mrpt::math::CMatrixDouble66& cov, int first, double variance)
+{
+    for (int i = first; i < first + 3; i++)
+    {
+        for (int j = 0; j < 6; j++)
+        {
+            cov(i, j) = 0;
+            cov(j, i) = 0;
+        }
+        cov(i, i) = variance;
+    }
+}
+
+/// Wheel-odometry increment with the uncertainty of the configured
+/// probabilistic motion model.
+mrpt::poses::CPose3DPDFGaussian odometry_increment_pdf(
+    const mola::state_estimation_smoother::Parameters& p,
+    const mrpt::poses::CPose2D&                        odometryIncrement)
+{
+    mrpt::obs::CActionRobotMovement2D odoAct;
+    auto&                             mm = odoAct.motionModelConfiguration;
+    mm.modelSelection                    = mrpt::obs::CActionRobotMovement2D::mmGaussian;
+    mm.gaussianModel.a1                  = p.odom_motion_model_a1;
+    mm.gaussianModel.a2                  = p.odom_motion_model_a2;
+    mm.gaussianModel.a3                  = p.odom_motion_model_a3;
+    mm.gaussianModel.a4                  = p.odom_motion_model_a4;
+    mm.gaussianModel.minStdXY            = p.odom_motion_model_min_std_xy;
+    mm.gaussianModel.minStdPHI           = mrpt::DEG2RAD(p.odom_motion_model_min_std_phi_deg);
+
+    odoAct.computeFromOdometry(odometryIncrement, mm);
+
+    mrpt::poses::CPose3DPDFGaussian incrementPdf;
+    incrementPdf.copyFrom(*odoAct.poseChange);
+    // Ensure as minimal uncertainty in all 3D DOFs to prevent numerical issues:
+    incrementPdf.cov.asEigen().diagonal().array() += 1e-4;
+    return incrementPdf;
+}
+
 }  // namespace
 
 namespace mola::state_estimation_smoother
@@ -742,24 +785,7 @@ void StateEstimationSmoother::fuse_odometry_locked(
         return;
     }
     // Use a probabilistic motion model:
-    mrpt::obs::CActionRobotMovement2D odoAct;
-    odoAct.motionModelConfiguration.modelSelection = mrpt::obs::CActionRobotMovement2D::mmGaussian;
-    odoAct.motionModelConfiguration.gaussianModel.a1       = params_.odom_motion_model_a1;
-    odoAct.motionModelConfiguration.gaussianModel.a2       = params_.odom_motion_model_a2;
-    odoAct.motionModelConfiguration.gaussianModel.a3       = params_.odom_motion_model_a3;
-    odoAct.motionModelConfiguration.gaussianModel.a4       = params_.odom_motion_model_a4;
-    odoAct.motionModelConfiguration.gaussianModel.minStdXY = params_.odom_motion_model_min_std_xy;
-    odoAct.motionModelConfiguration.gaussianModel.minStdPHI =
-        mrpt::DEG2RAD(params_.odom_motion_model_min_std_phi_deg);
-
-    const auto odometryIncrement = odom.odometry - lastOdom;
-
-    odoAct.computeFromOdometry(odometryIncrement, odoAct.motionModelConfiguration);
-
-    mrpt::poses::CPose3DPDFGaussian incrementPdf;
-    incrementPdf.copyFrom(*odoAct.poseChange);
-    // Ensure as minimal uncertainty in all 3D DOFs to prevent numerical issues:
-    incrementPdf.cov.asEigen().diagonal().array() += 1e-4;
+    const auto incrementPdf = odometry_increment_pdf(params_, odom.odometry - lastOdom);
 
     // Compose this increment onto the accumulated dead-reckoning pose, so the
     // covariance handed to fuse_pose_locked() is the uncertainty of the
@@ -793,7 +819,7 @@ void StateEstimationSmoother::fuse_odometry_locked(
         "[fuse_odometry]: t=%f name=%s pose=%s poseChange=%s accum_sigma_xy=%.03f m "
         "accum_sigma_yaw=%.03f deg",
         mrpt::Clock::toDouble(odom.timestamp), odomName.c_str(), odom.odometry.asString().c_str(),
-        odoAct.poseChange->getMeanVal().asString().c_str(),
+        incrementPdf.mean.asString().c_str(),
         std::sqrt(newOdomPosePdf.cov(0, 0) + newOdomPosePdf.cov(1, 1)),
         mrpt::RAD2DEG(std::sqrt(newOdomPosePdf.cov(5, 5))));
 
@@ -809,7 +835,7 @@ void StateEstimationSmoother::fuse_odometry_locked(
         return;
     }
 
-    fuse_odometry_relative_locked(odom, odomName, incrementPdf, newOdomPosePdf);
+    fuse_odometry_relative_locked(odom, odomName, newOdomPosePdf);
 }
 
 // Relative formulation: the motion goes into BetweenFactors between consecutive
@@ -833,7 +859,6 @@ void StateEstimationSmoother::fuse_odometry_locked(
 // the newest observation on every update, so it stays inside the lag forever.
 void StateEstimationSmoother::fuse_odometry_relative_locked(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
-    const mrpt::poses::CPose3DPDFGaussian& increment,
     const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom)
 {
     const auto frame_id_idx = add_or_get_odom_frame_id(odomName);
@@ -862,12 +887,23 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
             static_cast<unsigned>(this_kf_id));
     }
 
-    const auto prev                = state_.last_wheels_odometry_kf;
-    state_.last_wheels_odometry_kf = this_kf_id;
-
-    if (!prev.has_value() || *prev == this_kf_id)
+    // Several readings can land on one keyframe. The first of them represents
+    // that keyframe, both as the end of its incoming increment and as the start
+    // of its outgoing one; the later ones only move the source further, so the
+    // chain anchor is held and their motion goes into the next increment.
+    const auto prev = state_.last_wheels_odometry_kf;
+    if (prev.has_value() && *prev == this_kf_id)
     {
-        return;  // first reading of the chain, or both readings landed on one keyframe
+        return;
+    }
+
+    const auto prevOdom               = state_.last_wheels_odometry_at_kf;
+    state_.last_wheels_odometry_kf    = this_kf_id;
+    state_.last_wheels_odometry_at_kf = odom.odometry;
+
+    if (!prev.has_value() || !prevOdom.has_value())
+    {
+        return;  // first reading of the chain
     }
 
     // The previous keyframe may have been marginalized out of the sliding window
@@ -887,8 +923,11 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 
     // A relative transform is the same quantity in {map} and in {odom_i}: the
     // two chains differ by one constant rigid T_map_to_odom_i, which cancels in
-    // T_prev^-1 * T_now. So the motion model's increment is directly the
-    // measurement this factor needs, with directly the covariance it computed.
+    // T_prev^-1 * T_now. So the motion model's increment over the span between
+    // both keyframes is directly the measurement this factor needs, with
+    // directly the covariance it computes.
+    const auto increment = odometry_increment_pdf(params_, odom.odometry - *prevOdom);
+
     gtsam::Pose3   incr_out;
     gtsam::Matrix6 incrCov_out;
     mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
@@ -1166,37 +1205,6 @@ void StateEstimationSmoother::fuse_pose_locked(
     // get this numerical frame_id :
     const auto frame_id_idx = add_or_get_odom_frame_id(frame_id);
 
-    // High-rate decimation: drop this reading if it arrives too soon after the
-    // last kept one of the same source. Done BEFORE the keyframe is created, so
-    // a dropped reading costs nothing and, under the relative formulation,
-    // leaves the source's chain tail where it was: the next kept reading then
-    // asserts the whole merged span as one increment, losing no motion.
-    if (params_.pose_min_sample_period > 0)
-    {
-        if (auto it = state_.last_kept_pose_stamp.find(frame_id_idx);
-            it != state_.last_kept_pose_stamp.end())
-        {
-            const double dt = mrpt::system::timeDifference(it->second, timestamp);
-            if (dt < params_.pose_min_sample_period)
-            {
-                return;
-            }
-        }
-        state_.last_kept_pose_stamp[frame_id_idx] = timestamp;
-    }
-
-    // Create a new KF id (or reuse a very close match):
-    const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
-
-    MRPT_LOG_DEBUG_FMT(
-        "[fuse_pose]: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
-        "%.02e %.02e (deg)",
-        static_cast<std::size_t>(this_kf_id), mrpt::Clock::toDouble(timestamp), frame_id.c_str(),
-        static_cast<std::size_t>(frame_id_idx), pose.mean.asString().c_str(),
-        std::sqrt(pose.cov(0, 0)), std::sqrt(pose.cov(1, 1)), std::sqrt(pose.cov(2, 2)),
-        mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
-        mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
-
     // numerical sanity: replace zero-variance entries (common in
     // nav_msgs/Odometry messages with unfilled covariance) with a
     // reasonable default so the factor graph remains well-conditioned.
@@ -1221,12 +1229,53 @@ void StateEstimationSmoother::fuse_pose_locked(
             frame_id.c_str());
     }
 
+    // High-rate decimation: drop this reading if it arrives too soon after the
+    // last kept one of the same source. Done BEFORE the keyframe is created, so
+    // a dropped reading costs nothing and, under the relative formulation,
+    // leaves the source's chain tail where it was: the next kept reading then
+    // asserts the whole merged span as one increment, losing no motion.
+    if (params_.pose_min_sample_period > 0)
+    {
+        if (auto it = state_.last_kept_pose_stamp.find(frame_id_idx);
+            it != state_.last_kept_pose_stamp.end())
+        {
+            const double dt = mrpt::system::timeDifference(it->second, timestamp);
+            if (dt < params_.pose_min_sample_period)
+            {
+                // Not fused, but still the freshest pose of this source in its
+                // own frame, which is what the frame-local estimated_navstate()
+                // extrapolates from.
+                if (frame_id_idx != REFERENCE_FRAME_ID)
+                {
+                    auto itRaw = state_.last_raw_pose_by_source.find(frame_id_idx);
+                    if (itRaw != state_.last_raw_pose_by_source.end() &&
+                        timestamp > itRaw->second.stamp)
+                    {
+                        itRaw->second = State::RawSourcePose{timestamp, poseSanitized};
+                    }
+                }
+                return;
+            }
+        }
+        state_.last_kept_pose_stamp[frame_id_idx] = timestamp;
+    }
+
+    // Create a new KF id (or reuse a very close match):
+    const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
+
+    MRPT_LOG_DEBUG_FMT(
+        "[fuse_pose]: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
+        "%.02e %.02e (deg)",
+        static_cast<std::size_t>(this_kf_id), mrpt::Clock::toDouble(timestamp), frame_id.c_str(),
+        static_cast<std::size_t>(frame_id_idx), pose.mean.asString().c_str(),
+        std::sqrt(pose.cov(0, 0)), std::sqrt(pose.cov(1, 1)), std::sqrt(pose.cov(2, 2)),
+        mrpt::RAD2DEG(std::sqrt(pose.cov(3, 3))), mrpt::RAD2DEG(std::sqrt(pose.cov(4, 4))),
+        mrpt::RAD2DEG(std::sqrt(pose.cov(5, 5))));
+
     // Add factor:
     gtsam::Pose3   pose_out;
     gtsam::Matrix6 cov_out;
     mrpt::gtsam_wrappers::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
-
-    // TODO: robust factors here?
 
     // reference frame ("map") or "odom_i"?
     if (frame_id_idx == REFERENCE_FRAME_ID)
@@ -1304,19 +1353,13 @@ void StateEstimationSmoother::fuse_pose_locked(
                 // when the caller has configured one.
                 if (params_.relative_pose_increment_sigma_lin > 0)
                 {
-                    const double v = mrpt::square(params_.relative_pose_increment_sigma_lin);
-                    for (int i = 0; i < 3; i++)
-                    {
-                        increment.cov(i, i) = v;
-                    }
+                    replace_cov_block(
+                        increment.cov, 0, mrpt::square(params_.relative_pose_increment_sigma_lin));
                 }
                 if (params_.relative_pose_increment_sigma_ang > 0)
                 {
-                    const double v = mrpt::square(params_.relative_pose_increment_sigma_ang);
-                    for (int i = 3; i < 6; i++)
-                    {
-                        increment.cov(i, i) = v;
-                    }
+                    replace_cov_block(
+                        increment.cov, 3, mrpt::square(params_.relative_pose_increment_sigma_ang));
                 }
 
                 gtsam::Pose3   incr_out;
@@ -1337,11 +1380,9 @@ void StateEstimationSmoother::fuse_pose_locked(
         // every increment, so the chain would report less motion than the
         // source measured. Holding the anchor makes the next increment span
         // the whole keyframe-to-keyframe interval.
-        const bool keyframeAdvanced = !chain.last_kf.has_value() || *chain.last_kf != this_kf_id;
-
-        chain.last_kf = this_kf_id;
-        if (keyframeAdvanced || !chain.last_pose_in_odom.has_value())
+        if (!chain.last_kf.has_value() || *chain.last_kf != this_kf_id)
         {
+            chain.last_kf           = this_kf_id;
             chain.last_pose_in_odom = poseSanitized;
         }
         chain.last_stamp = timestamp;
