@@ -49,6 +49,20 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-pose-robust-huber
+  SOURCES test-pose-robust-huber.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
+  TARGET  test-relative-pose-increment-growth
+  SOURCES test-relative-pose-increment-growth.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-relative-pose-increment-sigma
   SOURCES test-relative-pose-increment-sigma.cpp
   LINK_LIBRARIES

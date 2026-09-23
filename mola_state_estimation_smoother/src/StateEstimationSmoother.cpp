@@ -187,6 +187,21 @@ void navstate_dump_row(
     st->flush();
 }
 
+/// Wraps a pose factor's Gaussian noise model in a Huber m-estimator when
+/// `threshold` (in whitened units) is > 0. Huber is convex, so unlike a
+/// redescending kernel it cannot switch off a correct measurement whose
+/// variable starts far from it, as a new keyframe seeded at its neighbor's
+/// pose does.
+gtsam::SharedNoiseModel with_huber(const gtsam::SharedNoiseModel& base, double threshold)
+{
+    if (threshold <= 0)
+    {
+        return base;
+    }
+    return gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::mEstimator::Huber::Create(threshold), base);
+}
+
 /// Replaces the 3x3 diagonal block of a 6x6 pose covariance starting at
 /// `first` (0: translation, 3: rotation) with `variance * I`, and clears its
 /// correlations with the other block. Keeping cross terms that belong to a
@@ -1266,7 +1281,10 @@ void StateEstimationSmoother::fuse_pose_locked(
     {
         // ref is "map":
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-            T(this_kf_id), pose_out, gtsam::noiseModel::Gaussian::Covariance(cov_out));
+            T(this_kf_id), pose_out,
+            with_huber(
+                gtsam::noiseModel::Gaussian::Covariance(cov_out),
+                params_.pose_robust_huber_threshold));
     }
     else if (
         !params_.relative_factors_frame_ids_re.empty() &&
@@ -1335,15 +1353,30 @@ void StateEstimationSmoother::fuse_pose_locked(
                 // absolute dead-reckoned pose, which says nothing about one
                 // increment. Assert the known per-increment accuracy instead,
                 // when the caller has configured one.
-                if (params_.relative_pose_increment_sigma_lin > 0)
+                // Slips and skids are independent events along the path, so
+                // the variance of a dead-reckoned increment grows linearly
+                // with its size (a random walk). Unlike a sigma proportional
+                // to the size, this gives the same total variance however the
+                // path is split into increments, i.e. whatever the keyframe
+                // rate or pose_min_sample_period. The flat value is the floor
+                // asserted while standing still.
+                const double dL = increment.mean.translation().norm();
+                const double dA =
+                    mrpt::poses::Lie::SO<3>::log(increment.mean.getRotationMatrix()).norm();
+
+                const double sigmaLin0 = params_.relative_pose_increment_sigma_lin;
+                const double kLin      = params_.relative_pose_increment_sigma_per_sqrt_meter;
+                if (sigmaLin0 > 0)
                 {
                     replace_cov_block(
-                        increment.cov, 0, mrpt::square(params_.relative_pose_increment_sigma_lin));
+                        increment.cov, 0, mrpt::square(sigmaLin0) + mrpt::square(kLin) * dL);
                 }
-                if (params_.relative_pose_increment_sigma_ang > 0)
+                const double sigmaAng0 = params_.relative_pose_increment_sigma_ang;
+                const double kAng      = params_.relative_pose_increment_sigma_per_sqrt_rad;
+                if (sigmaAng0 > 0)
                 {
                     replace_cov_block(
-                        increment.cov, 3, mrpt::square(params_.relative_pose_increment_sigma_ang));
+                        increment.cov, 3, mrpt::square(sigmaAng0) + mrpt::square(kAng) * dA);
                 }
 
                 gtsam::Pose3   incr_out;
@@ -1352,7 +1385,9 @@ void StateEstimationSmoother::fuse_pose_locked(
 
                 state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                     T(*chain.last_kf), T(this_kf_id), incr_out,
-                    gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
+                    with_huber(
+                        gtsam::noiseModel::Gaussian::Covariance(incrCov_out),
+                        params_.pose_robust_huber_threshold));
             }
         }
 
@@ -1379,7 +1414,9 @@ void StateEstimationSmoother::fuse_pose_locked(
         // ref is an odometry frame:
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
-            gtsam::noiseModel::Gaussian::Covariance(cov_out));
+            with_huber(
+                gtsam::noiseModel::Gaussian::Covariance(cov_out),
+                params_.pose_robust_huber_threshold));
 
         // Remember this source's own last raw pose (in {odom_i}), the anchor
         // estimated_navstate() extrapolates from to keep the short-term

@@ -265,9 +265,9 @@ class Parameters
      * (from the platform's kinematics, say), asserting it here is both simpler
      * and far more informative than trusting the accumulated number.
      *
-     * Pair it with pose_min_sample_period deliberately: the value describes
-     * ONE increment, so merging more readings into each increment without
-     * loosening this asserts more than the source can support. 0 keeps the
+     * The value describes ONE increment, whatever it spans; motion-dependent
+     * error belongs in relative_pose_increment_sigma_per_sqrt_meter, which
+     * scales with the increment and so with pose_min_sample_period. 0 keeps the
      * source's own covariance. Its correlations with the angular part are
      * discarded too. [m]
      */
@@ -275,6 +275,34 @@ class Parameters
 
     /** Angular counterpart of relative_pose_increment_sigma_lin. [rad] */
     double relative_pose_increment_sigma_ang = 0.0;  // [rad]
+
+    /** Growth of the per-increment linear uncertainty with the distance the
+     * increment spans, as a random walk: the asserted variance is
+     * `relative_pose_increment_sigma_lin^2 + k^2 * distance`. A dead-reckoned
+     * error is not a fixed number per reading: slips and skids happen while
+     * moving, independently along the path. Because variance, not sigma, grows
+     * linearly with distance, the total asserted over a path does not depend on
+     * how many increments it is split into (keyframe rate,
+     * pose_min_sample_period). Requires relative_pose_increment_sigma_lin > 0,
+     * which becomes the floor asserted while standing still. 0 disables it.
+     * [m/sqrt(m)] */
+    double relative_pose_increment_sigma_per_sqrt_meter = 0.0;
+
+    /** Angular counterpart of relative_pose_increment_sigma_per_sqrt_meter,
+     * growing with the rotated angle. Requires relative_pose_increment_sigma_ang
+     * > 0. [rad/sqrt(rad)] */
+    double relative_pose_increment_sigma_per_sqrt_rad = 0.0;
+
+    /** If > 0, fuse_pose() factors, both absolute and relative, are wrapped in
+     * a Huber m-estimator with this threshold, in whitened units, i.e. in
+     * sigmas of the covariance supplied for that factor. So it only means
+     * something when that covariance is calibrated. A dead-reckoning source
+     * produces occasional gross errors (a slipped foot, a skidded wheel), and
+     * under a plain Gaussian each one pulls with unbounded weight. Huber is
+     * convex: unlike a redescending kernel it cannot switch off a correct
+     * reading whose keyframe starts far from it. The one-time anchor factor
+     * of a relative source is not wrapped. 0 disables it. */
+    double pose_robust_huber_threshold = 0.0;
 
     /** @} */
 

@@ -149,12 +149,29 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, pose_min_sample_period);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_lin);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_meter);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_rad);
+    MCP_LOAD_OPT(cfg, pose_robust_huber_threshold);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
     ASSERTMSG_(
         relative_pose_increment_sigma_lin >= 0 && relative_pose_increment_sigma_ang >= 0,
         "relative_pose_increment_sigma_lin/_ang must be >= 0");
+    ASSERTMSG_(
+        relative_pose_increment_sigma_per_sqrt_meter >= 0 &&
+            relative_pose_increment_sigma_per_sqrt_rad >= 0,
+        "relative_pose_increment_sigma_per_sqrt_meter/_rad must be >= 0");
+    // Without a floor, a stationary increment would get a zero, singular variance.
+    ASSERTMSG_(
+        relative_pose_increment_sigma_per_sqrt_meter == 0 || relative_pose_increment_sigma_lin > 0,
+        "relative_pose_increment_sigma_per_sqrt_meter requires relative_pose_increment_sigma_lin > "
+        "0");
+    ASSERTMSG_(
+        relative_pose_increment_sigma_per_sqrt_rad == 0 || relative_pose_increment_sigma_ang > 0,
+        "relative_pose_increment_sigma_per_sqrt_rad requires relative_pose_increment_sigma_ang > "
+        "0");
+    ASSERTMSG_(pose_robust_huber_threshold >= 0, "pose_robust_huber_threshold must be >= 0");
 
     if (cfg.has("initial_twist"))
     {
