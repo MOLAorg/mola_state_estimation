@@ -32,6 +32,7 @@
 #include <mola_state_estimation_smoother/Parameters.h>
 
 // MOLA:
+#include <mola_imu_preintegration/ImuAverager.h>
 #include <mola_imu_preintegration/ImuIntegrator.h>
 
 // MRPT:
@@ -408,9 +409,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// own keyframe. See fuse_odometry_relative_locked().
         std::optional<frame_index_t> wheels_odometry_anchor_kf;
 
-        /// Stamp of the last IMU reading that was actually processed. Used by
-        /// imu_min_sample_period to skip higher-rate readings.
-        std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
+        /// Averages IMU readings down to one per imu_min_sample_period.
+        mola::imu::ImuAverager imu_averager;
 
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)

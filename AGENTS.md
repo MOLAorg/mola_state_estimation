@@ -118,7 +118,8 @@ Other behavior:
   `fuse_pose()` factor, not on the one-time anchor.
 - Decimation (0 = off): `odometry_min_sample_period` and
   `pose_min_sample_period` merge dropped readings into the next kept one (no
-  motion lost); `imu_min_sample_period` skips readings.
+  motion lost); `imu_min_sample_period` averages readings (`mola::imu::ImuAverager`),
+  one fused reading per period, so vibration does not alias into the factors.
   `pose_min_sample_period` applies to every `fuse_pose()` source; a dropped
   reading still refreshes that source's own-frame anchor.
 - `estimated_navstate(t, {odom_i})` is frame-local: it extrapolates from the

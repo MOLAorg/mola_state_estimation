@@ -125,9 +125,10 @@ params:
   odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m], see effective-floor note above
   odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg], see effective-floor note above
 
-  # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings
-  # arriving less than this after the last processed one are skipped (attitude/
-  # gravity are absolute, so nothing is accumulated). 0 = disabled. Default 0.1.
+  # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings are
+  # averaged over periods of this length and one average per period is fused,
+  # so vibration faster than that does not alias into the factors. 0 = fuse
+  # every reading. Default 0.1.
   imu_min_sample_period: ${MOLA_IMU_MIN_SAMPLE_PERIOD|0.1}
 
   # If true, run the iSAM2 window solve in a dedicated backend thread and serve

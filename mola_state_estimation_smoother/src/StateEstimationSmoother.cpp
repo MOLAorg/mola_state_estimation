@@ -948,37 +948,32 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     fuse_imu_locked(imu);
 }
 
-void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& imu)
+void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
 {
     // Ignore an IMU reading with no usable content up front, before touching the
     // decimation stamp or creating a keyframe: otherwise an empty sample would
     // consume the decimation interval (skipping the next, useful one) and add a
     // factor-less keyframe.
-    const bool hasAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W);
+    const bool hasAttitude = rawImu.has(mrpt::obs::IMU_ORI_QUAT_W);
     const bool hasGravity =
-        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
-    const bool hasAngularVelocity = imu.has(mrpt::obs::IMU_WX) && imu.has(mrpt::obs::IMU_WY) &&
-                                    imu.has(mrpt::obs::IMU_WZ) &&
-                                    params_.imu_angular_velocity_sigma > 0;
+        rawImu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    const bool hasAngularVelocity =
+        rawImu.has(mrpt::obs::IMU_WX) && rawImu.has(mrpt::obs::IMU_WY) &&
+        rawImu.has(mrpt::obs::IMU_WZ) && params_.imu_angular_velocity_sigma > 0;
     if (!hasAttitude && !hasGravity && !hasAngularVelocity)
     {
         return;
     }
 
-    // High-rate decimation: skip IMU readings arriving too soon after the last
-    // processed one. IMU attitude/gravity are absolute observations, so dropping
-    // intermediate readings just lowers the redundant-factor rate (unlike wheel
-    // odometry, there is no increment to accumulate).
-    if (params_.imu_min_sample_period > 0 && state_.last_processed_imu_stamp.has_value())
+    // High-rate decimation: fuse one reading per imu_min_sample_period, the
+    // average of all readings in that period. Keeping one raw reading instead
+    // would alias vibration (motors, propellers) into the factors below.
+    const auto averaged = state_.imu_averager.add(rawImu, params_.imu_min_sample_period);
+    if (!averaged)
     {
-        const double dt =
-            mrpt::system::timeDifference(*state_.last_processed_imu_stamp, imu.timestamp);
-        if (dt < params_.imu_min_sample_period)
-        {
-            return;
-        }
+        return;
     }
-    state_.last_processed_imu_stamp = imu.timestamp;
+    const mrpt::obs::CObservationIMU& imu = *averaged;
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
