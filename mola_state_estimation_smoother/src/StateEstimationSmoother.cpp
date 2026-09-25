@@ -61,6 +61,14 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#if __has_include(<mola_imu_preintegration/ImuAverager.h>)
+#include <mola_imu_preintegration/ImuAverager.h>
+/** Feature macro: mola_imu_preintegration provides mola::imu::ImuAverager, used
+ *  to average IMU readings when decimating them (imu_min_sample_period). Older
+ *  releases fall back to keeping one raw reading per period. */
+#define MOLA_SMOOTHER_HAS_IMU_AVERAGER 1
+#endif
+
 #include "FastPredictor.h"
 #include "Snapshot.h"
 #include "extrapolation.h"
@@ -77,6 +85,32 @@
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
+
+struct mola::state_estimation_smoother::StateEstimationSmoother::ImuDecimator
+{
+    /// Returns the reading to fuse for this input, if any.
+    std::optional<mrpt::obs::CObservationIMU> add(
+        const mrpt::obs::CObservationIMU& imu, double period)
+    {
+#if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+        return averager.add(imu, period);
+#else
+        if (period > 0 && lastStamp.has_value() &&
+            mrpt::system::timeDifference(*lastStamp, imu.timestamp) < period)
+        {
+            return std::nullopt;
+        }
+        lastStamp = imu.timestamp;
+        return imu;
+#endif
+    }
+
+#if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+    mola::imu::ImuAverager averager;
+#else
+    std::optional<mrpt::Clock::time_point> lastStamp;
+#endif
+};
 
 namespace
 {
@@ -345,6 +379,16 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params_.loadFrom(cfg["params"]);
+
+#if !defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+    if (params_.imu_min_sample_period > 0)
+    {
+        MRPT_LOG_WARN(
+            "Built against a mola_imu_preintegration without ImuAverager: "
+            "imu_min_sample_period keeps one raw IMU reading per period instead of "
+            "averaging them, so platform vibration may alias into the IMU factors.");
+    }
+#endif
 
     if (auto vizMods = ExecutableBase::findService<mola::VizInterface>(); !vizMods.empty())
     {
@@ -968,12 +1012,16 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // High-rate decimation: fuse one reading per imu_min_sample_period, the
     // average of all readings in that period. Keeping one raw reading instead
     // would alias vibration (motors, propellers) into the factors below.
-    const auto averaged = state_.imu_averager.add(rawImu, params_.imu_min_sample_period);
-    if (!averaged)
+    if (!state_.imu_decimator)
+    {
+        state_.imu_decimator = std::make_shared<ImuDecimator>();
+    }
+    const auto decimated = state_.imu_decimator->add(rawImu, params_.imu_min_sample_period);
+    if (!decimated)
     {
         return;
     }
-    const mrpt::obs::CObservationIMU& imu = *averaged;
+    const mrpt::obs::CObservationIMU& imu = *decimated;
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
