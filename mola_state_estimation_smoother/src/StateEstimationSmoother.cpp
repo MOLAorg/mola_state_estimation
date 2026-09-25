@@ -77,6 +77,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -88,28 +89,35 @@ IMPLEMENTS_MRPT_OBJECT(
 
 struct mola::state_estimation_smoother::StateEstimationSmoother::ImuDecimator
 {
-    /// Returns the reading to fuse for this input, if any.
+    /// Returns the reading to fuse for this input, if any. Each sensor label is
+    /// decimated on its own: readings from IMUs mounted differently must never
+    /// be averaged together.
     std::optional<mrpt::obs::CObservationIMU> add(
         const mrpt::obs::CObservationIMU& imu, double period)
     {
+        auto& s = bySensor[imu.sensorLabel];
 #if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
-        return averager.add(imu, period);
+        return s.averager.add(imu, period);
 #else
-        if (period > 0 && lastStamp.has_value() &&
-            mrpt::system::timeDifference(*lastStamp, imu.timestamp) < period)
+        if (period > 0 && s.lastStamp.has_value() &&
+            mrpt::system::timeDifference(*s.lastStamp, imu.timestamp) < period)
         {
             return std::nullopt;
         }
-        lastStamp = imu.timestamp;
+        s.lastStamp = imu.timestamp;
         return imu;
 #endif
     }
 
+    struct PerSensor
+    {
 #if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
-    mola::imu::ImuAverager averager;
+        mola::imu::ImuAverager averager;
 #else
-    std::optional<mrpt::Clock::time_point> lastStamp;
+        std::optional<mrpt::Clock::time_point> lastStamp;
 #endif
+    };
+    std::map<std::string, PerSensor> bySensor;
 };
 
 namespace
@@ -1001,10 +1009,12 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     const bool hasAttitude = rawImu.has(mrpt::obs::IMU_ORI_QUAT_W);
     const bool hasGravity =
         rawImu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
-    const bool hasAngularVelocity =
-        rawImu.has(mrpt::obs::IMU_WX) && rawImu.has(mrpt::obs::IMU_WY) &&
-        rawImu.has(mrpt::obs::IMU_WZ) && params_.imu_angular_velocity_sigma > 0;
-    if (!hasAttitude && !hasGravity && !hasAngularVelocity)
+    const auto hasAngularVelocity = [this](const mrpt::obs::CObservationIMU& o)
+    {
+        return o.has(mrpt::obs::IMU_WX) && o.has(mrpt::obs::IMU_WY) && o.has(mrpt::obs::IMU_WZ) &&
+               params_.imu_angular_velocity_sigma > 0;
+    };
+    if (!hasAttitude && !hasGravity && !hasAngularVelocity(rawImu))
     {
         return;
     }
@@ -1022,6 +1032,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         return;
     }
     const mrpt::obs::CObservationIMU& imu = *decimated;
+    // From the fused reading: an average can carry channels its newest reading lacks.
+    const bool fuseAngularVelocity = hasAngularVelocity(imu);
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
@@ -1093,7 +1105,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // body-frame angular-velocity variable, so a genuine, fast rotation is represented
     // in the graph immediately instead of only through the constant-velocity kinematic
     // factor between keyframes (see imu_angular_velocity_sigma's docstring).
-    if (hasAngularVelocity)
+    if (fuseAngularVelocity)
     {
         const gtsam::Vector3 measuredW_sensor = {
             imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY), imu.get(mrpt::obs::IMU_WZ)};
