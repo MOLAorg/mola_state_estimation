@@ -61,6 +61,14 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
+#if __has_include(<mola_imu_preintegration/ImuAverager.h>)
+#include <mola_imu_preintegration/ImuAverager.h>
+/** Feature macro: mola_imu_preintegration provides mola::imu::ImuAverager, used
+ *  to average IMU readings when decimating them (imu_min_sample_period). Older
+ *  releases fall back to keeping one raw reading per period. */
+#define MOLA_SMOOTHER_HAS_IMU_AVERAGER 1
+#endif
+
 #include "FastPredictor.h"
 #include "Snapshot.h"
 #include "extrapolation.h"
@@ -69,6 +77,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -77,6 +86,39 @@
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
     StateEstimationSmoother, mola::ExecutableBase, mola::state_estimation_smoother)
+
+struct mola::state_estimation_smoother::StateEstimationSmoother::ImuDecimator
+{
+    /// Returns the reading to fuse for this input, if any. Each sensor label is
+    /// decimated on its own: readings from IMUs mounted differently must never
+    /// be averaged together.
+    std::optional<mrpt::obs::CObservationIMU> add(
+        const mrpt::obs::CObservationIMU& imu, double period)
+    {
+        auto& s = bySensor[imu.sensorLabel];
+#if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+        return s.averager.add(imu, period);
+#else
+        if (period > 0 && s.lastStamp.has_value() &&
+            mrpt::system::timeDifference(*s.lastStamp, imu.timestamp) < period)
+        {
+            return std::nullopt;
+        }
+        s.lastStamp = imu.timestamp;
+        return imu;
+#endif
+    }
+
+    struct PerSensor
+    {
+#if defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+        mola::imu::ImuAverager averager;
+#else
+        std::optional<mrpt::Clock::time_point> lastStamp;
+#endif
+    };
+    std::map<std::string, PerSensor> bySensor;
+};
 
 namespace
 {
@@ -345,6 +387,16 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params_.loadFrom(cfg["params"]);
+
+#if !defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
+    if (params_.imu_min_sample_period > 0)
+    {
+        MRPT_LOG_WARN(
+            "Built against a mola_imu_preintegration without ImuAverager: "
+            "imu_min_sample_period keeps one raw IMU reading per period instead of "
+            "averaging them, so platform vibration may alias into the IMU factors.");
+    }
+#endif
 
     if (auto vizMods = ExecutableBase::findService<mola::VizInterface>(); !vizMods.empty())
     {
@@ -948,37 +1000,40 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     fuse_imu_locked(imu);
 }
 
-void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& imu)
+void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
 {
     // Ignore an IMU reading with no usable content up front, before touching the
     // decimation stamp or creating a keyframe: otherwise an empty sample would
     // consume the decimation interval (skipping the next, useful one) and add a
     // factor-less keyframe.
-    const bool hasAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W);
+    const bool hasAttitude = rawImu.has(mrpt::obs::IMU_ORI_QUAT_W);
     const bool hasGravity =
-        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
-    const bool hasAngularVelocity = imu.has(mrpt::obs::IMU_WX) && imu.has(mrpt::obs::IMU_WY) &&
-                                    imu.has(mrpt::obs::IMU_WZ) &&
-                                    params_.imu_angular_velocity_sigma > 0;
-    if (!hasAttitude && !hasGravity && !hasAngularVelocity)
+        rawImu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    const auto hasAngularVelocity = [this](const mrpt::obs::CObservationIMU& o)
+    {
+        return o.has(mrpt::obs::IMU_WX) && o.has(mrpt::obs::IMU_WY) && o.has(mrpt::obs::IMU_WZ) &&
+               params_.imu_angular_velocity_sigma > 0;
+    };
+    if (!hasAttitude && !hasGravity && !hasAngularVelocity(rawImu))
     {
         return;
     }
 
-    // High-rate decimation: skip IMU readings arriving too soon after the last
-    // processed one. IMU attitude/gravity are absolute observations, so dropping
-    // intermediate readings just lowers the redundant-factor rate (unlike wheel
-    // odometry, there is no increment to accumulate).
-    if (params_.imu_min_sample_period > 0 && state_.last_processed_imu_stamp.has_value())
+    // High-rate decimation: fuse one reading per imu_min_sample_period, the
+    // average of all readings in that period. Keeping one raw reading instead
+    // would alias vibration (motors, propellers) into the factors below.
+    if (!state_.imu_decimator)
     {
-        const double dt =
-            mrpt::system::timeDifference(*state_.last_processed_imu_stamp, imu.timestamp);
-        if (dt < params_.imu_min_sample_period)
-        {
-            return;
-        }
+        state_.imu_decimator = std::make_shared<ImuDecimator>();
     }
-    state_.last_processed_imu_stamp = imu.timestamp;
+    const auto decimated = state_.imu_decimator->add(rawImu, params_.imu_min_sample_period);
+    if (!decimated)
+    {
+        return;
+    }
+    const mrpt::obs::CObservationIMU& imu = *decimated;
+    // From the fused reading: an average can carry channels its newest reading lacks.
+    const bool fuseAngularVelocity = hasAngularVelocity(imu);
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
@@ -1050,7 +1105,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // body-frame angular-velocity variable, so a genuine, fast rotation is represented
     // in the graph immediately instead of only through the constant-velocity kinematic
     // factor between keyframes (see imu_angular_velocity_sigma's docstring).
-    if (hasAngularVelocity)
+    if (fuseAngularVelocity)
     {
         const gtsam::Vector3 measuredW_sensor = {
             imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY), imu.get(mrpt::obs::IMU_WZ)};

@@ -306,11 +306,11 @@ class Parameters
 
     /** @} */
 
-    /** High-rate same-sensor decimation for IMU. If > 0, IMU readings arriving
-     * less than this many seconds after the last *processed* one are skipped.
-     * Unlike wheel odometry, IMU attitude/gravity are absolute observations, so
-     * dropping intermediate readings simply lowers the redundant-factor rate;
-     * there is nothing to accumulate. 0 disables it. [seconds]
+    /** High-rate same-sensor decimation for IMU. If > 0, IMU readings are
+     * averaged over periods of this many seconds, and one averaged reading per
+     * period is fused (see mola::imu::ImuAverager). Averaging, rather than keeping one raw
+     * reading, keeps vibration faster than this rate from aliasing into the
+     * gravity and angular-velocity factors. 0 fuses every reading. [seconds]
      */
     double imu_min_sample_period = 0.0;  // [s]
 

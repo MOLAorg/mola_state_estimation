@@ -285,6 +285,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     };
 
     // Accesses to this struct values in state_ must be protected by stateMutex_
+    /// Decimates IMU readings to one per imu_min_sample_period. Defined in the
+    /// .cpp only, so this header's layout does not depend on the version of
+    /// mola_imu_preintegration it is compiled against.
+    struct ImuDecimator;
+
     struct State
     {
         State();
@@ -408,9 +413,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// own keyframe. See fuse_odometry_relative_locked().
         std::optional<frame_index_t> wheels_odometry_anchor_kf;
 
-        /// Stamp of the last IMU reading that was actually processed. Used by
-        /// imu_min_sample_period to skip higher-rate readings.
-        std::optional<mrpt::Clock::time_point> last_processed_imu_stamp;
+        /// Created on first use. See ImuDecimator.
+        std::shared_ptr<ImuDecimator> imu_decimator;
 
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
