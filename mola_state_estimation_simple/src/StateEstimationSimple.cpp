@@ -50,6 +50,14 @@ constexpr double kPendingImuMaxAge = 1.0;
 // Same role for buffered odometry. Generous: odometry sources run far slower
 // than an IMU, and dropping one silently loses a pose increment.
 constexpr double kPendingOdometryMaxAge = 5.0;
+
+/// Largest gap [s] between the ends of the queried interval and the nearest
+/// IMU reading for inertial propagation to still be used.
+constexpr double kImuPropagationMaxGap = 0.05;
+
+/// Extra age [s], beyond Parameters::imu_propagation_max_time, kept in the
+/// IMU history, so a query still finds the readings right after the last pose.
+constexpr double kImuHistoryMargin = 1.0;
 }  // namespace
 
 StateEstimationSimple::StateEstimationSimple() = default;
@@ -92,12 +100,14 @@ void StateEstimationSimple::reset()
     // reset ran, i.e. on thread scheduling rather than on the input.
     auto pendingImu  = std::move(state_.pending_imu);
     auto pendingOdom = std::move(state_.pending_odometry);
+    auto imuHistory  = std::move(state_.imu_history);
 
     // reset:
     state_ = State();
 
     state_.pending_imu      = std::move(pendingImu);
     state_.pending_odometry = std::move(pendingOdom);
+    state_.imu_history      = std::move(imuHistory);
 
     seedInitialTwistFromParams();
 
@@ -551,6 +561,25 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     state_.pending_imu.emplace(
         imu.timestamp, State::PendingImu{imuReading.wx, imuReading.wy, imuReading.wz});
 
+    if (params.imu_propagation && imu.has(mrpt::obs::TIMUDataIndex::IMU_X_ACC) &&
+        imu.has(mrpt::obs::TIMUDataIndex::IMU_Y_ACC) &&
+        imu.has(mrpt::obs::TIMUDataIndex::IMU_Z_ACC))
+    {
+        const auto f = imu.sensorPose.rotateVector(
+            {imu.get(mrpt::obs::TIMUDataIndex::IMU_X_ACC),
+             imu.get(mrpt::obs::TIMUDataIndex::IMU_Y_ACC),
+             imu.get(mrpt::obs::TIMUDataIndex::IMU_Z_ACC)});
+        state_.imu_history.emplace(
+            imu.timestamp, State::ImuSample{{imuReading.wx, imuReading.wy, imuReading.wz}, f});
+
+        const auto oldest =
+            state_.imu_history.rbegin()->first -
+            std::chrono::duration_cast<mrpt::Clock::duration>(
+                std::chrono::duration<double>(params.imu_propagation_max_time + kImuHistoryMargin));
+        state_.imu_history.erase(
+            state_.imu_history.begin(), state_.imu_history.lower_bound(oldest));
+    }
+
     // Keep the buffer bounded in case nothing ever asks for an estimate:
     const auto oldestToKeep =
         state_.pending_imu.rbegin()->first - std::chrono::duration_cast<mrpt::Clock::duration>(
@@ -587,6 +616,178 @@ void StateEstimationSimple::fuse_pending_imu_up_to(const mrpt::Clock::time_point
         MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
     }
     state_.pending_imu.erase(state_.pending_imu.begin(), itEnd);
+}
+
+std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_integrate(
+    const mrpt::math::CMatrixDouble33& R0, const mrpt::math::TVector3D& v0,
+    const mrpt::Clock::time_point& t0, const mrpt::Clock::time_point& t1) const
+{
+    // The readings must cover the whole interval:
+    const auto itBegin = state_.imu_history.upper_bound(t0);
+    const auto itEnd   = state_.imu_history.upper_bound(t1);
+    if (itBegin == itEnd ||
+        mrpt::system::timeDifference(t0, itBegin->first) > kImuPropagationMaxGap ||
+        mrpt::system::timeDifference(std::prev(itEnd)->first, t1) > kImuPropagationMaxGap)
+    {
+        if (state_.imu_history.empty())
+        {
+            MRPT_LOG_THROTTLE_WARN(
+                30.0,
+                "imu_propagation is enabled but no IMU reading with accelerometer data has been "
+                "received: using the constant-twist model.");
+        }
+        else
+        {
+            MRPT_LOG_THROTTLE_DEBUG_FMT(
+                5.0,
+                "imu_propagation: IMU readings do not cover [%.3f, %.3f] (buffered: %.3f to "
+                "%.3f): using the constant-twist model.",
+                mrpt::Clock::toDouble(t0), mrpt::Clock::toDouble(t1),
+                mrpt::Clock::toDouble(state_.imu_history.begin()->first),
+                mrpt::Clock::toDouble(state_.imu_history.rbegin()->first));
+        }
+        return {};
+    }
+
+    mrpt::math::CMatrixDouble33 R = R0;
+    const Eigen::Vector3d       g(0, 0, -params.gravity_magnitude);
+    Eigen::Vector3d             v(v0.x, v0.y, v0.z);
+    Eigen::Vector3d             p = Eigen::Vector3d::Zero();
+
+    const mola::imu::ImuIntegrationParams noBias = {};
+
+    // Each reading is held from the previous stamp up to its own; the newest
+    // one also covers what is left up to t1.
+    auto step = [&](const State::ImuSample& s, double dt)
+    {
+        const Eigen::Vector3d a = R.asEigen() * Eigen::Vector3d(s.f.x, s.f.y, s.f.z) + g;
+        p += v * dt + 0.5 * a * dt * dt;
+        v += a * dt;
+        R = R * mola::imu::incremental_rotation({s.w.x, s.w.y, s.w.z}, noBias, dt);
+    };
+
+    auto tPrev = t0;
+    for (auto it = itBegin; it != itEnd; ++it)
+    {
+        step(it->second, mrpt::system::timeDifference(tPrev, it->first));
+        tPrev = it->first;
+    }
+    step(std::prev(itEnd)->second, mrpt::system::timeDifference(tPrev, t1));
+
+    Integration ret;
+    ret.displacement = {p.x(), p.y(), p.z()};
+    ret.velocity     = {v.x(), v.y(), v.z()};
+    ret.rotation     = R;
+    return ret;
+}
+
+std::optional<StateEstimationSimple::Propagation> StateEstimationSimple::imu_propagate(
+    const mrpt::Clock::time_point& timestamp) const
+{
+    if (!state_.last_pose || !state_.last_pose_obs_tim || !state_.imu_velocity ||
+        state_.imu_velocity_tim != state_.last_pose_obs_tim)
+    {
+        return {};
+    }
+
+    const auto R0 = state_.last_pose->mean.getRotationMatrix();
+    auto       in = imu_integrate(R0, *state_.imu_velocity, *state_.last_pose_obs_tim, timestamp);
+    if (!in)
+    {
+        return {};
+    }
+    // Remove the estimated acceleration bias, constant in the reference frame:
+    const double dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
+    in->displacement -= state_.imu_accel_bias * (0.5 * dt * dt);
+    in->velocity -= state_.imu_accel_bias * dt;
+
+    const Eigen::Matrix3d R0t = R0.asEigen().transpose();
+    const Eigen::Vector3d dp =
+        R0t * Eigen::Vector3d(in->displacement.x, in->displacement.y, in->displacement.z);
+    const mrpt::math::CMatrixDouble33 dR(Eigen::Matrix3d(R0t * in->rotation.asEigen()));
+
+    Propagation ret;
+    ret.increment = mrpt::poses::CPose3D::FromRotationAndTranslation(
+        dR, mrpt::math::TVector3D(dp.x(), dp.y(), dp.z()));
+    const Eigen::Vector3d vb = in->rotation.asEigen().transpose() *
+                               Eigen::Vector3d(in->velocity.x, in->velocity.y, in->velocity.z);
+    ret.velocity_body = {vb.x(), vb.y(), vb.z()};
+    return ret;
+}
+
+void StateEstimationSimple::update_imu_velocity(
+    const mrpt::poses::CPose3D& prevPose, const mrpt::Clock::time_point& prevTime,
+    const mrpt::poses::CPose3D& newPose, const mrpt::Clock::time_point& newTime)
+{
+    const double dt = mrpt::system::timeDifference(prevTime, newTime);
+    if (dt <= 0 || dt > params.imu_propagation_max_time)
+    {
+        state_.imu_velocity.reset();
+        return;
+    }
+
+    // The pose difference measures the average velocity over the interval:
+    const auto   z     = (newPose.translation() - prevPose.translation()) * (1.0 / dt);
+    const double var_z = mrpt::square(params.sigma_relative_pose_linear / dt);
+
+    // From the state at prevTime, the IMU predicts both that average and the
+    // velocity at newTime. Correcting the prediction by the measured error of
+    // the average leaves no lag under acceleration, unlike a constant-velocity
+    // filter. Only a velocity estimated at prevTime continues the filter;
+    // otherwise (e.g. another source updated the pose since) it restarts from
+    // the measurement, keeping the bias learned so far.
+    const bool  haveV0 = state_.imu_velocity && state_.imu_velocity_tim == prevTime;
+    const auto& b      = state_.imu_accel_bias;
+    const auto  v0     = haveV0 ? *state_.imu_velocity : z;
+    const auto  in     = imu_integrate(prevPose.getRotationMatrix(), v0, prevTime, newTime);
+    if (!in)
+    {
+        state_.imu_velocity.reset();
+        return;
+    }
+    const auto V            = in->velocity - b * dt;
+    const auto predictedAvg = (in->displacement - b * (0.5 * dt * dt)) * (1.0 / dt);
+
+    state_.imu_velocity_tim = newTime;
+
+    if (!haveV0)
+    {
+        // (Re)start: the measured average, moved to its end with the IMU.
+        constexpr double kInitialBiasSigma = 0.5;  // [m/s²]
+        if (state_.imu_P_bb <= 0)  // never initialized
+        {
+            state_.imu_accel_bias = {0, 0, 0};
+            state_.imu_P_bb       = mrpt::square(kInitialBiasSigma);
+        }
+        state_.imu_velocity = z + (V - predictedAvg);
+        state_.imu_P_vv     = var_z;
+        state_.imu_P_vb     = 0;
+        return;
+    }
+
+    // Kalman filter on (velocity, bias), per axis. Predict with
+    // v' = v + (a - b)·dt, b' = b:  F = [1 -dt; 0 1].
+    const double Pvv = state_.imu_P_vv - 2 * dt * state_.imu_P_vb + dt * dt * state_.imu_P_bb +
+                       mrpt::square(params.imu_propagation_sigma_acc * dt);
+    const double Pvb = state_.imu_P_vb - dt * state_.imu_P_bb;
+    const double Pbb = state_.imu_P_bb + mrpt::square(params.imu_propagation_sigma_bias) * dt;
+
+    // Update with the measured average velocity. Its prediction depends on the
+    // state at newTime as avg = v' + (bias-free terms) + b'·dt/2:  H = [1 dt/2].
+    const double h1   = 0.5 * dt;
+    const double PHt0 = Pvv + h1 * Pvb;
+    const double PHt1 = Pvb + h1 * Pbb;
+    const double S    = PHt0 + h1 * PHt1 + var_z;
+    const double K0   = PHt0 / S;
+    const double K1   = PHt1 / S;
+
+    const auto innovation = z - predictedAvg;
+    state_.imu_velocity   = V + innovation * K0;
+    state_.imu_accel_bias = b + innovation * K1;
+
+    state_.imu_P_vv = Pvv - K0 * PHt0;
+    state_.imu_P_vb = Pvb - K0 * PHt1;
+    state_.imu_P_bb = Pbb - K1 * PHt1;
 }
 
 void StateEstimationSimple::fuse_all_pending_imu()
@@ -961,6 +1162,18 @@ void StateEstimationSimple::fuse_pose(
         state_.last_odom_obs.reset();
     }
 
+    if (params.imu_propagation)
+    {
+        if (src.last_pose && src.last_obs_tim)
+        {
+            update_imu_velocity(src.last_pose->mean, *src.last_obs_tim, pose.mean, timestamp);
+        }
+        else
+        {
+            state_.imu_velocity.reset();
+        }
+    }
+
     src.last_pose    = pose;
     src.last_obs_tim = timestamp;
 
@@ -1013,6 +1226,11 @@ bool StateEstimationSimple::transform_frame(const mrpt::poses::CPose3D& b)
     // Everything expressed in the map frame: the fused pose and the per-source
     // last poses of map-frame sources, used to derive velocity from
     // consecutive observations.
+    if (state_.imu_velocity)
+    {
+        state_.imu_velocity   = b.rotateVector(*state_.imu_velocity);
+        state_.imu_accel_bias = b.rotateVector(state_.imu_accel_bias);
+    }
     if (state_.last_pose)
     {
         state_.last_pose->changeCoordinatesReference(b);
@@ -1068,8 +1286,17 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
     const double dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
+    // Inertial propagation, if enabled and the IMU readings cover the interval.
+    // It may extrapolate further than the constant-twist model:
+    std::optional<Propagation> propagated;
+    if (params.imu_propagation && !state_.pose_already_updated_with_odom && dt >= 0 &&
+        dt <= params.imu_propagation_max_time)
+    {
+        propagated = imu_propagate(timestamp);
+    }
+
     if (!state_.last_twist || !state_.last_pose ||
-        std::abs(dt) > params.max_time_to_use_velocity_model)
+        (std::abs(dt) > params.max_time_to_use_velocity_model && !propagated))
     {
         return {};  // None
     }
@@ -1078,7 +1305,11 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
     mrpt::poses::CPose3D poseExtrapolation;
 
-    if (state_.pose_already_updated_with_odom)
+    if (propagated)
+    {
+        poseExtrapolation = propagated->increment;
+    }
+    else if (state_.pose_already_updated_with_odom)
     {
         // We have already updated the pose via wheels odometry, don't
         // extrapolate:
@@ -1111,8 +1342,16 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     // pose cov:
     auto cov = state_.last_pose->cov;
 
-    const double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
-    const double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
+    double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
+    double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
+    if (propagated)
+    {
+        // Position: the initial velocity uncertainty, plus the accelerometer
+        // error integrated twice. Orientation: the gyroscope noise integrated.
+        varXYZ = state_.imu_P_vv * dt * dt + state_.imu_P_bb * mrpt::square(0.5 * dt * dt) +
+                 mrpt::square(0.5 * params.imu_propagation_sigma_acc * dt * dt);
+        varRot = mrpt::square(dt * params.sigma_imu_angular_velocity);
+    }
 
     for (int i = 0; i < 3; i++)
     {
@@ -1136,6 +1375,12 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
     // twist:
     ret.twist = state_.last_twist.value();
+    if (propagated)
+    {
+        ret.twist.vx = propagated->velocity_body.x;
+        ret.twist.vy = propagated->velocity_body.y;
+        ret.twist.vz = propagated->velocity_body.z;
+    }
 
     if (state_.last_twist_cov.has_value())
     {

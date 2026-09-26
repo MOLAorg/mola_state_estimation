@@ -231,6 +231,33 @@ class StateEstimationSimple : public mola::NavStateFilter
         // would silently discard data that used to be fused.
         std::multimap<mrpt::Clock::time_point, PendingImu> pending_imu;
 
+        // Recent IMU readings (vehicle frame) kept for inertial propagation
+        // (Parameters::imu_propagation). Unlike pending_imu, these are not
+        // consumed by fusion: every query re-integrates them from the last pose.
+        struct ImuSample
+        {
+            mrpt::math::TVector3D w;  // angular velocity [rad/s]
+            mrpt::math::TVector3D f;  // specific force (accelerometer) [m/s²]
+        };
+        std::multimap<mrpt::Clock::time_point, ImuSample> imu_history;
+
+        // Velocity at last_pose_obs_tim, and a slowly varying acceleration
+        // bias, both in the reference frame: estimated by propagating with the
+        // accelerometer between poses and correcting with each new pose (see
+        // update_imu_velocity()). The bias absorbs the accelerometer bias and
+        // the gravity that leaks through attitude errors, which would otherwise
+        // be integrated into the velocity. Only with imu_propagation.
+        std::optional<mrpt::math::TVector3D> imu_velocity;
+        // The instant imu_velocity refers to: the pose update that last set it.
+        // Other updates of last_pose (3D odometry, a second pose source) do
+        // not move it, so propagation is only used from that same instant.
+        std::optional<mrpt::Clock::time_point> imu_velocity_tim;
+        mrpt::math::TVector3D                  imu_accel_bias = {0, 0, 0};
+        // Covariance of (velocity, bias), the same for the three axes:
+        double imu_P_vv = 0;
+        double imu_P_vb = 0;
+        double imu_P_bb = 0;
+
         // An odometry reading waiting to be fused. Either flavor is kept as the
         // observation itself, since fusing it re-reads several of its fields.
         struct PendingOdometry
@@ -282,6 +309,39 @@ class StateEstimationSimple : public mola::NavStateFilter
      *  in timestamp order, and drops them from the buffer.
      *  Must be called with state_mtx_ already held. */
     void fuse_pending_imu_up_to(const mrpt::Clock::time_point& upTo);
+
+    /** Strapdown integration of the IMU readings in imu_history over (t0, t1],
+     *  from orientation R0 and velocity v0 (both in the reference frame).
+     *  Returns nullopt if the readings do not cover the interval.
+     *  Must be called with state_mtx_ already held. */
+    struct Integration
+    {
+        mrpt::math::TVector3D       displacement;  // reference frame
+        mrpt::math::TVector3D       velocity;  // reference frame, at t1
+        mrpt::math::CMatrixDouble33 rotation;  // at t1
+    };
+    std::optional<Integration> imu_integrate(
+        const mrpt::math::CMatrixDouble33& R0, const mrpt::math::TVector3D& v0,
+        const mrpt::Clock::time_point& t0, const mrpt::Clock::time_point& t1) const;
+
+    /** Propagates the last fused pose to `timestamp` (see
+     *  Parameters::imu_propagation). Returns the pose increment from last_pose,
+     *  expressed in its own frame, and the linear velocity at `timestamp` in
+     *  the vehicle frame, or nullopt if that is not possible.
+     *  Must be called with state_mtx_ already held. */
+    struct Propagation
+    {
+        mrpt::poses::CPose3D  increment;
+        mrpt::math::TVector3D velocity_body;
+    };
+    std::optional<Propagation> imu_propagate(const mrpt::Clock::time_point& timestamp) const;
+
+    /** With imu_propagation, updates imu_velocity with a new pose of the
+     *  primary localization source, before last_pose is overwritten.
+     *  Must be called with state_mtx_ already held. */
+    void update_imu_velocity(
+        const mrpt::poses::CPose3D& prevPose, const mrpt::Clock::time_point& prevTime,
+        const mrpt::poses::CPose3D& newPose, const mrpt::Clock::time_point& newTime);
 
     /** Fuses every buffered IMU reading, whatever its timestamp.
      *  Must be called with state_mtx_ already held. */
