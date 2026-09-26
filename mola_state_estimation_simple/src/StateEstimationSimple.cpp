@@ -684,7 +684,8 @@ std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_int
 std::optional<StateEstimationSimple::Propagation> StateEstimationSimple::imu_propagate(
     const mrpt::Clock::time_point& timestamp) const
 {
-    if (!state_.last_pose || !state_.last_pose_obs_tim || !state_.imu_velocity)
+    if (!state_.last_pose || !state_.last_pose_obs_tim || !state_.imu_velocity ||
+        state_.imu_velocity_tim != state_.last_pose_obs_tim)
     {
         return {};
     }
@@ -732,10 +733,13 @@ void StateEstimationSimple::update_imu_velocity(
     // From the state at prevTime, the IMU predicts both that average and the
     // velocity at newTime. Correcting the prediction by the measured error of
     // the average leaves no lag under acceleration, unlike a constant-velocity
-    // filter.
-    const auto& b  = state_.imu_accel_bias;
-    const auto  v0 = state_.imu_velocity.value_or(z);
-    const auto  in = imu_integrate(prevPose.getRotationMatrix(), v0, prevTime, newTime);
+    // filter. Only a velocity estimated at prevTime continues the filter;
+    // otherwise (e.g. another source updated the pose since) it restarts from
+    // the measurement, keeping the bias learned so far.
+    const bool  haveV0 = state_.imu_velocity && state_.imu_velocity_tim == prevTime;
+    const auto& b      = state_.imu_accel_bias;
+    const auto  v0     = haveV0 ? *state_.imu_velocity : z;
+    const auto  in     = imu_integrate(prevPose.getRotationMatrix(), v0, prevTime, newTime);
     if (!in)
     {
         state_.imu_velocity.reset();
@@ -744,15 +748,20 @@ void StateEstimationSimple::update_imu_velocity(
     const auto V            = in->velocity - b * dt;
     const auto predictedAvg = (in->displacement - b * (0.5 * dt * dt)) * (1.0 / dt);
 
-    if (!state_.imu_velocity)
+    state_.imu_velocity_tim = newTime;
+
+    if (!haveV0)
     {
-        // First interval: the measured average, moved to its end with the IMU.
+        // (Re)start: the measured average, moved to its end with the IMU.
         constexpr double kInitialBiasSigma = 0.5;  // [m/s²]
-        state_.imu_velocity                = z + (V - predictedAvg);
-        state_.imu_accel_bias              = {0, 0, 0};
-        state_.imu_P_vv                    = var_z;
-        state_.imu_P_vb                    = 0;
-        state_.imu_P_bb                    = mrpt::square(kInitialBiasSigma);
+        if (state_.imu_P_bb <= 0)  // never initialized
+        {
+            state_.imu_accel_bias = {0, 0, 0};
+            state_.imu_P_bb       = mrpt::square(kInitialBiasSigma);
+        }
+        state_.imu_velocity = z + (V - predictedAvg);
+        state_.imu_P_vv     = var_z;
+        state_.imu_P_vb     = 0;
         return;
     }
 

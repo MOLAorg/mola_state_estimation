@@ -1803,6 +1803,47 @@ params:
     std::cout << "OK\n";
 }
 
+// A 3D-odometry update moves the pose anchor to its own time, while the IMU
+// velocity still refers to the last LiDAR pose: propagation must not be used
+// from that anchor (it falls back to the constant-twist model), and must be
+// used again after the next LiDAR pose.
+void test_imu_propagation_after_3d_odometry()
+{
+    std::cout << "[Test] IMU propagation after 3D odometry... ";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(R"###(
+params:
+    max_time_to_use_velocity_model: 0.75
+    sigma_relative_pose_linear: 0.01
+    sigma_relative_pose_angular: 0.01
+    imu_propagation: true
+    imu_propagation_max_time: 2.0
+)###"));
+    prop_feed(est, 3.5, true);
+
+    // Inertial prediction: its rotation variance is the tiny gyro one.
+    const auto rotVarAt = [&](double t)
+    {
+        const auto s = est.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
+        ASSERT_(s.has_value());
+        return 1.0 / s->pose.cov_inv(3, 3);
+    };
+    const double inertialRotVar = rotVarAt(PROP_T_LAST + 0.3);
+
+    auto odom         = mrpt::obs::CObservationRobotPose::Create();
+    odom->timestamp   = mrpt::Clock::fromDouble(PROP_T_LAST + 0.1);
+    odom->sensorLabel = "wheel_odom";
+    odom->pose.mean   = prop_gt_pose(PROP_T_LAST + 0.1);
+    odom->pose.cov.setDiagonal(1e-4);
+    est.onNewObservation(odom);
+
+    // After the odometry update: constant-twist model, much larger variance.
+    ASSERT_GT_(rotVarAt(PROP_T_LAST + 0.3), 10 * inertialRotVar);
+
+    std::cout << "OK\n";
+}
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
@@ -1825,6 +1866,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_initial_twist_invalid_sigma_rejected();
         test_imu_propagation();
         test_imu_propagation_accel_bias();
+        test_imu_propagation_after_3d_odometry();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();

@@ -248,7 +248,11 @@ class StateEstimationSimple : public mola::NavStateFilter
         // the gravity that leaks through attitude errors, which would otherwise
         // be integrated into the velocity. Only with imu_propagation.
         std::optional<mrpt::math::TVector3D> imu_velocity;
-        mrpt::math::TVector3D                imu_accel_bias = {0, 0, 0};
+        // The instant imu_velocity refers to: the pose update that last set it.
+        // Other updates of last_pose (3D odometry, a second pose source) do
+        // not move it, so propagation is only used from that same instant.
+        std::optional<mrpt::Clock::time_point> imu_velocity_tim;
+        mrpt::math::TVector3D                  imu_accel_bias = {0, 0, 0};
         // Covariance of (velocity, bias), the same for the three axes:
         double imu_P_vv = 0;
         double imu_P_vb = 0;
