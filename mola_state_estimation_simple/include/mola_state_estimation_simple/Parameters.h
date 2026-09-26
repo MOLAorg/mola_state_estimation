@@ -95,6 +95,30 @@ class Parameters
 
     bool enforce_planar_motion = false;
 
+    /** \name Inertial propagation between pose updates (opt-in)
+     *  If enabled, estimated_navstate() propagates the last fused pose with the
+     *  IMU readings received since then, instead of extrapolating a constant
+     *  twist: the gyroscope integrates orientation, and the accelerometer
+     *  (minus gravity) velocity and position. This predicts accelerations,
+     *  and keeps predicting across a gap in pose updates (e.g. a few rejected
+     *  LiDAR scans in a row) for up to imu_propagation_max_time, which may be
+     *  longer than max_time_to_use_velocity_model.
+     *
+     *  Requires an IMU with accelerometer, and a reference frame whose +Z
+     *  points up (gravity along -Z), e.g. one initialized from IMU pitch/roll.
+     *  The IMU lever arm is neglected. Without IMU readings covering the
+     *  queried interval, the constant-twist extrapolation is used.
+     *  @{ */
+    bool   imu_propagation          = false;
+    double imu_propagation_max_time = 2.0;  // [s]
+    double gravity_magnitude        = 9.81;  // [m/s²]
+    /// Accelerometer noise, bias and gravity leakage from attitude errors,
+    /// used to grow the position uncertainty of a propagated pose [m/s²].
+    double imu_propagation_sigma_acc = 0.5;
+    /// Random walk of the estimated acceleration bias [m/s²/sqrt(s)].
+    double imu_propagation_sigma_bias = 0.1;
+    /** @} */
+
     /// regex for IMU sensor labels (ROS topics) to accept as IMU readings.
     std::string do_process_imu_labels_re = ".*";
 

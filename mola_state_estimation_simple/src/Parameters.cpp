@@ -45,6 +45,12 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     MCP_LOAD_OPT(cfg, enforce_planar_motion);
 
+    MCP_LOAD_OPT(cfg, imu_propagation);
+    MCP_LOAD_OPT(cfg, imu_propagation_max_time);
+    MCP_LOAD_OPT(cfg, gravity_magnitude);
+    MCP_LOAD_OPT(cfg, imu_propagation_sigma_acc);
+    MCP_LOAD_OPT(cfg, imu_propagation_sigma_bias);
+
     MCP_LOAD_OPT(cfg, do_process_imu_labels_re);
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, fuse_ground_truth_label);

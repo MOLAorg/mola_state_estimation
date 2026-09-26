@@ -1621,6 +1621,188 @@ void test_transform_frame_updates_geo_reference()
 
 }  // namespace
 
+// --------------------------------------------------------------------------
+// Inertial propagation (imu_propagation): after the last pose, the estimate
+// must follow the IMU (turning while accelerating), where the constant-twist
+// model drifts, and must keep predicting past max_time_to_use_velocity_model.
+// --------------------------------------------------------------------------
+namespace
+{
+constexpr double PROP_V0     = 5.0;  // [m/s] initial forward speed (world x)
+constexpr double PROP_ACC_Y  = 3.0;  // [m/s²] constant world-frame acceleration
+constexpr double PROP_WZ     = 0.5;  // [rad/s] constant yaw rate
+constexpr double PROP_T_LAST = 2.0;  // [s] last fused pose
+
+mrpt::poses::CPose3D prop_gt_pose(double t)
+{
+    return mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+        PROP_V0 * t, 0.5 * PROP_ACC_Y * t * t, 0, PROP_WZ * t, 0, 0);
+}
+
+// Feeds poses at 10 Hz up to PROP_T_LAST and IMU readings at 200 Hz up to
+// imuEnd; accelerometer readings only if withAcc.
+void prop_feed(
+    mola::state_estimation_simple::StateEstimationSimple& est, double imuEnd, bool withAcc)
+{
+    for (int i = 0; 0.005 * i <= imuEnd + 1e-9; i++)
+    {
+        const double t = 0.005 * i;
+        // Specific force = R^T (a_world - g), g = (0,0,-9.81):
+        const auto f = prop_gt_pose(t).inverseRotateVector({0, PROP_ACC_Y, 9.81});
+
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, PROP_WZ);
+        if (withAcc)
+        {
+            imu.set(mrpt::obs::IMU_X_ACC, f.x);
+            imu.set(mrpt::obs::IMU_Y_ACC, f.y);
+            imu.set(mrpt::obs::IMU_Z_ACC, f.z);
+        }
+        est.fuse_imu(imu);
+
+        if (i % 20 == 0 && t <= PROP_T_LAST + 1e-9)
+        {
+            mrpt::poses::CPose3DPDFGaussian p;
+            p.mean = prop_gt_pose(t);
+            p.cov.setDiagonal(1e-4);
+            est.fuse_pose(mrpt::Clock::fromDouble(t), p, "map");
+        }
+    }
+}
+
+double prop_error(mola::state_estimation_simple::StateEstimationSimple& est, double t)
+{
+    const auto s = est.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
+    if (!s)
+    {
+        return -1;
+    }
+    return (s->pose.mean.asTPose().translation() - prop_gt_pose(t).asTPose().translation()).norm();
+}
+}  // namespace
+
+void test_imu_propagation()
+{
+    std::cout << "[Test] IMU propagation... ";
+
+    const std::string base = R"###(
+params:
+    max_time_to_use_velocity_model: 0.75
+    sigma_random_walk_acceleration_linear: 1.0
+    sigma_random_walk_acceleration_angular: 1.0
+    sigma_relative_pose_linear: 0.01
+    sigma_relative_pose_angular: 0.01
+    sigma_imu_angular_velocity: 0.05
+)###";
+
+    mola::state_estimation_simple::StateEstimationSimple legacy;
+    legacy.initialize(mrpt::containers::yaml::FromText(base));
+    prop_feed(legacy, 3.5, true);
+
+    mola::state_estimation_simple::StateEstimationSimple inertial;
+    inertial.initialize(mrpt::containers::yaml::FromText(
+        base + "    imu_propagation: true\n    imu_propagation_max_time: 2.0\n"));
+    prop_feed(inertial, 3.5, true);
+
+    const double eLegacy   = prop_error(legacy, PROP_T_LAST + 0.5);
+    const double eInertial = prop_error(inertial, PROP_T_LAST + 0.5);
+    if (VERBOSE)
+    {
+        std::cout << "\n  +0.5 s: constant twist " << eLegacy << " m, inertial " << eInertial
+                  << " m\n";
+    }
+    ASSERT_GE_(eLegacy, 0.0);
+    ASSERT_GE_(eInertial, 0.0);
+    ASSERT_LT_(eInertial, 0.1);
+    ASSERT_LT_(eInertial, 0.5 * eLegacy);
+
+    // Beyond max_time_to_use_velocity_model: only the inertial one predicts.
+    ASSERT_LT_(prop_error(legacy, PROP_T_LAST + 1.2), 0.0);
+    const double eFar = prop_error(inertial, PROP_T_LAST + 1.2);
+    ASSERT_GE_(eFar, 0.0);
+    ASSERT_LT_(eFar, 0.3);
+
+    // Beyond imu_propagation_max_time: nothing.
+    ASSERT_LT_(prop_error(inertial, PROP_T_LAST + 2.1), 0.0);
+
+    // Without accelerometer, or with IMU readings not covering the interval,
+    // it falls back to the constant-twist model:
+    mola::state_estimation_simple::StateEstimationSimple noAcc;
+    noAcc.initialize(mrpt::containers::yaml::FromText(
+        base + "    imu_propagation: true\n    imu_propagation_max_time: 2.0\n"));
+    prop_feed(noAcc, 3.5, false);
+    ASSERT_NEAR_(prop_error(noAcc, PROP_T_LAST + 0.5), eLegacy, 1e-6);
+    ASSERT_LT_(prop_error(noAcc, PROP_T_LAST + 1.2), 0.0);
+
+    mola::state_estimation_simple::StateEstimationSimple shortImu;
+    shortImu.initialize(mrpt::containers::yaml::FromText(
+        base + "    imu_propagation: true\n    imu_propagation_max_time: 2.0\n"));
+    prop_feed(shortImu, PROP_T_LAST + 0.2, true);
+    ASSERT_NEAR_(prop_error(shortImu, PROP_T_LAST + 0.5), eLegacy, 1e-6);
+
+    std::cout << "OK\n";
+}
+
+// An accelerometer bias must be estimated from the poses, not integrated into
+// the velocity: after 10 s of poses, a 1 s prediction stays within centimeters.
+void test_imu_propagation_accel_bias()
+{
+    std::cout << "[Test] IMU propagation, accelerometer bias... ";
+
+    constexpr double BIAS = 0.3;  // [m/s²], along the vehicle x axis
+    constexpr double V0   = 4.0;  // [m/s]
+    constexpr double TEND = 10.0;
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(R"###(
+params:
+    max_time_to_use_velocity_model: 0.75
+    sigma_relative_pose_linear: 0.02
+    sigma_relative_pose_angular: 0.01
+    imu_propagation: true
+    imu_propagation_max_time: 2.0
+)###"));
+
+    const auto gt = [](double t)
+    { return mrpt::poses::CPose3D::FromXYZYawPitchRoll(V0 * t, 0, 0, 0, 0, 0); };
+
+    for (int i = 0; 0.005 * i <= TEND + 1.5; i++)
+    {
+        const double               t = 0.005 * i;
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        imu.set(mrpt::obs::IMU_X_ACC, BIAS);
+        imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Z_ACC, 9.81);
+        est.fuse_imu(imu);
+
+        if (i % 20 == 0 && t <= TEND + 1e-9)
+        {
+            mrpt::poses::CPose3DPDFGaussian p;
+            p.mean = gt(t);
+            p.cov.setDiagonal(1e-4);
+            est.fuse_pose(mrpt::Clock::fromDouble(t), p, "map");
+        }
+    }
+
+    const auto s = est.estimated_navstate(mrpt::Clock::fromDouble(TEND + 1.0), "map");
+    ASSERT_(s.has_value());
+    const double err =
+        (s->pose.mean.asTPose().translation() - gt(TEND + 1.0).asTPose().translation()).norm();
+    if (VERBOSE)
+    {
+        std::cout << "\n  +1.0 s error: " << err << " m (unestimated bias would give ~0.15 m)\n";
+    }
+    ASSERT_LT_(err, 0.05);
+    std::cout << "OK\n";
+}
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
@@ -1641,6 +1823,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_partial_observation_bootstraps_independently();
         test_real_measurement_survives_first_fuse_pose();
         test_initial_twist_invalid_sigma_rejected();
+        test_imu_propagation();
+        test_imu_propagation_accel_bias();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();
