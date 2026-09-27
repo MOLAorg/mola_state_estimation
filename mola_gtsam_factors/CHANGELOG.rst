@@ -2,8 +2,8 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.0 (2026-09-28)
+------------------
 * Port to MRPT 3.x
 * Fuse IMU absolute attitude into georeferencing and state estimation
 * Add MapGravityFactor: unary gravity-leveling in a z-up map frame

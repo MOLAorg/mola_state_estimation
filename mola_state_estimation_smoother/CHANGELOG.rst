@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.0 (2026-09-28)
+------------------
 * Average IMU readings when decimating instead of keeping one raw sample
 * Random-walk increment sigma growth and a Huber kernel on pose factors; make a drifting pose source usable through fuse_pose()
 * Always fuse wheel odometry as relative increments

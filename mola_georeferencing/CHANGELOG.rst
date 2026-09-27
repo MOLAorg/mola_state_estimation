@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.0 (2026-09-28)
+------------------
 * Port to MRPT 3.x
 * Keep P(i) in the map frame so GNSS and IMU factors agree; share one keyframe time reference between the diagnostic dumps
 * Georeferencing with IMU: prefer gravity alignment from averaged velocity windows
