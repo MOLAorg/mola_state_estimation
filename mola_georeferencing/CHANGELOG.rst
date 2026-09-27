@@ -2,6 +2,21 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Port to MRPT 3.x
+* Keep P(i) in the map frame so GNSS and IMU factors agree; share one keyframe time reference between the diagnostic dumps
+* Georeferencing with IMU: prefer gravity alignment from averaged velocity windows
+* Add MOLA_SM_GEOREF_PRINT_LARGE_FACTOR_ERRORS diagnostic
+* Don't let GNSS altitude drift hide an unobservable azimuth; warn when IMU attitude alignment has no orientation data to use
+* Fix missing iomanip include
+* Add georeferencing test for GNSS sensorPose antenna offset
+* Fuse IMU absolute attitude into georeferencing and state estimation
+* Optional georeferencing ENU custom origin; tunable GNSS Huber kernel threshold; harden fuse_gnss()/recenter_georeference()
+* Detect degenerate GNSS configurations
+* Expose new params in the georeference CLI app
+* Contributors: Jose Luis Blanco-Claraco
+
 2.4.2 (2026-06-04)
 ------------------
 

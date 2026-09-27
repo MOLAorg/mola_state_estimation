@@ -2,6 +2,43 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Average IMU readings when decimating instead of keeping one raw sample
+* Random-walk increment sigma growth and a Huber kernel on pose factors; make a drifting pose source usable through fuse_pose()
+* Always fuse wheel odometry as relative increments
+* Implement estimated_trajectory(): read back the optimized keyframe poses
+* Port to MRPT 3.x
+* Never fuse a dataset's ground truth; add relative-pose factors to fuse_pose()
+* Expose additional_isam2_update_steps as an environment knob
+* Add a covariance floor on the pose reported to a front end
+* Don't throw when writing back a keyframe the fixed-lag smoother marginalized
+* Optional relative BetweenFactors for wheel odometry
+* Wheel odometry's absolute covariance must accumulate
+* MOLA_NAVSTATE_DUMP instrumentation and tunable integrator sigmas
+* Never take a time difference through Clock::toDouble()
+* Make wheel-odometry motion-model sigmas tunable
+* Fix deprecation warning for fixed lag smoother, moved to stable
+* Fuse raw IMU gyro readings as angular-velocity observations
+* Covariance-aware short-term extrapolation
+* Test coverage for the predict-twist low-pass filter
+* Preserve predict-twist EMA history on same-stamp solves
+* Smooth the predicted motion prior (predict-twist low-pass) and moderate default accel sigmas
+* Default the shipped config to the real-time path
+* Decouple the map->odom /tf child frame from the odometry source frame
+* Publish map->odom from the estimator's own graph variable, plus optional base_link_fused
+* Sub-ms estimated_navstate() via async backend and high-rate keyframe decimation
+* Add nested profiler entries in the estimated_navstate path
+* Don't let a late measurement drag the published stamp backwards
+* Don't double-count the motion model when splicing a keyframe
+* Actually rebuild the smoother on GTSAM failure
+* Fix relocalize mode (GNSS+IMU init against a known map) crashing or never converging
+* Fuse IMU absolute attitude into georeferencing and state estimation
+* Default viz module to MolaVizImGui with a per-app imgui_app_name
+* Serve the {odom_i} prediction frame-local, not via {map}
+* Don't crash on estimated_navstate() for an unregistered odometry frame
+* Contributors: Jose Luis Blanco-Claraco
+
 2.4.2 (2026-06-04)
 ------------------
 

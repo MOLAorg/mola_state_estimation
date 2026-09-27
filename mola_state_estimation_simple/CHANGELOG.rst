@@ -2,6 +2,23 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* StateEstimationSimple: optional inertial propagation between pose updates
+* Port to MRPT 3.x
+* Never fuse a dataset's ground truth; add relative-pose factors to fuse_pose()
+* Apply a planar odometry increment in the yaw-only frame
+* Fuse odometry in timestamp order, not on arrival
+* Don't let the twist seed get clobbered on first fuse
+* Apply params.initial_twist (MOLA_INITIAL_VX)
+* Make wheel-odometry motion-model sigmas tunable; fix pre-anchor odometry baseline bug
+* StateEstimationSimple: implement transform_frame()
+* Keep buffered IMU readings across reset()
+* Fuse IMU readings by timestamp, not on arrival
+* Declare mola_yaml as an explicit dependency
+* Optional georeferencing ENU custom origin; tunable GNSS Huber kernel threshold
+* Contributors: Jose Luis Blanco-Claraco
+
 2.4.2 (2026-06-04)
 ------------------
 * feat(`#33 <https://github.com/MOLAorg/mola_state_estimation/issues/33>`_): velocity filter now handles multi-rate interleaved sources via per-component clocks, fixing linear velocity starvation when LiDAR pose stamps lag IMU stamps
