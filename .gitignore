@@ -3,7 +3,7 @@ install
 log
 
 *.pyc
-build-*
+build-*/
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles
