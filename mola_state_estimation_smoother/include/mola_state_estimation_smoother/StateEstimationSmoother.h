@@ -493,6 +493,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Creates or returns the existing ID, for an odometry frame_id:
     [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
 
+    /// While T_map_to_odom_i is still pending insertion into the smoother, sets
+    /// its initial value consistent with a reading `poseInOdom` of keyframe `kf`.
+    void seed_odom_frame_locked(
+        odometry_frameid_t frame_id_idx, frame_index_t kf, const mrpt::poses::CPose3D& poseInOdom);
+
+    /// Some measurement now observes {map}: its gauge anchor is no longer needed.
+    void mark_map_observed_locked();
+
     // ---- _locked variants: assume stateMutex_ is already held by the caller ----
     void reset_locked();
     void reinitialize_gtsam_locked();

@@ -71,7 +71,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py` |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (25) | `tests/test-*.cpp` |
+| Unit tests (26) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -142,6 +142,16 @@ Other behavior:
   `Snapshot`. The synchronous path is deterministic.
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
   cannot be solved yet.
+- Gauge anchors (strong priors on never-marginalized variables, withdrawn once
+  observed; weak priors there break GTSAM>=4.3 Cholesky): `{map}` is pinned to
+  the first odometry frame until a `{map}` pose arrives (or, with a fixed
+  geo-reference, GNSS/IMU attitude); the azimuth of `T_enu_to_map` until IMU
+  attitude or a GNSS baseline long enough for
+  `convergence_max_orientation_sigma_deg`. Estimated geo-references do not
+  converge while pinned. Until something relates `{map}` to the vehicle,
+  solving is deferred (up to one window).
+- A new `T_map_to_odom_i` is seeded from its first reading. A new key is never
+  marginalized in the update that inserts it.
 - Observations labeled `ground_truth` are ignored by both estimators unless
   `fuse_ground_truth_label: true`.
 - Optional planar motion (`enforce_planar_motion`).

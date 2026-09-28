@@ -174,3 +174,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_state_estimation_smoother
 )
+
+mola_add_test(
+  TARGET  test-gauge-anchors
+  SOURCES test-gauge-anchors.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
