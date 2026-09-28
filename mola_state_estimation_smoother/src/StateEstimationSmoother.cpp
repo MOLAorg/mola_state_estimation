@@ -77,6 +77,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -125,6 +126,7 @@ namespace
 constexpr double ENU2MAP_WEAK_SIGMA          = 1e4;
 constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
 constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
+constexpr double GAUGE_ANCHOR_SIGMA          = 1e-3;
 constexpr double PLANAR_XY_SIGMA             = 1e10;
 constexpr double PLANAR_Z_SIGMA              = 1e-4;
 constexpr double TRICYCLE_LARGE_SIGMAS       = 1e6;
@@ -348,6 +350,75 @@ struct StateEstimationSmoother::GtsamImpl
 
     /** Queued for removal at the next update(). */
     gtsam::FactorIndices factorsToRemove;
+
+    /** A strong prior pinning a gauge freedom: a direction of the state that no
+     *  measurement observes yet, e.g. where {map} is before any source gives
+     *  poses in it. A weak prior would leave the system nearly singular, which
+     *  some GTSAM versions reject during Cholesky elimination. Anchors are only
+     *  placed on variables that are never marginalized, so they can always be
+     *  withdrawn once measurements start observing that direction.
+     */
+    struct GaugeAnchor
+    {
+        std::optional<size_t>             pendingIndex;  //!< Position in newFactors
+        std::optional<gtsam::FactorIndex> isamIndex;  //!< Once inside the smoother
+    };
+
+    /// Defines {map} as odometry frame `mapAnchorFrame` while no source observes {map}
+    std::optional<GaugeAnchor> mapAnchor;
+    odometry_frameid_t         mapAnchorFrame = 0;
+    bool                       mapObserved    = false;
+
+    /// Pins the azimuth of T_enu_to_map while no IMU attitude or GNSS observes it
+    std::optional<GaugeAnchor>   enuYawAnchor;
+    std::optional<gtsam::Point2> firstGnssEnuXY;
+
+    /// Queues a new anchor factor, built in place from `args`
+    template <class FACTOR, class... Args>
+    void add_anchor(std::optional<GaugeAnchor>& anchor, Args&&... args)
+    {
+        anchor = GaugeAnchor{newFactors.size(), std::nullopt};
+        newFactors.emplace_shared<FACTOR>(std::forward<Args>(args)...);
+    }
+
+    /// Drops the anchor, whether still pending or already inside the smoother
+    void withdraw_anchor(std::optional<GaugeAnchor>& anchor)
+    {
+        if (!anchor)
+        {
+            return;
+        }
+        if (anchor->pendingIndex)
+        {
+            const size_t idx = *anchor->pendingIndex;
+            newFactors.erase(newFactors.begin() + static_cast<std::ptrdiff_t>(idx));
+            for (auto* other : {&mapAnchor, &enuYawAnchor})
+            {
+                if (*other && (*other)->pendingIndex && *(*other)->pendingIndex > idx)
+                {
+                    --*(*other)->pendingIndex;
+                }
+            }
+        }
+        else if (anchor->isamIndex)
+        {
+            factorsToRemove.push_back(*anchor->isamIndex);
+        }
+        anchor.reset();
+    }
+
+    /// Records the iSAM2 index of anchors passed in the last update()
+    void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
+    {
+        for (auto* anchor : {&mapAnchor, &enuYawAnchor})
+        {
+            if (*anchor && (*anchor)->pendingIndex)
+            {
+                (*anchor)->isamIndex = newFactorsIndices.at(*(*anchor)->pendingIndex);
+                (*anchor)->pendingIndex.reset();
+            }
+        }
+    }
 };
 
 // -------- StateEstimationSmoother::State -------
@@ -473,6 +544,17 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     state_.gtsam->newValues.insert(symbol_T_enu_to_map, enu2map);
     // Weak prior factor:
     state_.gtsam->newFactors.addPrior(symbol_T_enu_to_map, enu2map, enu2map_cov);
+
+    // Gravity alone observes its roll and pitch, never its azimuth:
+    if (!params_.fixed_geo_reference.has_value())
+    {
+        gtsam::Vector6 sigmas;
+        sigmas << ENU2MAP_WEAK_SIGMA, ENU2MAP_WEAK_SIGMA, GAUGE_ANCHOR_SIGMA, ENU2MAP_WEAK_SIGMA,
+            ENU2MAP_WEAK_SIGMA, ENU2MAP_WEAK_SIGMA;
+        state_.gtsam->add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
+            state_.gtsam->enuYawAnchor, symbol_T_enu_to_map, enu2map,
+            gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
 }
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -927,6 +1009,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         gtsam::Matrix6 cov_out;
         mrpt::gtsam_wrappers::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
 
+        seed_odom_frame_locked(frame_id_idx, this_kf_id, absolutePoseInOdom.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
             gtsam::noiseModel::Gaussian::Covariance(cov_out));
@@ -1073,6 +1156,14 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             state_.gtsam->newFactors.emplace_shared<mola::factors::Pose3RotationFactor>(
                 symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredRotation,
                 rotationNoise);
+
+            // Absolute attitude observes the azimuth of T_enu_to_map, and through
+            // a fixed one, the orientation of {map}:
+            state_.gtsam->withdraw_anchor(state_.gtsam->enuYawAnchor);
+            if (params_.fixed_geo_reference.has_value())
+            {
+                mark_map_observed_locked();
+            }
         }
     }
 
@@ -1234,6 +1325,34 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
 
     state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
         symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseModel);
+
+    // Through a fixed T_enu_to_map, GNSS observes where {map} is:
+    if (params_.fixed_geo_reference.has_value())
+    {
+        mark_map_observed_locked();
+    }
+
+    // The azimuth of T_enu_to_map becomes observable only once the fixes span a
+    // horizontal baseline long enough for the configured convergence accuracy:
+    if (state_.gtsam->enuYawAnchor)
+    {
+        const gtsam::Point2 xy(ENU_point.x, ENU_point.y);
+        if (!state_.gtsam->firstGnssEnuXY)
+        {
+            state_.gtsam->firstGnssEnuXY = xy;
+        }
+        else
+        {
+            const auto&  cov         = *gps.covariance_enu;
+            const double sigmaXY     = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
+            const double minBaseline = std::sqrt(2.0) * sigmaXY /
+                                       mrpt::DEG2RAD(params_.convergence_max_orientation_sigma_deg);
+            if ((xy - *state_.gtsam->firstGnssEnuXY).norm() >= minBaseline)
+            {
+                state_.gtsam->withdraw_anchor(state_.gtsam->enuYawAnchor);
+            }
+        }
+    }
 }
 
 void StateEstimationSmoother::fuse_pose(
@@ -1335,6 +1454,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     if (frame_id_idx == REFERENCE_FRAME_ID)
     {
         // ref is "map":
+        mark_map_observed_locked();
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out,
             with_huber(
@@ -1370,6 +1490,7 @@ void StateEstimationSmoother::fuse_pose_locked(
 
         if (!chain.anchor_kf.has_value())
         {
+            seed_odom_frame_locked(frame_id_idx, this_kf_id, poseSanitized.mean);
             state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
                 gtsam::noiseModel::Gaussian::Covariance(cov_out));
@@ -1467,6 +1588,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     else
     {
         // ref is an odometry frame:
+        seed_odom_frame_locked(frame_id_idx, this_kf_id, poseSanitized.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
             with_huber(
@@ -2365,7 +2487,56 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
         symbol_T_map_to_odom_i_base + newId, initFramePose,
         gtsam::noiseModel::Isotropic::Sigma(6, INIT_ODOM_FRAME_POSE_SIGMA));
 
+    // Until some source observes {map}, define it as this first odometry frame,
+    // which is also where the weak prior above would leave it:
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor &&
+        !params_.link_first_pose_to_reference_origin_sigma.has_value())
+    {
+        state_.gtsam->add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
+            state_.gtsam->mapAnchor, symbol_T_map_to_odom_i_base + newId, initFramePose,
+            gtsam::noiseModel::Isotropic::Sigma(6, GAUGE_ANCHOR_SIGMA));
+        state_.gtsam->mapAnchorFrame = newId;
+    }
+
     return newId;
+}
+
+void StateEstimationSmoother::mark_map_observed_locked()
+{
+    state_.gtsam->mapObserved = true;
+    state_.gtsam->withdraw_anchor(state_.gtsam->mapAnchor);
+}
+
+// The identity initial value set above can be arbitrarily far from the truth
+// (an odometry frame may start anywhere in {map}). iSAM2 takes only one
+// Gauss-Newton step per update, so a poor linearization point may diverge.
+void StateEstimationSmoother::seed_odom_frame_locked(
+    odometry_frameid_t frame_id_idx, frame_index_t kf, const mrpt::poses::CPose3D& poseInOdom)
+{
+    const auto key = symbol_T_map_to_odom_i_base + frame_id_idx;
+    if (!state_.gtsam->newValues.exists(key))
+    {
+        return;  // Already in the smoother
+    }
+    const auto it = state_.last_estimated_states.find(kf);
+    if (it == state_.last_estimated_states.end())
+    {
+        return;
+    }
+
+    // While {map} is this very frame, the reading is the keyframe pose itself:
+    if (state_.gtsam->mapAnchor && state_.gtsam->mapAnchorFrame == frame_id_idx)
+    {
+        if (state_.gtsam->newValues.exists(T(kf)))
+        {
+            state_.gtsam->newValues.update(T(kf), mrpt::gtsam_wrappers::toPose3(poseInOdom));
+            it->second.pose = poseInOdom;
+        }
+        return;
+    }
+
+    const auto T_map_to_odom = it->second.pose + (-poseInOdom);
+    state_.gtsam->newValues.update(key, mrpt::gtsam_wrappers::toPose3(T_map_to_odom));
 }
 
 void StateEstimationSmoother::process_pending_gtsam_updates()
@@ -2377,6 +2548,27 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
 void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 {
     const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
+
+    // Until some source relates {map} to the vehicle (e.g. while IMU readings
+    // arrive ahead of the first pose), its position and heading are held only
+    // by weak priors, which some GTSAM versions refuse to factorize. Wait for
+    // one, for up to a window length so that the pending data stays bounded.
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor &&
+        !params_.link_first_pose_to_reference_origin_sigma.has_value() &&
+        state_.gtsam->smoother->timestamps().empty())
+    {
+        double oldestStamp = std::numeric_limits<double>::infinity();
+        double newestStamp = -std::numeric_limits<double>::infinity();
+        for (const auto& [_, stamp] : state_.gtsam->newKeyStamps)
+        {
+            oldestStamp = std::min(oldestStamp, stamp);
+            newestStamp = std::max(newestStamp, stamp);
+        }
+        if (newestStamp - oldestStamp < params_.sliding_window_length)
+        {
+            return;
+        }
+    }
 
     // Even if we have no new factors/values, do update the stamps of "persistent" variables:
     if (state_.last_observation_stamp.has_value())
@@ -2402,6 +2594,29 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     auto& smoother = *state_.gtsam->smoother;
+
+    // A key must not leave the lag window in the same update that inserts it:
+    // some GTSAM versions look marginalizable keys up in the Bayes tree before
+    // adding the new ones, and throw. Keep such a key until the next update.
+    {
+        double newestStamp = -std::numeric_limits<double>::infinity();
+        for (const auto& [_, stamp] : smoother.timestamps())
+        {
+            newestStamp = std::max(newestStamp, stamp);
+        }
+        for (const auto& [_, stamp] : state_.gtsam->newKeyStamps)
+        {
+            newestStamp = std::max(newestStamp, stamp);
+        }
+        const double oldestKept = newestStamp - params_.sliding_window_length;
+        for (auto& [key, stamp] : state_.gtsam->newKeyStamps)
+        {
+            if (stamp < oldestKept && !smoother.getLinearizationPoint().exists(key))
+            {
+                stamp = oldestKept;
+            }
+        }
+    }
 
     // Flush the per-link kinematic factors into newFactors, remembering the range
     // each link occupies so its iSAM2 indices can be recovered below.
@@ -2441,6 +2656,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 }
                 state_.gtsam->flushedKinematic[linkKey] = indices;
             }
+            state_.gtsam->on_update_done(newIdx);
             state_.gtsam->factorsToRemove.clear();
         }
 
@@ -2686,7 +2902,9 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 mrpt::RAD2DEG(em_ori_sigma_roll), params_.convergence_max_position_sigma,
                 params_.convergence_max_orientation_sigma_deg);
 
-            if (converged && state_.tentative_geo_coord_reference.has_value())
+            // While pinned by its anchor, the azimuth sigma says nothing about the data:
+            if (converged && state_.tentative_geo_coord_reference.has_value() &&
+                !state_.gtsam->enuYawAnchor)
             {
                 state_.geo_reference.emplace();
                 state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();

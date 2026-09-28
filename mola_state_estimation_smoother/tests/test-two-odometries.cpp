@@ -132,8 +132,8 @@ void run_test()
         odomWheelsPdf.cov.setIdentity();
         for (int k = 0; k < 3; k++)
         {
-            odomWheelsPdf.cov(k, k) = mrpt::square(WHEEL_ODOM_NOISE_XY);
-            odomWheelsPdf.cov(k, k) = mrpt::square(WHEEL_ODOM_NOISE_PHI);
+            odomWheelsPdf.cov(k, k)         = mrpt::square(WHEEL_ODOM_NOISE_XY);
+            odomWheelsPdf.cov(k + 3, k + 3) = mrpt::square(WHEEL_ODOM_NOISE_PHI);
         }
 
         // 3. Generate LiDAR Odometry (Less noise, sideways drift)
@@ -158,8 +158,8 @@ void run_test()
         odomLidarPdf.cov.setIdentity();
         for (int k = 0; k < 3; k++)
         {
-            odomLidarPdf.cov(k, k) = mrpt::square(LIDAR_ODOM_NOISE_XYZ);
-            odomLidarPdf.cov(k, k) = mrpt::square(LIDAR_ODOM_NOISE_ANG);
+            odomLidarPdf.cov(k, k)         = mrpt::square(LIDAR_ODOM_NOISE_XYZ);
+            odomLidarPdf.cov(k + 3, k + 3) = mrpt::square(LIDAR_ODOM_NOISE_ANG);
         }
 
         // 4. Fuse Both

@@ -203,11 +203,12 @@ params:
   # If set, pins the first robot frame to the "reference_frame" origin with the given sigma [m/rad].
   #
   # When to set (use 1e-6):
-  #   - estimate_geo_reference=true  : the map frame is defined by where the robot starts;
-  #     without this anchor the GTSAM graph has a rank-deficient null-space in the
-  #     T_enu_to_map direction and geo-reference estimation will not converge.
-  #   - Pure odometry (no GNSS)      : no absolute constraint exists; the anchor defines the
-  #     map origin.
+  #   - estimate_geo_reference=true with neither odometry nor map-frame pose sources: the map
+  #     frame is defined by where the robot starts; without this anchor the GTSAM graph has a
+  #     rank-deficient null-space in the T_enu_to_map direction and geo-reference estimation
+  #     will not converge.
+  #   - Pure odometry (no GNSS)      : optional. Without it, the map frame is the frame of the
+  #     first odometry source; with it, the map origin is the robot's first pose.
   #
   # When to leave empty:
   #   - estimate_geo_reference=false with GNSS and a pre-built geo-referenced map: the robot
