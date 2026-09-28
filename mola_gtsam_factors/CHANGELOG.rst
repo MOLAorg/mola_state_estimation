@@ -2,8 +2,8 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.1 (2026-09-28)
+------------------
 * Fix build against GTSAM >= 4.3
 * Contributors: Jose Luis Blanco-Claraco
 
