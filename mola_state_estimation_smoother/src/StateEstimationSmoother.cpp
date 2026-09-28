@@ -373,6 +373,7 @@ struct StateEstimationSmoother::GtsamImpl
     std::optional<GaugeAnchor>   enuYawAnchor;
     std::optional<gtsam::Point2> firstGnssEnuXY;
 
+    /// Queues a new anchor factor, built in place from `args`
     template <class FACTOR, class... Args>
     void add_anchor(std::optional<GaugeAnchor>& anchor, Args&&... args)
     {
@@ -380,6 +381,7 @@ struct StateEstimationSmoother::GtsamImpl
         newFactors.emplace_shared<FACTOR>(std::forward<Args>(args)...);
     }
 
+    /// Drops the anchor, whether still pending or already inside the smoother
     void withdraw_anchor(std::optional<GaugeAnchor>& anchor)
     {
         if (!anchor)

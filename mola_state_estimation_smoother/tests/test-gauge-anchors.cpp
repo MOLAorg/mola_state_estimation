@@ -211,14 +211,17 @@ void test_late_map_poses_take_over()
     ASSERT_EQUAL_(res.solverFailures, 0U);
 
     // Allow one window for the old {map} definition to leave the smoother:
-    double maxErr = 0;
+    double maxErr   = 0;
+    size_t nLateEst = 0;
     for (const auto& [t, err] : res.errorAt)
     {
         if (t > MAP_POSES_FROM + 5.0)
         {
             maxErr = std::max(maxErr, err);
+            nLateEst++;
         }
     }
+    ASSERT_GT_(nLateEst, 0U);
     std::cout << "[late_map_poses_take_over] max position error: " << maxErr << " m\n";
     ASSERT_LT_(maxErr, 0.05);
 }
