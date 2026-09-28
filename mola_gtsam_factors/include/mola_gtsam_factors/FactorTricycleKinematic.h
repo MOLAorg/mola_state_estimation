@@ -29,6 +29,10 @@
 #include <gtsam/nonlinear/NonlinearFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 
+#if GTSAM_VERSION_AT_LEAST(4, 3, 0)
+#include <gtsam/nonlinear/NoiseModelFactorN.h>
+#endif
+
 #include <cmath>
 
 namespace mola::factors
@@ -104,13 +108,13 @@ namespace mola::factors
  * @see FactorAngularVelocityIntegration for rotation-only integration
  * @see FactorTrapezoidalIntegrator for trapezoidal integration (uses both v_i and v_j)
  */
-class FactorTricycleKinematic : public gtsam::NoiseModelFactor4<
+class FactorTricycleKinematic : public gtsam::NoiseModelFactorN<
                                     gtsam::Pose3, gtsam::Point3, gtsam::Point3,  // Ti, bVi, bWi
                                     gtsam::Pose3>  // Tj
 {
    private:
     using This = FactorTricycleKinematic;
-    using Base = gtsam::NoiseModelFactor4<
+    using Base = gtsam::NoiseModelFactorN<
         gtsam::Pose3, gtsam::Point3, gtsam::Point3,  // Ti, bVi, bWi
         gtsam::Pose3>;  // Tj
 
