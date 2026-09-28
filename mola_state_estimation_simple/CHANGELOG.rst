@@ -2,6 +2,9 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+
 3.0.0 (2026-09-28)
 ------------------
 * StateEstimationSimple: optional inertial propagation between pose updates

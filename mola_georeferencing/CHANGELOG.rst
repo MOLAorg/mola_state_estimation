@@ -2,6 +2,9 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+
 3.0.0 (2026-09-28)
 ------------------
 * Port to MRPT 3.x

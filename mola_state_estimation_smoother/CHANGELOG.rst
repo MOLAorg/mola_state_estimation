@@ -2,6 +2,14 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Smoother: work with GTSAM 4.3 (Kilted, Lyrical, Rolling)
+* Anchor gauge freedoms ({map} origin and T_enu_to_map azimuth) instead of relying on weak priors
+* test-gauge-anchors: require estimates in the late-map window; document anchor helpers
+* test-two-odometries: fix covariance indices of the simulated sources
+* Contributors: Jose Luis Blanco-Claraco
+
 3.0.0 (2026-09-28)
 ------------------
 * Average IMU readings when decimating instead of keeping one raw sample
