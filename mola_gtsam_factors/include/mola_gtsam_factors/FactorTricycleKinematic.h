@@ -29,7 +29,9 @@
 #include <gtsam/nonlinear/NonlinearFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 
-#if GTSAM_VERSION_AT_LEAST(4, 3, 0)
+// Some GTSAM 4.3.0 builds still define NoiseModelFactorN in NonlinearFactor.h,
+// so check for the header itself instead of the version number.
+#if __has_include(<gtsam/nonlinear/NoiseModelFactorN.h>)
 #include <gtsam/nonlinear/NoiseModelFactorN.h>
 #endif
 
