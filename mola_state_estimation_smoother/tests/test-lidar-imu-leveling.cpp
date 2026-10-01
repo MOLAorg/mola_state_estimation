@@ -125,8 +125,7 @@ void run_test()
 
     ASSERT_(stateOpt.has_value());
 
-    double y, p, r;
-    stateOpt->pose.mean.getYawPitchRoll(y, p, r);
+    const auto [y, p, r] = stateOpt->pose.mean.getYawPitchRoll();
 
     std::cout << "Final Estimated Pitch: " << mrpt::RAD2DEG(p) << " deg\n";
     std::cout << "Final Estimated Roll:  " << mrpt::RAD2DEG(r) << " deg\n";

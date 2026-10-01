@@ -32,7 +32,7 @@ void run_navstate(const std::string& paramsFile, const std::string& rawlogFile)
     std::cout << "Reading dataset from: " << rawlogFile << std::endl;
 
     mrpt::obs::CRawlog dataset;
-    dataset.loadFromRawLogFile(rawlogFile);
+    ASSERTMSG_(dataset.loadFromRawLogFile(rawlogFile), "Error reading rawlog file");
 
     const std::string frame_id = "map";
 

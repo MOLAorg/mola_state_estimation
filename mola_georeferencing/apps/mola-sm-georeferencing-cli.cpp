@@ -95,7 +95,7 @@ void run_sm_georef()
 
     logger.logFmt(mrpt::system::LVL_INFO, "Reading simplemap from: '%s'...", filSM.c_str());
 
-    sm.loadFromFile(filSM);
+    ASSERTMSG_(sm.loadFromFile(filSM), "Error reading simplemap file");
 
     logger.logFmt(mrpt::system::LVL_INFO, "Done read simplemap with %zu keyframes.", sm.size());
 

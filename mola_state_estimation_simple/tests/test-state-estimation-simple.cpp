@@ -284,8 +284,7 @@ void test_imu_angular_velocity()
 
     ASSERT_(stateOpt.has_value());
 
-    double y, p, r;
-    stateOpt->pose.mean.getYawPitchRoll(y, p, r);
+    const auto [y, p, r] = stateOpt->pose.mean.getYawPitchRoll();
 
     // Logic check: The class uses the *last stored twist* to extrapolate from *last stored pose*.
     // Last pose t=0.0. Last twist is the one set by IMU. Target t=1.1. dt=1.1.
@@ -331,8 +330,7 @@ void test_planar_motion()
     const auto& p = stateOpt->pose.mean;
     ASSERT_NEAR_(p.z(), 0.0, 1e-5);
 
-    double y, pit, rol;
-    p.getYawPitchRoll(y, pit, rol);
+    const auto [y, pit, rol] = p.getYawPitchRoll();
     ASSERT_NEAR_(pit, 0.0, 1e-5);
     ASSERT_NEAR_(rol, 0.0, 1e-5);
     ASSERT_NEAR_(y, 1.0, 1e-5);  // Yaw should be preserved
@@ -1464,8 +1462,7 @@ void test_real_measurement_survives_first_fuse_pose()
 
         auto s = est.estimated_navstate(mrpt::Clock::fromDouble(1.0), "map");
         ASSERT_(s.has_value());
-        double y, p, r;
-        s->pose.mean.getYawPitchRoll(y, p, r);
+        const auto [y, p, r] = s->pose.mean.getYawPitchRoll();
         ASSERT_NEAR_(y, 2.0, 1e-3);
     }
 
