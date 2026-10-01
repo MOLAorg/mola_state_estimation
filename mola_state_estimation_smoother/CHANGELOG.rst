@@ -2,6 +2,9 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+
 3.0.1 (2026-09-28)
 ------------------
 * Smoother: work with GTSAM 4.3 (Kilted, Lyrical, Rolling)
