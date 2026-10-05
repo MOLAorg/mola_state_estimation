@@ -41,7 +41,9 @@ for any time :math:`t` close to the latest measurements, in any of the frames it
 - Each estimate comes with a covariance, so it can be used as a properly weighted prior
   by other modules.
 
-**How?** Both estimators share a *constant velocity* motion model between measurements:
+**How?** By default, both estimators share a *constant velocity* motion model between
+measurements (``StateEstimationSimple`` can optionally integrate the IMU instead, see
+``imu_propagation`` in :ref:`section 4 <mola_sta_est_simple>`):
 
 .. math::
 
@@ -536,8 +538,9 @@ Algorithm:
 - **Velocity filter** (``velocity_filter_enabled``, default on): each twist component is
   smoothed by a scalar Kalman filter, with process noise from
   ``sigma_random_walk_acceleration_*`` and measurement noise from each input.
-- **Prediction:** ``estimated_navstate(t)`` applies the constant velocity model from the last pose,
-  with a diagonal covariance growing with :math:`\Delta t` since the last pose update:
+- **Prediction:** ``estimated_navstate(t)`` applies the constant velocity model from the last pose
+  (or integrates the IMU, if ``imu_propagation`` is enabled), with a diagonal covariance growing
+  with :math:`\Delta t` since the last pose update:
 
   .. math::
 
@@ -546,7 +549,10 @@ Algorithm:
      \sigma^2_{rot} = \sigma^2_{\text{rel,ang}} + (\sigma_{a,\text{ang}}\,\Delta t)^2
 
   with ``sigma_relative_pose_linear/angular`` (:math:`\sigma_{\text{rel}}`, a constant floor)
-  and ``sigma_random_walk_acceleration_linear/angular`` (:math:`\sigma_a`).
+  and ``sigma_random_walk_acceleration_linear/angular`` (:math:`\sigma_a`). Note the second term
+  is an empirical heuristic, not a strict propagation of acceleration noise
+  (:math:`\sigma_a\,\Delta t` has units of velocity): in practice, the floor dominates for the
+  short prediction times a front end uses.
 - The ``frame_id`` argument is ignored: all poses are assumed to be in the same frame.
 
 Main parameters (default values from
