@@ -272,7 +272,9 @@ workspace overlay.
 
 Runs inside `mola_launcher`, with sensors bridged from ROS 2.
 `ros2-state-estimator.launch.py` takes `imu_topic_name`, `gnss_topic_name` and
-`odom{1,2,3}_topic` (+ `_label`), all empty (disabled) by default. The fused
+`odom{1,2,3}_topic` (+ `_label`), all empty (disabled) by default; its
+`navstate_*` args are empty by default, meaning "use the params YAML value".
+`ros2-fuse-two-odometries.launch.py` uses the same topic argument names. The fused
 `map -> base_link` pose is advertised; the bridge publishes it to `/tf`.
 
 Optional extra outputs (default off, distinct `method` suffixes):

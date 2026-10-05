@@ -26,23 +26,23 @@ def generate_launch_description():
     # ~~~~~~~~~~~~~~~~~~~~~~~~
     navstate_kinematic_model_arg = DeclareLaunchArgument(
         "navstate_kinematic_model",
-        default_value="KinematicModel::ConstantVelocity",
-        description="Kinematic model. Options: KinematicModel::ConstantVelocity, KinematicModel::Tricycle.")
+        default_value="",
+        description="Kinematic model. Options: KinematicModel::ConstantVelocity, KinematicModel::Tricycle. Empty: use the params YAML value.")
 
     navstate_sliding_window_sec_arg = DeclareLaunchArgument(
         "navstate_sliding_window_sec",
-        default_value="2.5",
-        description="Time window to keep past observations [seconds].")
+        default_value="",
+        description="Time window to keep past observations [seconds]. Empty: use the params YAML value.")
 
     navstate_sigma_random_walk_linacc_arg = DeclareLaunchArgument(
         "navstate_sigma_random_walk_linacc",
-        default_value="1.0",
-        description="Random walk linear acceleration uncertainty [m/s²].")
+        default_value="",
+        description="Random walk linear acceleration uncertainty [m/s²]. Empty: use the params YAML value.")
 
     navstate_sigma_random_walk_angacc_arg = DeclareLaunchArgument(
         "navstate_sigma_random_walk_angacc",
-        default_value="10.0",
-        description="Random walk angular acceleration uncertainty [rad/s²].")
+        default_value="",
+        description="Random walk angular acceleration uncertainty [rad/s²]. Empty: use the params YAML value.")
 
     estimate_geo_reference_arg = DeclareLaunchArgument(
         "estimate_geo_reference",
@@ -70,15 +70,28 @@ def generate_launch_description():
         "odom3_label", default_value="odom3",
         description="Sensor label for 3rd odometry source")
 
-    smoother_env_vars = GroupAction(actions=[
-        SetEnvironmentVariable('MOLA_NAVSTATE_KINEMATIC_MODEL',
-                               LaunchConfiguration('navstate_kinematic_model')),
-        SetEnvironmentVariable('MOLA_NAVSTATE_SLIDING_WINDOW_SEC',
-                               LaunchConfiguration('navstate_sliding_window_sec')),
-        SetEnvironmentVariable('MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC',
-                               LaunchConfiguration('navstate_sigma_random_walk_linacc')),
-        SetEnvironmentVariable('MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC',
-                               LaunchConfiguration('navstate_sigma_random_walk_angacc')),
+    def _set_optional_smoother_env_vars(context, *args, **kwargs):
+        # Only override the params YAML when an argument is given: an env var
+        # set to an empty string would replace the YAML default with "".
+        arg_to_env = {
+            'navstate_kinematic_model': 'MOLA_NAVSTATE_KINEMATIC_MODEL',
+            'navstate_sliding_window_sec': 'MOLA_NAVSTATE_SLIDING_WINDOW_SEC',
+            'navstate_sigma_random_walk_linacc': 'MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC',
+            'navstate_sigma_random_walk_angacc': 'MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC',
+        }
+        actions = []
+        for arg, env in arg_to_env.items():
+            value = LaunchConfiguration(arg).perform(context).strip()
+            if value:
+                actions.append(SetEnvironmentVariable(name=env, value=value))
+        return actions
+
+    optional_smoother_env_vars = OpaqueFunction(
+        function=_set_optional_smoother_env_vars)
+
+    # A plain list, not a GroupAction: a scoped group would restore the
+    # environment before mola-cli is launched.
+    smoother_env_vars = [
         SetEnvironmentVariable('MOLA_ESTIMATE_GEO_REF',
                                LaunchConfiguration('estimate_geo_reference')),
         SetEnvironmentVariable('ODOM1_TOPIC', LaunchConfiguration('odom1_topic')),
@@ -87,7 +100,7 @@ def generate_launch_description():
         SetEnvironmentVariable('ODOM2_LABEL', LaunchConfiguration('odom2_label')),
         SetEnvironmentVariable('ODOM3_TOPIC', LaunchConfiguration('odom3_topic')),
         SetEnvironmentVariable('ODOM3_LABEL', LaunchConfiguration('odom3_label')),
-    ])
+    ]
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~
     # BridgeROS2 arguments
@@ -225,7 +238,8 @@ def generate_launch_description():
         odom1_topic_arg, odom1_label_arg,
         odom2_topic_arg, odom2_label_arg,
         odom3_topic_arg, odom3_label_arg,
-        smoother_env_vars,
+        *smoother_env_vars,
+        optional_smoother_env_vars,
         # BridgeROS2
         enforce_planar_motion_arg, enforce_planar_motion_env,
         forward_ros_tf_odom_to_mola_arg, forward_ros_tf_odom_to_mola_env,
