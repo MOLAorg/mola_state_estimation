@@ -55,6 +55,8 @@ params:
     reference_frame_name: "map"
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 3.0
+    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_ang: 0.005
     max_time_to_use_velocity_model: 2.0
     min_time_difference_to_create_new_frame: 0.05
     sigma_random_walk_acceleration_linear: 1.0

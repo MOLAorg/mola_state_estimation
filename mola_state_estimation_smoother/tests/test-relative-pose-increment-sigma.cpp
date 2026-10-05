@@ -14,8 +14,9 @@
 
 /**
  * @file   test-relative-pose-increment-sigma.cpp
- * @brief  Verifies relative_pose_increment_sigma_* replaces the covariance a
- *         drifting pose source supplies, for its increment factors.
+ * @brief  Verifies the increments of a fuse_pose() odometry frame carry the
+ *         configured relative_pose_increment_sigma_*, whatever covariance the
+ *         source supplies, and that those sigmas are required.
  * @author Jose Luis Blanco Claraco
  */
 
@@ -48,7 +49,7 @@ constexpr double DURATION     = 3.0;  // [s]
 constexpr double VELOCITY_X   = 1.0;  // [m/s]
 constexpr size_t NUM_READINGS = static_cast<size_t>(DURATION / POSE_DT) + 1;
 
-std::string params_yaml(double incrementSigmaLin)
+std::string params_yaml(const std::string& incrementSigmaLines)
 {
     return
         R"###(
@@ -64,24 +65,26 @@ params:
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
     estimate_geo_reference: false
-    relative_factors_frame_ids_re: "odom_wheels"
-    relative_pose_increment_sigma_lin: )###" +
-        std::to_string(incrementSigmaLin) + R"###(
-    relative_pose_increment_sigma_ang: 0.0
-)###";
+)###" + incrementSigmaLines;
+}
+
+std::string sigma_lines(double incrementSigmaLin)
+{
+    return "    relative_pose_increment_sigma_lin: " + std::to_string(incrementSigmaLin) +
+           "\n    relative_pose_increment_sigma_ang: 0.01\n";
 }
 
 /// Returns the reported position sigma at the last keyframe. `correlated`
 /// makes the source covariance carry the strong x-y and x-yaw correlations an
 /// absolute dead-reckoned pose typically has.
-double run(double incrementSigmaLin, bool correlated = false)
+double run(double incrementSigmaLin, double sourceSigma, bool correlated = false)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     if (VERBOSE)
     {
         est.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
-    est.initialize(mrpt::containers::yaml::FromText(params_yaml(incrementSigmaLin)));
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(sigma_lines(incrementSigmaLin))));
 
     mrpt::Clock::time_point lastStamp;
     for (size_t i = 0; i < NUM_READINGS; i++)
@@ -95,7 +98,7 @@ double run(double incrementSigmaLin, bool correlated = false)
             mrpt::poses::CPose3D::FromXYZYawPitchRoll(VELOCITY_X * t, 0.0, 0.0, 0.0, 0.0, 0.0);
         for (int k = 0; k < 3; k++)
         {
-            pdf.cov(k, k) = SOURCE_SIGMA * SOURCE_SIGMA;
+            pdf.cov(k, k) = sourceSigma * sourceSigma;
         }
         for (int k = 3; k < 6; k++)
         {
@@ -104,9 +107,9 @@ double run(double incrementSigmaLin, bool correlated = false)
         if (correlated)
         {
             // indices: x,y,z,yaw,pitch,roll
-            pdf.cov(0, 1) = pdf.cov(1, 0) = 0.9 * SOURCE_SIGMA * SOURCE_SIGMA;
-            pdf.cov(0, 3) = pdf.cov(3, 0) = 0.8 * SOURCE_SIGMA * 0.05;
-            pdf.cov(1, 3) = pdf.cov(3, 1) = 0.7 * SOURCE_SIGMA * 0.05;
+            pdf.cov(0, 1) = pdf.cov(1, 0) = 0.9 * sourceSigma * sourceSigma;
+            pdf.cov(0, 3) = pdf.cov(3, 0) = 0.8 * sourceSigma * 0.05;
+            pdf.cov(1, 3) = pdf.cov(3, 1) = 0.7 * sourceSigma * 0.05;
             // A valid covariance, so any failure is the estimator's:
             ASSERT_GT_(pdf.cov.asEigen().eigenvalues().real().minCoeff(), 0.0);
         }
@@ -121,40 +124,57 @@ double run(double incrementSigmaLin, bool correlated = false)
     return std::sqrt(cov(0, 0));
 }
 
+bool initialize_throws(const std::string& incrementSigmaLines)
+{
+    mola::state_estimation_smoother::StateEstimationSmoother est;
+    try
+    {
+        est.initialize(mrpt::containers::yaml::FromText(params_yaml(incrementSigmaLines)));
+    }
+    catch (const std::exception&)
+    {
+        return true;
+    }
+    return false;
+}
+
 void run_test()
 {
-    // Off: the increment factors carry the source's own 1 m sigma.
-    const double sigmaSourceCov = run(0.0);
-    // On: the increments assert what the platform actually supports.
-    const double sigmaAsserted = run(INCREMENT_SIGMA);
+    // The source covariance is that of its absolute pose, irrelevant to one
+    // increment: a loose and a tight one must give the same result.
+    const double sigmaLooseSource = run(INCREMENT_SIGMA, SOURCE_SIGMA);
+    const double sigmaTightSource = run(INCREMENT_SIGMA, 0.001);
+    // The configured per-increment sigma is what drives the uncertainty.
+    const double sigmaLooserIncr = run(4 * INCREMENT_SIGMA, SOURCE_SIGMA);
 
-    std::cout << "reported sigma_x, source covariance: " << sigmaSourceCov << " m\n";
-    std::cout << "reported sigma_x, asserted 15 mm:    " << sigmaAsserted << " m\n";
+    std::cout << "reported sigma_x, 15 mm increments, 1 m source:  " << sigmaLooseSource << " m\n";
+    std::cout << "reported sigma_x, 15 mm increments, 1 mm source: " << sigmaTightSource << " m\n";
+    std::cout << "reported sigma_x, 60 mm increments, 1 m source:  " << sigmaLooserIncr << " m\n";
 
-    ASSERT_(std::isfinite(sigmaSourceCov));
-    ASSERT_(std::isfinite(sigmaAsserted));
+    ASSERT_(std::isfinite(sigmaLooseSource));
+    ASSERT_(std::isfinite(sigmaTightSource));
+    ASSERT_(std::isfinite(sigmaLooserIncr));
 
-    // Asserting a tight per-increment accuracy must make the graph's own
-    // opinion of the trajectory correspondingly tighter. Without the override
-    // the same chain of increments is nearly uninformative.
-    ASSERT_LT_(sigmaAsserted, sigmaSourceCov);
-    ASSERTMSG_(
-        sigmaAsserted * 3 < sigmaSourceCov, "The override must dominate, not merely nudge: got " +
-                                                std::to_string(sigmaAsserted) + " against " +
-                                                std::to_string(sigmaSourceCov));
+    ASSERT_LT_(std::abs(sigmaLooseSource - sigmaTightSource), 0.1 * sigmaLooseSource);
+    ASSERT_GT_(sigmaLooserIncr, 3 * sigmaLooseSource);
 
-    // Sanity: the asserted value should land in the same order of magnitude as
-    // what was asserted, not collapse to zero or stay at the source's number.
-    ASSERT_LT_(sigmaAsserted, 10 * INCREMENT_SIGMA);
+    // Sanity: the result should land in the same order of magnitude as what
+    // was asserted, not collapse to zero or reach the source's number.
+    ASSERT_LT_(sigmaLooseSource, 10 * INCREMENT_SIGMA);
 
-    // A correlated source covariance: the override must drop the source's
-    // cross terms along with its diagonal. Keeping them next to a much smaller
-    // diagonal gives an indefinite matrix, which the solver cannot factor.
-    const double sigmaCorrelated = run(INCREMENT_SIGMA, true);
-    std::cout << "reported sigma_x, asserted 15 mm, correlated source: " << sigmaCorrelated
+    // A correlated source covariance must not leak into the increments either:
+    // its cross terms next to a much smaller diagonal would be indefinite.
+    const double sigmaCorrelated = run(INCREMENT_SIGMA, SOURCE_SIGMA, true);
+    std::cout << "reported sigma_x, 15 mm increments, correlated source: " << sigmaCorrelated
               << " m\n";
     ASSERT_(std::isfinite(sigmaCorrelated));
-    ASSERT_LT_(std::abs(sigmaCorrelated - sigmaAsserted), 0.5 * sigmaAsserted);
+    ASSERT_LT_(std::abs(sigmaCorrelated - sigmaLooseSource), 0.5 * sigmaLooseSource);
+
+    // The per-increment sigmas are required, and must be > 0:
+    ASSERT_(initialize_throws(""));
+    ASSERT_(initialize_throws("    relative_pose_increment_sigma_lin: 0.01\n"));
+    ASSERT_(initialize_throws(sigma_lines(0.0)));
+    ASSERT_(!initialize_throws(sigma_lines(INCREMENT_SIGMA)));
 }
 
 }  // namespace

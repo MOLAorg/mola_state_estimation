@@ -52,16 +52,16 @@ def generate_launch_description():
         name='ODOM2_LABEL', value=LaunchConfiguration('odom2_label'))
 
     imu_topic_arg = DeclareLaunchArgument(
-        "imu_topic", default_value="/imu",
+        "imu_topic_name", default_value="/imu",
         description="IMU topic for gravity alignment (empty to disable)")
     imu_env = SetEnvironmentVariable(
-        name='IMU_TOPIC', value=LaunchConfiguration('imu_topic'))
+        name='IMU_TOPIC', value=LaunchConfiguration('imu_topic_name'))
 
     gnss_topic_arg = DeclareLaunchArgument(
-        "gnss_topic", default_value="",
+        "gnss_topic_name", default_value="",
         description="GNSS topic for geo-referencing (empty to disable)")
     gnss_env = SetEnvironmentVariable(
-        name='GNSS_TOPIC', value=LaunchConfiguration('gnss_topic'))
+        name='GNSS_TOPIC', value=LaunchConfiguration('gnss_topic_name'))
 
     use_mola_gui_arg = DeclareLaunchArgument(
         "use_mola_gui", default_value="True",

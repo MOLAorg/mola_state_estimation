@@ -2,7 +2,7 @@
 #                   SLAM system definition for MOLA
 #
 # Central mola-cli launch file for the StateEstimationSmoother with BridgeROS2.
-# Supports up to 4 odometry sources, IMU, and GNSS — all controlled via
+# Supports up to 4 odometry sources, IMU, and GNSS - all controlled via
 # environment variables.  Unused slots default to an empty topic and are
 # silently skipped by BridgeROS2.
 #
@@ -12,7 +12,7 @@
 #   ODOM1_TOPIC=/wheel_odom ODOM2_TOPIC=/visual_odom IMU_TOPIC=/imu \
 #     mola-cli state_estimator_ros2.yaml
 #
-# Environment variables (with defaults — empty means disabled):
+# Environment variables (with defaults - empty means disabled):
 #   ODOM1_TOPIC / ODOM1_LABEL   - 1st odometry topic / sensor label
 #   ODOM2_TOPIC / ODOM2_LABEL   - 2nd odometry topic / sensor label
 #   ODOM3_TOPIC / ODOM3_LABEL   - 3rd odometry topic / sensor label
@@ -39,7 +39,7 @@ modules:
   # State Estimation Smoother
   # =====================
   - name: state_estimation
-    type: mola::mola_state_estimation_smoother::StateEstimationSmoother
+    type: mola::state_estimation_smoother::StateEstimationSmoother
     verbosity_level: "${MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR|INFO}"
     raw_data_source: "ros2_bridge"
 

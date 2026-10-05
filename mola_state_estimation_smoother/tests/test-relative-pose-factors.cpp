@@ -14,19 +14,16 @@
 
 /**
  * @file   test-relative-pose-factors.cpp
- * @brief  Fusing a DRIFTING pose source as increments instead of as absolute
- *         poses (Parameters::relative_factors_frame_ids_re).
+ * @brief  fuse_pose() odometry frames are fused as increments, so a source
+ *         whose own frame drifts does not drag the fused estimate.
  *
  * A source that integrates its own increments -- visual odometry being the
  * motivating case -- has an accurate increment and an absolute pose, in its own
- * frame, that walks away from any rigid relation to {map}. Fusing it with an
- * absolute-pose factor whose covariance is the (small) per-increment one
- * asserts something false and drags the fused estimate with it. The relative
- * formulation asserts only the increment, which is what the source actually
- * knows.
+ * frame, that walks away from any rigid relation to {map}. Only the increment
+ * is asserted, which is what the source actually knows.
  *
- * This test drives the very same measurements through both formulations and
- * checks that the relative one is the better of the two.
+ * This test drives the same measurements with and without a sliding source
+ * frame, and checks that the fused motion is insensitive to it.
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
@@ -59,7 +56,7 @@ constexpr double REF_NOISE_ANG = 0.002;  // [rad] per step
 constexpr double DRIFT_NOISE_XYZ = 0.005;  // [m] per step
 constexpr double DRIFT_NOISE_ANG = 0.0005;  // [rad] per step
 
-std::string navStateParams(const std::string& relativeFramesRe)
+std::string navStateParams()
 {
     return R"###(# Config for Parameters
 params:
@@ -69,6 +66,8 @@ params:
 
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 5.0
+    relative_pose_increment_sigma_lin: 0.01
+    relative_pose_increment_sigma_ang: 0.001
     max_time_to_use_velocity_model: 2.0
 
     sigma_random_walk_acceleration_linear: 2.0
@@ -77,32 +76,29 @@ params:
     sigma_integrator_orientation: 0.10
 
     estimate_geo_reference: false
-    relative_factors_frame_ids_re: ")###" +
-           relativeFramesRe + R"###("
 )###";
 }
 
-/** Runs the identical measurement stream through the estimator, with the
- *  drifting source fused either relatively or absolutely, and returns the RMS
- *  position error of the fused estimate against ground truth. */
-double run(bool drifterIsRelative, double driftFrameRate)
+/** Runs the measurement stream through the estimator, with the second source's
+ *  frame sliding at driftFrameRate, and returns the RMS error of the fused
+ *  motion against ground truth. */
+double run(double driftFrameRate)
 {
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     if (VERBOSE)
     {
         stateEst.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
-    stateEst.initialize(mrpt::containers::yaml::FromText(
-        navStateParams(drifterIsRelative ? "drifting_odom"s : ""s)));
+    stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams()));
 
-    // Same seed for both runs: the two formulations must see the same data.
+    // Same seed for both runs: they must see the same data.
     auto& rng = mrpt::random::getRandomGenerator();
     rng.randomize(1234);
 
     mrpt::poses::CPose3D gtPose  = mrpt::poses::CPose3D::Identity();
     mrpt::poses::CPose3D refOdom = mrpt::poses::CPose3D::Identity();
     // Start the drifting source somewhere else entirely: its frame transform is
-    // for the estimator to work out, in both formulations.
+    // for the estimator to work out.
     mrpt::poses::CPose3D driftOdom =
         mrpt::poses::CPose3D::FromXYZYawPitchRoll(7.0, -3.0, 0.5, 30.0_deg, 0.0_deg, 0.0_deg);
 
@@ -124,7 +120,7 @@ double run(bool drifterIsRelative, double driftFrameRate)
             gtPose = gtPose + gtDelta;
         }
 
-        // Reference source: noisy increments, fused as an absolute pose.
+        // Reference source: noisier increments, in a fixed frame.
         auto refDelta = gtDelta;
         refDelta.x_incr(rng.drawGaussian1D(0, REF_NOISE_XYZ));
         refDelta.y_incr(rng.drawGaussian1D(0, REF_NOISE_XYZ));
@@ -155,8 +151,7 @@ double run(bool drifterIsRelative, double driftFrameRate)
         // 5 mm perturbation, inside the sigma quoted below; across the
         // estimator's 5 s window it is 0.25 m, fifty times that sigma, and no
         // single rigid transform can absorb it. That gap -- small per
-        // increment, unbounded once integrated -- IS drift, and it is what an
-        // absolute-pose factor cannot represent.
+        // increment, unbounded once integrated -- IS drift.
         const mrpt::poses::CPose3D driftFrame = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
             driftFrameRate * T * static_cast<double>(i), 0, 0, 0, 0, 0);
 
@@ -220,35 +215,20 @@ int main()
     try
     {
         // The same source, with and without a slowly sliding frame of its own.
-        // 0.05 m/s perturbs one increment by 5 mm -- inside the sigma the source
-        // declares -- while displacing its absolute pose by 0.25 m across the
-        // estimator's 5 s window, fifty times that sigma.
-        const double absNoDrift = run(/*relative=*/false, 0.0);
-        const double absDrift   = run(/*relative=*/false, 0.05);
-        const double relNoDrift = run(/*relative=*/true, 0.0);
-        const double relDrift   = run(/*relative=*/true, 0.05);
+        // 0.05 m/s perturbs one increment by 5 mm while displacing its absolute
+        // pose by 0.25 m across the estimator's 5 s window.
+        const double relNoDrift = run(0.0);
+        const double relDrift   = run(0.05);
 
-        std::cout << "[relative-pose-factors] ABSOLUTE: no drift = " << absNoDrift
-                  << " m, with drift = " << absDrift << " m\n";
-        std::cout << "[relative-pose-factors] RELATIVE: no drift = " << relNoDrift
+        std::cout << "[relative-pose-factors] no drift = " << relNoDrift
                   << " m, with drift = " << relDrift << " m\n";
 
-        // What the formulation buys is INVARIANCE to the source's absolute
-        // drift, not a lower floor: it asserts only the increment, which the
-        // drift barely touches. The absolute formulation asserts one rigid
-        // frame transform, which the drift makes false, so it degrades.
-        ASSERTMSG_(
-            absDrift > 1.5 * absNoDrift,
-            mrpt::format(
-                "The absolute formulation should degrade under the source's drift "
-                "(%.4f -> %.4f m)",
-                absNoDrift, absDrift));
-
+        // Only increments are asserted, which the drift barely touches.
         ASSERTMSG_(
             std::abs(relDrift - relNoDrift) < 0.2 * relNoDrift,
             mrpt::format(
-                "The relative formulation should be insensitive to the source's absolute "
-                "drift (%.4f -> %.4f m)",
+                "The fused motion should be insensitive to the source's absolute drift "
+                "(%.4f -> %.4f m)",
                 relNoDrift, relDrift));
 
         // ...and it must still track, not merely be indifferent.

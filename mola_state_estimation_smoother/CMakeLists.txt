@@ -83,6 +83,7 @@ install(
     mola-cli-launchs
     ros2-launchs
     params
+    rviz2
   DESTINATION
     share/${PROJECT_NAME}
 )

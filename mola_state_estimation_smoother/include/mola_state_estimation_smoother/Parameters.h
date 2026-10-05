@@ -200,37 +200,6 @@ class Parameters
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
     /** @} */
 
-    /** Regex of odometry frame_ids (see fuse_pose()) whose poses are fused as
-     *  RELATIVE increments between consecutive keyframes, plus one absolute
-     *  factor added once to resolve T_map_to_odom_i, instead of as an absolute
-     *  pose per reading. This is how wheel odometry is always fused,
-     *  generalized to any fuse_pose() source.
-     *
-     *  It is what a DRIFTING source needs. An absolute-pose factor asserts that
-     *  the source's whole trajectory relates to {map} by one rigid transform,
-     *  which only holds while the drift accumulated across the sliding window
-     *  stays below the covariance given; a relative factor asserts only the
-     *  increment, which is drift-free by construction. Visual odometry is the
-     *  motivating case: its per-increment accuracy can be excellent while its
-     *  absolute pose in its own frame walks away steadily.
-     *
-     *  In relative mode the covariance passed to fuse_pose() is read as the
-     *  uncertainty of ONE INCREMENT, not of the absolute pose.
-     *
-     *  It is a trade, not a free win, and which way it goes depends on how much
-     *  the source drifts across the sliding window. Measured on the synthetic
-     *  case in test-relative-pose-factors: with a source whose frame slides
-     *  0.05 m/s (0.25 m across a 5 s window, fifty times its declared
-     *  per-increment sigma) the absolute formulation degrades by 2.3x while the
-     *  relative one does not move at all -- but with no drift at all the
-     *  absolute formulation is the better of the two, because N absolute poses
-     *  carry more information than N increments. Use this for a source that
-     *  really does drift; leave it off otherwise.
-     *
-     *  Empty (the default) keeps every source on the absolute formulation.
-     */
-    std::string relative_factors_frame_ids_re;
-
     /** High-rate same-sensor decimation for fuse_pose() sources. If > 0,
      * readings of a given frame_id arriving less than this many seconds after
      * the last *kept* one of that same frame_id are dropped before they reach
@@ -238,10 +207,10 @@ class Parameters
      * packs the sliding window with keyframes that carry no new information,
      * and the solver pays for every one of them.
      *
-     * Nothing is lost under the relative formulation: a dropped reading does
-     * not advance the source's chain, so the next kept one asserts the whole
-     * merged span as a single increment. Under the absolute formulation there
-     * is nothing to accumulate either, since each reading stands alone.
+     * Nothing is lost for odometry frames: a dropped reading does not advance
+     * the source's chain of increments, so the next kept one asserts the whole
+     * merged span as a single increment. A "map" pose stands alone, so there is
+     * nothing to accumulate for it either.
      *
      * It applies to EVERY fuse_pose() source, e.g. LiDAR odometry too. Keep
      * it well below the period of any source that must not be thinned: at
@@ -254,26 +223,25 @@ class Parameters
      */
     double pose_min_sample_period = 0.0;  // [s]
 
-    /** \name Known per-increment accuracy of a relative fuse_pose() source
+    /** \name Per-increment accuracy of fuse_pose() odometry frames
+     *  Poses given in any frame other than reference_frame_name come from a
+     *  drifting source (wheel, visual or LiDAR odometry), so they are fused as
+     *  a chain of increments between consecutive keyframes, plus one absolute
+     *  factor on the first reading to resolve T_map_to_odom_i. The covariance
+     *  such a source publishes is that of its absolute dead-reckoned pose,
+     *  which grows without bound and says nothing about one increment, so the
+     *  increments' uncertainty is defined here instead.
      *  @{ */
 
-    /** If > 0, this REPLACES the linear part of the covariance a relative
-     * fuse_pose() source supplies, for the increment factors only. A drifting
-     * source usually publishes the covariance of its absolute dead-reckoned
-     * pose, which grows without bound and says nothing about the quality of
-     * one increment; when the per-increment accuracy is known independently
-     * (from the platform's kinematics, say), asserting it here is both simpler
-     * and far more informative than trusting the accumulated number.
-     *
-     * The value describes ONE increment, whatever it spans; motion-dependent
-     * error belongs in relative_pose_increment_sigma_per_sqrt_meter, which
-     * scales with the increment and so with pose_min_sample_period. 0 keeps the
-     * source's own covariance. Its correlations with the angular part are
-     * discarded too. [m]
+    /** Linear sigma asserted for ONE increment, whatever it spans. Required,
+     * must be > 0. Motion-dependent error belongs in
+     * relative_pose_increment_sigma_per_sqrt_meter, which scales with the
+     * increment and so with pose_min_sample_period. [m]
      */
     double relative_pose_increment_sigma_lin = 0.0;  // [m]
 
-    /** Angular counterpart of relative_pose_increment_sigma_lin. [rad] */
+    /** Angular counterpart of relative_pose_increment_sigma_lin. Required, must
+     * be > 0. [rad] */
     double relative_pose_increment_sigma_ang = 0.0;  // [rad]
 
     /** Growth of the per-increment linear uncertainty with the distance the
@@ -283,14 +251,12 @@ class Parameters
      * moving, independently along the path. Because variance, not sigma, grows
      * linearly with distance, the total asserted over a path does not depend on
      * how many increments it is split into (keyframe rate,
-     * pose_min_sample_period). Requires relative_pose_increment_sigma_lin > 0,
-     * which becomes the floor asserted while standing still. 0 disables it.
-     * [m/sqrt(m)] */
+     * pose_min_sample_period). relative_pose_increment_sigma_lin is the floor
+     * asserted while standing still. 0 disables it. [m/sqrt(m)] */
     double relative_pose_increment_sigma_per_sqrt_meter = 0.0;
 
     /** Angular counterpart of relative_pose_increment_sigma_per_sqrt_meter,
-     * growing with the rotated angle. Requires relative_pose_increment_sigma_ang
-     * > 0. [rad/sqrt(rad)] */
+     * growing with the rotated angle. [rad/sqrt(rad)] */
     double relative_pose_increment_sigma_per_sqrt_rad = 0.0;
 
     /** If > 0, fuse_pose() factors, both absolute and relative, are wrapped in

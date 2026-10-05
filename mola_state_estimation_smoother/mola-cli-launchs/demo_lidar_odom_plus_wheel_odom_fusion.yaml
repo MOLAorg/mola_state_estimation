@@ -24,6 +24,9 @@
 #    MOLA_LIDAR_TOPIC   - LiDAR PointCloud2 topic (default: /ouster/points)
 #    WHEEL_ODOM_TOPIC   - wheel odometry topic     (default: /wheel_odom)
 #    IMU_TOPIC          - IMU topic                (default: /imu)
+#    GNSS_TOPIC         - GNSS topic               (default: empty, disabled)
+#    MOLA_STATE_ESTIMATOR_YAML - smoother parameters
+#                         (default: ../params/state-estimation-smoother.yaml)
 # -----------------------------------------------------------------------------
 
 modules:
@@ -44,40 +47,20 @@ modules:
     type: mola::LidarOdometry
     verbosity_level: ${MOLA_VERBOSITY_MOLA_LO|INFO}
     raw_data_source: "ros2_bridge"
-    params: "${MOLA_ODOMETRY_PIPELINE_YAML|../../mola_lidar_odometry/pipelines/lidar3d-default.yaml}"
+    params: "${MOLA_ODOMETRY_PIPELINE_YAML|$(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/pipelines/lidar3d-default.yaml}"
 
   # =====================
   # State Estimation Smoother
   # =====================
   - name: state_estimation
-    type: mola::mola_state_estimation_smoother::StateEstimationSmoother
-    verbosity_level: ${MOLA_VERBOSITY_STATE_ESTIMATOR|INFO}
+    type: mola::state_estimation_smoother::StateEstimationSmoother
+    verbosity_level: "${MOLA_VERBOSITY_MOLA_STATE_ESTIMATOR|INFO}"
     raw_data_source: "ros2_bridge"
 
     execution_rate: ${MOLA_STATE_ESTIMATOR_PUBLISH_RATE|20}  # Hz
 
-    params:
-      vehicle_frame_name: "${MOLA_TF_BASE_LINK|base_link}"
-      reference_frame_name: "${MOLA_TF_MAP|map}"
-
-      kinematic_model: "${MOLA_NAVSTATE_KINEMATIC_MODEL|KinematicModel::ConstantVelocity}"
-      sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|2.5}
-      min_time_difference_to_create_new_frame: 0.01
-      max_time_to_use_velocity_model: 0.75
-
-      sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC|1.0}
-      sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC|10.0}
-      sigma_integrator_position: 0.1
-      sigma_integrator_orientation: 1.0
-
-      # Accept all odometry labels (wheel_odom will arrive via onNewObservation,
-      # lidar_odom arrives directly via fuse_pose from LidarOdometry module):
-      do_process_odometry_labels_re: ".*"
-      do_process_imu_labels_re: ".*"
-      do_process_gnss_labels_re: ".*"
-
-      estimate_geo_reference: false
-      additional_isam2_update_steps: 3
+    # Smoother parameters (shared with the other launch files):
+    params: "${MOLA_STATE_ESTIMATOR_YAML|../params/state-estimation-smoother.yaml}"
 
   # =====================
   # ROS2 <-> MOLA Bridge
@@ -134,7 +117,7 @@ modules:
           use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
 
         # Optional GNSS
-        - topic: ${GNSS_TOPIC|/gps}
+        - topic: ${GNSS_TOPIC|}
           msg_type: NavSatFix
           output_sensor_label: "gps"
           fixed_sensor_pose: "0 0 0 0 0 0"

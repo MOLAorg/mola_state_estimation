@@ -15,8 +15,7 @@
 /**
  * @file   test-pose-keyframe-decimation.cpp
  * @brief  Verifies pose_min_sample_period thins a high-rate fuse_pose() source
- *         without losing motion, under both the absolute and the relative
- *         formulation.
+ *         without losing motion.
  * @author Jose Luis Blanco Claraco
  */
 
@@ -45,7 +44,7 @@ constexpr double DECIM_PERIOD = 0.10;  // [s]  (target ~10 Hz)
 constexpr size_t NUM_READINGS = static_cast<size_t>(DURATION / POSE_DT) + 1;  // 401
 constexpr double SOURCE_SIGMA = 0.02;  // [m]
 
-std::string params_yaml(double poseMinSamplePeriod, bool relative)
+std::string params_yaml(double poseMinSamplePeriod)
 {
     return
         R"###(
@@ -55,28 +54,28 @@ params:
     link_first_pose_to_reference_origin_sigma: 1e-6
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 10.0
+    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_ang: 0.005
     max_time_to_use_velocity_model: 2.0
     sigma_random_walk_acceleration_linear: 2.0
     sigma_random_walk_acceleration_angular: 1.0
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
     estimate_geo_reference: false
-    relative_factors_frame_ids_re: ")###" +
-        (relative ? ".*odom.*"s : ""s) + R"###("
     pose_min_sample_period: )###" +
         std::to_string(poseMinSamplePeriod) + "\n";
 }
 
 /// Feeds a constant-velocity pose source and returns {live kinematic links,
 /// final estimated map-frame x}.
-std::pair<size_t, double> run(double poseMinSamplePeriod, bool relative)
+std::pair<size_t, double> run(double poseMinSamplePeriod)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     if (VERBOSE)
     {
         est.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
-    est.initialize(mrpt::containers::yaml::FromText(params_yaml(poseMinSamplePeriod, relative)));
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(poseMinSamplePeriod)));
 
     mrpt::Clock::time_point lastStamp;
     for (size_t i = 0; i < NUM_READINGS; i++)
@@ -109,15 +108,13 @@ std::pair<size_t, double> run(double poseMinSamplePeriod, bool relative)
     return {links.size(), finalX};
 }
 
-void check(bool relative)
+void check()
 {
-    const char* mode = relative ? "relative" : "absolute";
+    const auto [linksFull, finalXFull]   = run(0.0);
+    const auto [linksDecim, finalXDecim] = run(DECIM_PERIOD);
 
-    const auto [linksFull, finalXFull]   = run(0.0, relative);
-    const auto [linksDecim, finalXDecim] = run(DECIM_PERIOD, relative);
-
-    std::cout << "[" << mode << "] links: " << linksFull << " -> " << linksDecim
-              << ", final x: " << finalXFull << " -> " << finalXDecim << "\n";
+    std::cout << "links: " << linksFull << " -> " << linksDecim << ", final x: " << finalXFull
+              << " -> " << finalXDecim << "\n";
 
     // The vehicle must still arrive at 2.0 m. A dropped reading that also lost
     // its motion would leave the estimate short by whole merged segments, so
@@ -139,7 +136,7 @@ void check(bool relative)
 void check_dropped_reading_refreshes_anchor()
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
-    est.initialize(mrpt::containers::yaml::FromText(params_yaml(0.05, false)));
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(0.05)));
 
     const auto makePdf = [](double x, double y)
     {
@@ -181,8 +178,7 @@ void check_dropped_reading_refreshes_anchor()
 
 void run_test()
 {
-    check(false);
-    check(true);
+    check();
     check_dropped_reading_refreshes_anchor();
 }
 

@@ -54,6 +54,8 @@ params:
     reference_frame_name: "map"
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 5.0
+    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_ang: 0.005
     max_time_to_use_velocity_model: 2.0
     sigma_random_walk_acceleration_linear: 1.0
     sigma_random_walk_acceleration_angular: 1.0
@@ -194,7 +196,9 @@ void test_odometry_frame_defines_map()
         maxErr = std::max(maxErr, err);
     }
     std::cout << "[odometry_frame_defines_map] max position error: " << maxErr << " m\n";
-    ASSERT_LT_(maxErr, 0.05);
+    // Odometry is fused as a chain of increments, whose errors add up as a
+    // random walk over the 12 s run:
+    ASSERT_LT_(maxErr, 0.15);
 }
 
 // Poses in {map} arrive only after the odometry source has been running for a

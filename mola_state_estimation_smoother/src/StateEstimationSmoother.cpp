@@ -246,24 +246,6 @@ gtsam::SharedNoiseModel with_huber(const gtsam::SharedNoiseModel& base, double t
         gtsam::noiseModel::mEstimator::Huber::Create(threshold), base);
 }
 
-/// Replaces the 3x3 diagonal block of a 6x6 pose covariance starting at
-/// `first` (0: translation, 3: rotation) with `variance * I`, and clears its
-/// correlations with the other block. Keeping cross terms that belong to a
-/// different (and possibly much larger) covariance would, in general, make the
-/// result indefinite.
-void replace_cov_block(mrpt::math::CMatrixDouble66& cov, int first, double variance)
-{
-    for (int i = first; i < first + 3; i++)
-    {
-        for (int j = 0; j < 6; j++)
-        {
-            cov(i, j) = 0;
-            cov(j, i) = 0;
-        }
-        cov(i, i) = variance;
-    }
-}
-
 /// Wheel-odometry increment with the uncertainty of the configured
 /// probabilistic motion model.
 mrpt::poses::CPose3DPDFGaussian odometry_increment_pdf(
@@ -1404,7 +1386,7 @@ void StateEstimationSmoother::fuse_pose_locked(
 
     // High-rate decimation: drop this reading if it arrives too soon after the
     // last kept one of the same source. Done BEFORE the keyframe is created, so
-    // a dropped reading costs nothing and, under the relative formulation,
+    // a dropped reading costs nothing and, for an odometry frame,
     // leaves the source's chain tail where it was: the next kept reading then
     // asserts the whole merged span as one increment, losing no motion.
     if (params_.pose_min_sample_period > 0)
@@ -1461,17 +1443,13 @@ void StateEstimationSmoother::fuse_pose_locked(
                 gtsam::noiseModel::Gaussian::Covariance(cov_out),
                 params_.pose_robust_huber_threshold));
     }
-    else if (
-        !params_.relative_factors_frame_ids_re.empty() &&
-        std::regex_match(
-            frame_id,
-            state_.relative_factors_frame_ids_re.get_regex(params_.relative_factors_frame_ids_re)))
+    else
     {
-        // Relative formulation, for a source that DRIFTS: assert only the
-        // increment between consecutive readings, plus one absolute factor
+        // An odometry frame: every such source drifts, so only the increments
+        // between consecutive readings are asserted, plus one absolute factor
         // added once to resolve T_map_to_odom_i. Mirrors
         // fuse_odometry_relative_locked(), generalized to any fuse_pose()
-        // source. See Parameters::relative_factors_frame_ids_re.
+        // source.
         auto& chain = state_.relative_pose_chains[frame_id_idx];
 
         // Only strictly newer readings may extend the chain: an out-of-order or
@@ -1522,13 +1500,10 @@ void StateEstimationSmoother::fuse_pose_locked(
             {
                 mrpt::poses::CPose3DPDFGaussian increment;
                 increment.mean = poseSanitized.mean - chain.last_pose_in_odom->mean;
-                // In this mode the caller's covariance describes ONE increment.
-                increment.cov = poseSanitized.cov;
 
-                // A drifting source usually publishes the covariance of its
-                // absolute dead-reckoned pose, which says nothing about one
-                // increment. Assert the known per-increment accuracy instead,
-                // when the caller has configured one.
+                // A drifting source publishes the covariance of its absolute
+                // dead-reckoned pose, which says nothing about one increment,
+                // so the configured per-increment accuracy is asserted instead.
                 // Slips and skids are independent events along the path, so
                 // the variance of a dead-reckoned increment grows linearly
                 // with its size (a random walk). Unlike a sigma proportional
@@ -1540,19 +1515,17 @@ void StateEstimationSmoother::fuse_pose_locked(
                 const double dA =
                     mrpt::poses::Lie::SO<3>::log(increment.mean.getRotationMatrix()).norm();
 
-                const double sigmaLin0 = params_.relative_pose_increment_sigma_lin;
-                const double kLin      = params_.relative_pose_increment_sigma_per_sqrt_meter;
-                if (sigmaLin0 > 0)
+                const double varLin =
+                    mrpt::square(params_.relative_pose_increment_sigma_lin) +
+                    mrpt::square(params_.relative_pose_increment_sigma_per_sqrt_meter) * dL;
+                const double varAng =
+                    mrpt::square(params_.relative_pose_increment_sigma_ang) +
+                    mrpt::square(params_.relative_pose_increment_sigma_per_sqrt_rad) * dA;
+                increment.cov.setZero();
+                for (int i = 0; i < 3; i++)
                 {
-                    replace_cov_block(
-                        increment.cov, 0, mrpt::square(sigmaLin0) + mrpt::square(kLin) * dL);
-                }
-                const double sigmaAng0 = params_.relative_pose_increment_sigma_ang;
-                const double kAng      = params_.relative_pose_increment_sigma_per_sqrt_rad;
-                if (sigmaAng0 > 0)
-                {
-                    replace_cov_block(
-                        increment.cov, 3, mrpt::square(sigmaAng0) + mrpt::square(kAng) * dA);
+                    increment.cov(i, i)         = varLin;
+                    increment.cov(i + 3, i + 3) = varAng;
                 }
 
                 gtsam::Pose3   incr_out;
@@ -1581,19 +1554,6 @@ void StateEstimationSmoother::fuse_pose_locked(
             chain.last_pose_in_odom = poseSanitized;
         }
         chain.last_stamp = timestamp;
-
-        state_.last_raw_pose_by_source[frame_id_idx] =
-            State::RawSourcePose{timestamp, poseSanitized};
-    }
-    else
-    {
-        // ref is an odometry frame:
-        seed_odom_frame_locked(frame_id_idx, this_kf_id, poseSanitized.mean);
-        state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
-            with_huber(
-                gtsam::noiseModel::Gaussian::Covariance(cov_out),
-                params_.pose_robust_huber_threshold));
 
         // Remember this source's own last raw pose (in {odom_i}), the anchor
         // estimated_navstate() extrapolates from to keep the short-term
