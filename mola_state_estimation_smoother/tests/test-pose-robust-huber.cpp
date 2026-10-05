@@ -55,7 +55,6 @@ params:
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
     estimate_geo_reference: false
-    relative_factors_frame_ids_re: "legged_odom"
     relative_pose_increment_sigma_lin: 0.01
     relative_pose_increment_sigma_ang: 0.005
     pose_robust_huber_threshold: )###" +

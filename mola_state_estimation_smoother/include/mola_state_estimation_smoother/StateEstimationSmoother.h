@@ -156,7 +156,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /** Resets the estimator state to an initial state */
     void reset() override;
 
-    /** Integrates new SE(3) pose odometry estimation of the vehicle wrt frame_id
+    /** Integrates a new SE(3) pose of the vehicle wrt frame_id.
+     *
+     *  If frame_id is the reference frame ("map"), the pose is fused as an
+     *  absolute prior, with the given covariance. Any other frame_id is an
+     *  odometry frame, which drifts, so only the increments between its
+     *  consecutive readings are fused, plus one absolute factor on its first
+     *  reading (with the given covariance) to resolve T_map_to_odom_i.
+     *  The increments' uncertainty comes from the relative_pose_increment_*
+     *  parameters, not from the given covariance.
      */
     void fuse_pose(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
@@ -337,8 +345,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         };
         std::map<odometry_frameid_t, RawSourcePose> last_raw_pose_by_source;
 
-        /// Per-source bookkeeping for the relative-factor formulation of
-        /// fuse_pose() (see Parameters::relative_factors_frame_ids_re): the
+        /// Per-source bookkeeping for the fuse_pose() odometry frames, which
+        /// are always fused as relative increments: the
         /// keyframe carrying that source's one absolute anchor factor, and the
         /// tail of its chain of increment factors.
         struct RelativePoseChain
@@ -435,7 +443,6 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
         RegexCache do_process_gnss_labels_re;
-        RegexCache relative_factors_frame_ids_re;
     };
 
     State      state_;

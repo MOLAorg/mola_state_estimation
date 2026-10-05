@@ -95,6 +95,8 @@ params:
 
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 5.0
+    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_ang: 0.005
     max_time_to_use_velocity_model: 2.0
 
     sigma_random_walk_acceleration_linear: 2.0

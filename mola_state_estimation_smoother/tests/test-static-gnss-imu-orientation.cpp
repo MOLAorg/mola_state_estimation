@@ -70,6 +70,8 @@ params:
 
     # Time window to keep past observations in the filter [seconds]
     sliding_window_length: 8.0
+    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_ang: 0.005
     
     # Minimum time difference between frames to create a new frame [seconds]
     min_time_difference_to_create_new_frame: 0.05

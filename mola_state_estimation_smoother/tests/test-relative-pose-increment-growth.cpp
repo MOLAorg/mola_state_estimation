@@ -61,7 +61,6 @@ params:
     sigma_integrator_position: 100.0
     sigma_integrator_orientation: 100.0
     estimate_geo_reference: false
-    relative_factors_frame_ids_re: "legged_odom"
     relative_pose_increment_sigma_lin: )###" +
            std::to_string(FLOOR) + R"###(
     relative_pose_increment_sigma_ang: 1e-3

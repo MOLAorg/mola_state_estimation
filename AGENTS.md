@@ -88,10 +88,8 @@ Structure:
 - YAML supports `${ENV_VAR|default}` substitution.
 
 Sensor inputs:
-- `fuse_pose()`: poses in `{map}` (prior factor) or in a source frame
-  `{odom_i}` (absolute factor against `T_map_to_odom_i`). Sources matching
-  `relative_factors_frame_ids_re` are fused as relative increments instead
-  (see below).
+- `fuse_pose()`: poses in `{map}` (prior factor), or in a source frame
+  `{odom_i}`, always fused as relative increments (see below).
 - `fuse_odometry()`: wheel odometry, always fused as relative increments with
   a motion-model covariance (`odom_motion_model_a1..a4`, `_min_std_*`, plus a
   `1e-4` variance floor).
@@ -100,18 +98,17 @@ Sensor inputs:
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
 
-Relative formulation (wheel odometry and `relative_factors_frame_ids_re`):
+Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source):
 - One absolute factor on the source's first reading resolves
   `T_map_to_odom_i`; after that, one `BetweenFactor` per keyframe change.
 - Readings landing on an existing keyframe hold the chain anchor at the first
   of them, so their motion goes into the next increment.
 - A factor whose previous keyframe was already marginalized is skipped.
-- For `fuse_pose()` sources the supplied covariance is read as the uncertainty
-  of one increment. `relative_pose_increment_sigma_lin`/`_ang` replace it
-  (the replaced block's cross terms are cleared);
-  `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add a
-  variance growing linearly with the increment size (random walk; requires
-  the flat sigma > 0).
+- For `fuse_pose()` sources, the increment covariance is diagonal, from the
+  required `relative_pose_increment_sigma_lin`/`_ang` (> 0; `loadFrom()`
+  throws otherwise); the supplied covariance is only used by the anchor
+  factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
+  a variance growing linearly with the increment size (random walk).
 
 Other behavior:
 - `pose_robust_huber_threshold` (0 = off): Huber kernel on every per-reading
@@ -126,9 +123,9 @@ Other behavior:
   source's own last raw pose (`State::last_raw_pose_by_source`) by the
   body-twist increment, falling back to the `{map}` conversion before the
   source's first reading.
-- Estimated `T_map_to_odom_i` of a relative source is computed as
-  `X(chain tail kf) (+) pose_in_odom(tail)^-1`; for other sources it is the
-  graph variable.
+- Estimated `T_map_to_odom_i` of an odometry source is computed as
+  `X(chain tail kf) (+) pose_in_odom(tail)^-1`, not read from the graph
+  variable (which only the anchor factor constrains).
 - Extrapolation (`extrapolate_pose_pdf()`) propagates covariance: anchor
   covariance through the composition plus velocity and acceleration noise.
 - Predict-twist low-pass (`predict_twist_filter_enabled`,

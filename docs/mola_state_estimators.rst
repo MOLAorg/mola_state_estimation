@@ -180,10 +180,9 @@ custom copy of the file can be used instead:
 
    .. tip::
 
-      A source that drifts noticeably within the sliding window (typical of visual
-      odometry) is better fused as relative increments between keyframes than as absolute
-      poses in its own frame. Select such sources by label with a regular expression, e.g.
-      prefix the launch command with ``MOLA_RELATIVE_FACTORS_FRAMES=visual_odom``.
+      Odometry sources are fused as chains of increments, whose uncertainty is set by
+      ``relative_pose_increment_sigma_lin`` / ``_ang`` (env vars ``MOLA_REL_POSE_INCR_SIGMA_LIN``
+      / ``_ANG``), not by the covariance in the messages. Tune them for each platform.
       See :ref:`section 3 <mola_sta_est_api>`.
 
    Key launch arguments:
@@ -404,13 +403,12 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
      - ``StateEstimationSimple``
    * - ``nav_msgs/Odometry``
        (default: becomes a ``CObservationRobotPose``)
-     - ``fuse_pose()`` in the source's own frame (named after its label): each reading is
-       an absolute pose factor through ``T_map_to_odom_<label>``, which is estimated.
-       Labels matching ``relative_factors_frame_ids_re`` are fused instead as relative
-       increments between keyframes (recommended for drifting sources).
-       The message pose covariance is used, so it should be realistic: if it is all zeros,
-       10 cm / 2 deg are assumed; any other zero variance becomes 1 m / 0.1 rad.
-       The twist part is not used.
+     - ``fuse_pose()`` in the source's own frame (named after its label). Odometry drifts,
+       so only the increments between consecutive keyframes are fused, with the uncertainty
+       set by the required parameters ``relative_pose_increment_sigma_lin`` / ``_ang``
+       (plus optional growth with the increment size, ``..._per_sqrt_meter`` / ``_rad``).
+       The first reading adds one absolute factor, with the message covariance, to resolve
+       ``T_map_to_odom_<label>``. The twist part is not used.
      - Increments between consecutive readings dead-reckon the pose between primary pose
        updates.
    * - ``nav_msgs/Odometry``
