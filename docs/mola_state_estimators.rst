@@ -86,7 +86,60 @@ The two implementations differ in how measurements are combined:
 2. Selecting the S.E. method in launch files
 ------------------------------------------------
 
-2.1. Launching the state estimator standalone
+.. _mola_sta_est_try_it:
+
+2.1. Try it yourself: simulated sensors + RViz
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+No robot or dataset is needed for a first look at the smoother. This demo runs a simulated
+robot driving a circle of 5 m radius at 1 m/s, publishing noisy wheel odometry, drifting
+visual odometry, IMU and GNSS, plus its ground truth. The smoother fuses the sensor
+combination selected with ``mode``, and RViz shows the result:
+
+.. code-block:: bash
+
+   ros2 launch mola_state_estimation_smoother ros2-demo-simulated-sensors.launch.py \
+     mode:=wheels_imu
+
+.. figure:: imgs/state_estimation_demo_rviz.webp
+   :width: 500
+   :align: center
+
+   ``mode:=wheels_imu`` after one lap: ground truth (white), raw wheel odometry (red),
+   raw visual odometry (orange, not fused in this mode), fused trail (green), and the
+   current fused pose with its position covariance (blue).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - ``mode``
+     - Fused sensors, and what to look at
+   * - ``wheels_imu`` (default)
+     - Wheel odometry + IMU. The wheel odometry heading drifts; the IMU attitude keeps the
+       fused heading, so the fused trail stays on the ground truth while the raw odometry
+       spirals away. Position uncertainty grows, since nothing observes absolute position.
+   * - ``wheels_imu_gnss``
+     - Wheel odometry + IMU + GNSS, estimating the geo-reference (``enu -> map``) online.
+       The ground truth, given in ``enu``, is only drawn once the geo-reference converges,
+       and through that estimate, so it also shows its error.
+   * - ``two_odometries``
+     - Wheel odometry + drifting visual odometry + IMU: two odometry chains, each with its
+       own ``T_map_to_odom_i``.
+   * - ``imu_gnss``
+     - IMU + GNSS only. Without odometry, the trajectory between GNSS fixes relies on the
+       IMU and the constant velocity model alone; compare it with the other modes.
+
+Other launch arguments: ``use_rviz`` (default ``True``), ``use_mola_gui`` (MolaViz console,
+default ``False``), and the simulated noise ``wheel_odom_ang_sigma`` (yaw rate noise,
+default ``0.15`` rad/s) and ``visual_odom_drift`` (lateral drift, default ``0.08`` m/s).
+Smoother parameters can be overridden as explained in the next section, e.g. prefix the
+command with ``MOLA_REL_POSE_INCR_SIGMA_LIN=0.05`` to see the effect of trusting each
+odometry increment less.
+
+Under the hood, this launch file runs the synthetic sensor publisher from ``mola_demos``
+and includes ``ros2-state-estimator.launch.py``, the same one used with real sensors below.
+
+2.2. Launching the state estimator standalone
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Next we show different possible use cases.
@@ -273,7 +326,7 @@ custom copy of the file can be used instead:
 
 |
 
-2.2. Launching the state estimator + LO/LIO
+2.3. Launching the state estimator + LO/LIO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 In the context of launching LiDAR odometry (LO) mapping or localization
 as explained :ref:`here <launching_mola_lo>`, note that default configurations

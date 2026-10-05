@@ -45,6 +45,10 @@
 
   <!-- Needed by the mola-cli launch files -->
   <exec_depend>mola_launcher</exec_depend>
+  <!-- Simulated-sensors demo launch -->
+  <exec_depend>mola_demos</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
   <!-- Integration test dependencies -->
   <test_depend>launch_testing</test_depend>

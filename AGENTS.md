@@ -68,7 +68,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | Implementation | `src/StateEstimationSmoother.cpp` |
 | Async serving | `src/FastPredictor.{h,cpp}`, `src/Snapshot.h`, `src/extrapolation.h` |
 | Default config | `params/state-estimation-smoother.yaml` |
-| ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py` |
+| ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
 | Unit tests (26) | `tests/test-*.cpp` |
@@ -273,6 +273,11 @@ Runs inside `mola_launcher`, with sensors bridged from ROS 2.
 `navstate_*` args are empty by default, meaning "use the params YAML value".
 `ros2-fuse-two-odometries.launch.py` uses the same topic argument names. The fused
 `map -> base_link` pose is advertised; the bridge publishes it to `/tf`.
+
+`ros2-demo-simulated-sensors.launch.py` (`mode:=wheels_imu|wheels_imu_gnss|two_odometries|imu_gnss`)
+runs `mola_demos`' `fake_sensor_publisher.py` (circle scenario), includes
+`ros2-state-estimator.launch.py`, and opens RViz; its static identity TFs rely
+on the simulated odometries and ground truth starting at the `{enu}` origin.
 
 Optional extra outputs (default off, distinct `method` suffixes):
 - `publish_map_to_odom_tf`: `map -> odom` under method `<label>/map_odom`,
