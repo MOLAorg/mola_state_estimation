@@ -1841,6 +1841,70 @@ params:
     std::cout << "OK\n";
 }
 
+// Prior covariance of a constant-velocity prediction: the twist uncertainty
+// integrated over dt (dt^2 in variance), plus the unmodeled acceleration
+// integrated twice (dt^4 in variance), both in position/angle units.
+void test_prediction_covariance()
+{
+    std::cout << "[Test] constant-velocity prediction covariance... ";
+
+    constexpr double SIGMA_V = 0.3;  // [m/s]
+    constexpr double SIGMA_W = 0.2;  // [rad/s]
+    constexpr double ACC_LIN = 2.0;  // [m/s^2]
+    constexpr double ACC_ANG = 4.0;  // [rad/s^2]
+    constexpr double FLOOR   = 1e-3;  // [m], [rad]
+
+    const std::string yaml_text = R"###(
+params:
+    max_time_to_use_velocity_model: 2.0
+    sigma_random_walk_acceleration_linear: )###" +
+                                  std::to_string(ACC_LIN) + R"###(
+    sigma_random_walk_acceleration_angular: )###" +
+                                  std::to_string(ACC_ANG) + R"###(
+    sigma_relative_pose_linear: )###" +
+                                  std::to_string(FLOOR) + R"###(
+    sigma_relative_pose_angular: )###" +
+                                  std::to_string(FLOOR) + R"###(
+    initial_twist: [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    initial_twist_sigma_lin: )###" +
+                                  std::to_string(SIGMA_V) + R"###(
+    initial_twist_sigma_ang: )###" +
+                                  std::to_string(SIGMA_W) + "\n";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+    // A heading other than zero: the (isotropic) velocity covariance must come
+    // out the same once rotated into the map frame.
+    constexpr double            POSE_VAR = 1e-8;
+    mrpt::math::CMatrixDouble66 poseCov;
+    poseCov.setDiagonal(POSE_VAR);
+    est.fuse_pose(
+        mrpt::Clock::fromDouble(0.0),
+        mrpt::poses::CPose3DPDFGaussian(
+            mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, 0, 0, mrpt::DEG2RAD(60.0), 0, 0), poseCov),
+        "map");
+
+    for (const double dt : {0.5, 1.0})
+    {
+        const auto s = est.estimated_navstate(mrpt::Clock::fromDouble(dt), "map");
+        ASSERT_(s.has_value());
+        const mrpt::math::CMatrixDouble66 cov = s->pose.cov_inv.inverse_LLt();
+
+        const double expLin = POSE_VAR + mrpt::square(SIGMA_V * dt) +
+                              mrpt::square(0.5 * ACC_LIN * dt * dt) + mrpt::square(FLOOR);
+        const double expAng = POSE_VAR + mrpt::square(SIGMA_W * dt) +
+                              mrpt::square(0.5 * ACC_ANG * dt * dt) + mrpt::square(FLOOR);
+        for (int i = 0; i < 3; i++)
+        {
+            ASSERT_NEAR_(cov(i, i), expLin, 1e-6 * expLin);
+            ASSERT_NEAR_(cov(i + 3, i + 3), expAng, 1e-6 * expAng);
+        }
+    }
+
+    std::cout << "OK\n";
+}
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
@@ -1861,6 +1925,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_partial_observation_bootstraps_independently();
         test_real_measurement_survives_first_fuse_pose();
         test_initial_twist_invalid_sigma_rejected();
+        test_prediction_covariance();
         test_imu_propagation();
         test_imu_propagation_accel_bias();
         test_imu_propagation_after_3d_odometry();

@@ -544,15 +544,17 @@ Algorithm:
 
   .. math::
 
-     \sigma^2_{xyz} = \sigma^2_{\text{rel,lin}} + (\sigma_{a,\text{lin}}\,\Delta t)^2,
+     \sigma^2_{xyz} = \sigma^2_{v}\,\Delta t^2 + \left(\tfrac{1}{2}\sigma_{a,\text{lin}}\,\Delta t^2\right)^2
+     + \sigma^2_{\text{rel,lin}},
      \qquad
-     \sigma^2_{rot} = \sigma^2_{\text{rel,ang}} + (\sigma_{a,\text{ang}}\,\Delta t)^2
+     \sigma^2_{rot} = \sigma^2_{\omega}\,\Delta t^2 + \left(\tfrac{1}{2}\sigma_{a,\text{ang}}\,\Delta t^2\right)^2
+     + \sigma^2_{\text{rel,ang}}
 
-  with ``sigma_relative_pose_linear/angular`` (:math:`\sigma_{\text{rel}}`, a constant floor)
-  and ``sigma_random_walk_acceleration_linear/angular`` (:math:`\sigma_a`). Note the second term
-  is an empirical heuristic, not a strict propagation of acceleration noise
-  (:math:`\sigma_a\,\Delta t` has units of velocity): in practice, the floor dominates for the
-  short prediction times a front end uses.
+  (added to the last pose covariance), where :math:`\sigma_v, \sigma_\omega` are the
+  uncertainties of the filtered twist, ``sigma_random_walk_acceleration_linear/angular``
+  (:math:`\sigma_a`) model unmodeled accelerations, and ``sigma_relative_pose_linear/angular``
+  (:math:`\sigma_{\text{rel}}`) is a constant floor. The linear velocity covariance is rotated
+  from the vehicle frame into the map frame.
 - The ``frame_id`` argument is ignored: all poses are assumed to be in the same frame.
 
 Main parameters (default values from

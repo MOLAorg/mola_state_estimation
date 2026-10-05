@@ -29,6 +29,7 @@
 #include <mrpt/topography/conversions.h>
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -1342,24 +1343,59 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     // pose cov:
     auto cov = state_.last_pose->cov;
 
-    double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
-    double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
     if (propagated)
     {
         // Position: the initial velocity uncertainty, plus the accelerometer
         // error integrated twice. Orientation: the gyroscope noise integrated.
-        varXYZ = state_.imu_P_vv * dt * dt + state_.imu_P_bb * mrpt::square(0.5 * dt * dt) +
-                 mrpt::square(0.5 * params.imu_propagation_sigma_acc * dt * dt);
-        varRot = mrpt::square(dt * params.sigma_imu_angular_velocity);
+        const double varXYZ = state_.imu_P_vv * dt * dt +
+                              state_.imu_P_bb * mrpt::square(0.5 * dt * dt) +
+                              mrpt::square(0.5 * params.imu_propagation_sigma_acc * dt * dt);
+        const double varRot = mrpt::square(dt * params.sigma_imu_angular_velocity);
+        for (int i = 0; i < 3; i++)
+        {
+            cov(i, i) += varXYZ;
+            cov(i + 3, i + 3) += varRot;
+        }
     }
+    else
+    {
+        // Constant velocity: the error of the estimated twist, integrated over
+        // dt, plus unmodeled accelerations, integrated twice.
+        const double accLin = 0.5 * params.sigma_random_walk_acceleration_linear * dt * dt;
+        const double accAng = 0.5 * params.sigma_random_walk_acceleration_angular * dt * dt;
 
-    for (int i = 0; i < 3; i++)
-    {
-        cov(i, i) += varXYZ;
-    }
-    for (int i = 3; i < 6; i++)
-    {
-        cov(i, i) += varRot;
+        // The linear velocity is in the vehicle frame: rotate its covariance
+        // into the pose frame, so an axis no sensor observes only inflates the
+        // uncertainty along that axis.
+        mrpt::math::CMatrixDouble33 covPos;
+        covPos.setZero();
+        double varW = 0;
+        if (state_.last_twist_cov.has_value())
+        {
+            const auto&                 tc = *state_.last_twist_cov;
+            mrpt::math::CMatrixDouble33 covV;
+            covV.setZero();
+            for (int i = 0; i < 3; i++)
+            {
+                covV(i, i) = tc(i, i);
+            }
+            const auto R     = state_.last_pose->mean.getRotationMatrix();
+            covPos.asEigen() = R.asEigen() * covV.asEigen() * R.asEigen().transpose() * (dt * dt);
+
+            // Body angular rates map onto the yaw/pitch/roll increments only
+            // approximately: take the largest of their variances for all three.
+            varW = std::max({tc(3, 3), tc(4, 4), tc(5, 5)});
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                cov(i, j) += covPos(i, j);
+            }
+            cov(i, i) += mrpt::square(accLin);
+            cov(i + 3, i + 3) += varW * dt * dt + mrpt::square(accAng);
+        }
     }
 
     // sigma_rel is a position-domain quantity (meters): add it directly as
