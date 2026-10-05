@@ -55,18 +55,23 @@ namespace mola::state_estimation_simple
  * ## Prior covariance model (estimated_navstate)
  *
  * Given `dt` seconds elapsed since the last `fuse_pose()` call, the returned
- * prior pose covariance diagonal is:
+ * prior pose covariance is the last pose covariance plus:
  *
- *   cov_xyz = sigma_relative_pose_linear^2
- *           + (sigma_random_walk_acceleration_linear * dt)^2
+ *   cov_xyz += R * Cov(v) * R^T * dt^2
+ *            + (0.5 * sigma_random_walk_acceleration_linear * dt^2)^2
+ *            + sigma_relative_pose_linear^2
  *
- *   cov_rot = sigma_relative_pose_angular^2
- *           + (sigma_random_walk_acceleration_angular * dt)^2
+ *   cov_rot += max(var(w)) * dt^2
+ *            + (0.5 * sigma_random_walk_acceleration_angular * dt^2)^2
+ *            + sigma_relative_pose_angular^2
  *
- * `sigma_relative_pose_linear` [m] is a dt-independent floor on position
- * uncertainty and is the primary knob for tightening the ICP prior.
- * `sigma_random_walk_acceleration_linear` [m/s^2] adds time-growing
- * uncertainty due to unmodeled accelerations.
+ * with Cov(v), var(w) the covariance of the estimated (filtered) linear and
+ * angular velocity, and R the vehicle orientation (velocities are in the
+ * vehicle frame). `sigma_relative_pose_linear` [m] is a dt-independent floor on
+ * position uncertainty and is the primary knob for tightening the ICP prior.
+ * `sigma_random_walk_acceleration_linear` [m/s^2] adds uncertainty due to
+ * unmodeled accelerations. With imu_propagation enabled, the IMU-integrated
+ * covariance is used instead.
  *
  * \note This implementation of mola::NavStateFilter ignores the passed
  *       "frame_id" and GNSS observations.
