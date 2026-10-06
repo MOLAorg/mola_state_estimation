@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.3 (2026-10-06)
+------------------
 * Fix deprecated CPose3D::getYawPitchRoll() and unchecked nodiscard load results
 * Contributors: Jose Luis Blanco-Claraco
 

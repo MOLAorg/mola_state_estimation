@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.3 (2026-10-06)
+------------------
 * Simple estimator: dimensionally consistent constant-velocity prediction covariance
 * Fix deprecated CPose3D::getYawPitchRoll() and unchecked nodiscard load results
 * Contributors: Jose Luis Blanco-Claraco

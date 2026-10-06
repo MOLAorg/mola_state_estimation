@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.3 (2026-10-06)
+------------------
 * Smoother: fuse every non-map odometry frame as relative increments (remove relative_factors_frame_ids_re; relative_pose_increment_sigma_lin/_ang now required)
 * Add simulated-sensors + RViz demo launch and a 'try it yourself' docs section
 * Fix launch files: env vars not reaching mola-cli, empty navstate args defer to YAML, consistent imu/gnss topic argument names
