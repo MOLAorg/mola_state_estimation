@@ -2,6 +2,9 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+
 3.0.2 (2026-10-01)
 ------------------
 * Fix build against GTSAM 4.3.0 builds without NoiseModelFactorN.h
