@@ -237,7 +237,8 @@ params:
   # --------------------------------------------------------------------------
 
   # When an IMU provides global attitude measurements (azimuth and gravity aligned), this is the
-  # uncertainty or noise sigma [degrees].
+  # uncertainty or noise sigma [degrees]. 0 ignores IMU attitude (e.g. drivers publishing a
+  # constant placeholder orientation).
   imu_attitude_sigma_deg: "${MOLA_IMU_ATTITUDE_SIGMA|2.0}"
 
   # When an IMU provides global attitude measurements (azimuth and gravity aligned), this must

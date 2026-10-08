@@ -515,8 +515,15 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     {
         state_.geo_reference = *params_.fixed_geo_reference;
 
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(
-            state_.geo_reference->T_enu_to_map, enu2map, enu2map_cov);
+        // A zero covariance (e.g. a default-constructed "exactly known" geo-reference)
+        // is singular for GTSAM: floor it to the tiny variance used for YAML-defined ones.
+        auto T_enu_to_map = state_.geo_reference->T_enu_to_map;
+        for (int i = 0; i < 6; i++)
+        {
+            T_enu_to_map.cov(i, i) = std::max(T_enu_to_map.cov(i, i), 1e-6);
+        }
+
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(T_enu_to_map, enu2map, enu2map_cov);
 
         // Update into last_estimated_frames too, so estimated_T_enu_to_map() returns it:
         state_.last_estimated_frames[REFERENCE_FRAME_ID] = state_.geo_reference->T_enu_to_map;
@@ -1071,7 +1078,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // decimation stamp or creating a keyframe: otherwise an empty sample would
     // consume the decimation interval (skipping the next, useful one) and add a
     // factor-less keyframe.
-    const bool hasAttitude = rawImu.has(mrpt::obs::IMU_ORI_QUAT_W);
+    const bool hasAttitude =
+        rawImu.has(mrpt::obs::IMU_ORI_QUAT_W) && params_.imu_attitude_sigma_deg > 0;
     const bool hasGravity =
         rawImu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
     const auto hasAngularVelocity = [this](const mrpt::obs::CObservationIMU& o)
@@ -1113,7 +1121,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
 
     // Direct azimuth observation?
     // -------------------------------------------------
-    if (imu.has(mrpt::obs::IMU_ORI_QUAT_W))
+    if (imu.has(mrpt::obs::IMU_ORI_QUAT_W) && params_.imu_attitude_sigma_deg > 0)
     {
         const double qw = imu.get(mrpt::obs::IMU_ORI_QUAT_W);
         const double qx = imu.get(mrpt::obs::IMU_ORI_QUAT_X);
@@ -1128,8 +1136,35 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         else
         {
             // GTSAM uses w,x,y,z quaternion order:
+            const auto rawAttitude = gtsam::Rot3::Quaternion(qw, qx, qy, qz);
+
+            // Sanity check: the "up" direction implied by the attitude must agree
+            // with the accelerometer, or the two IMU factors will fight each other.
+            if (imu.has(mrpt::obs::IMU_X_ACC))
+            {
+                const gtsam::Vector3 acc = {
+                    imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
+                    imu.get(mrpt::obs::IMU_Z_ACC)};
+                if (mola::factors::imu_accel_looks_like_gravity(acc))
+                {
+                    const gtsam::Vector3 upFromAttitude =
+                        rawAttitude.unrotate(gtsam::Vector3(0, 0, 1));
+                    const double     cosAngle    = upFromAttitude.dot(acc.normalized());
+                    constexpr double maxAngleDeg = 30.0;
+                    if (cosAngle < std::cos(mrpt::DEG2RAD(maxAngleDeg)))
+                    {
+                        MRPT_LOG_THROTTLE_WARN_FMT(
+                            30.0,
+                            "IMU attitude disagrees with its own accelerometer by %.1f deg: the "
+                            "driver may be publishing a placeholder orientation. Consider setting "
+                            "'imu_attitude_sigma_deg: 0' to ignore it.",
+                            mrpt::RAD2DEG(std::acos(std::clamp(cosAngle, -1.0, 1.0))));
+                    }
+                }
+            }
+
             const auto measuredRotation = mola::factors::imu_apply_enu_azimuth_correction(
-                gtsam::Rot3::Quaternion(qw, qx, qy, qz), params_.imu_attitude_azimuth_offset_deg);
+                rawAttitude, params_.imu_attitude_azimuth_offset_deg);
 
             // Create noise model for rotation (3 DOF: roll, pitch, yaw)
             auto rotationNoise = gtsam::noiseModel::Isotropic::Sigma(

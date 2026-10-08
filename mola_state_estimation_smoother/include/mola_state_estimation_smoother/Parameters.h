@@ -367,7 +367,9 @@ class Parameters
      * @{  */
 
     /** When an IMU provides global attitude measurements (azimuth and gravity aligned), this is the
-     * uncertainty or noise sigma [degrees]. */
+     * uncertainty or noise sigma [degrees]. Set to 0 to ignore IMU attitude readings, e.g. for
+     * drivers that publish a constant placeholder orientation instead of flagging it as missing.
+     */
     double imu_attitude_sigma_deg = 2.0;
 
     /** When an IMU provides global attitude measurements (azimuth and gravity aligned), this must

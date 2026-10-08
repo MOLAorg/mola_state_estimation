@@ -158,7 +158,7 @@ Georeferencing and relocalization:
   published once its sigmas pass `convergence_max_position_sigma`/
   `convergence_max_orientation_sigma_deg`.
 - `set_geo_reference()` / `fixed_geo_reference`: fixes `T_enu_to_map` and
-  resets the estimator.
+  resets the estimator. Zero variances are floored to 1e-6 (singular otherwise).
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once
   the geo-reference is known; otherwise, when the vehicle's own pose sigmas
   pass the same thresholds. Steady-state position sigma is bounded by the raw
@@ -167,8 +167,10 @@ Georeferencing and relocalization:
   ENU; sources already reporting ENU yaw (e.g. simulators) need
   `imu_attitude_azimuth_offset_deg: -90`.
 
-Known open issue: `MeasuredGravityFactor` residuals can stay large for a whole
-run on some datasets; not yet diagnosed.
+Large `MeasuredGravityFactor` residuals for a whole run: one known cause is an
+IMU driver publishing a constant placeholder orientation (with covariance >= 0)
+that fights the accelerometer. `fuse_imu()` warns when attitude and
+accelerometer disagree by > 30 deg; `imu_attitude_sigma_deg: 0` ignores attitude.
 
 ### Shipped YAML defaults that differ from the C++ `Parameters` defaults
 
