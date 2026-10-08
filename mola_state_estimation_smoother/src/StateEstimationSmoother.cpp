@@ -515,8 +515,15 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     {
         state_.geo_reference = *params_.fixed_geo_reference;
 
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(
-            state_.geo_reference->T_enu_to_map, enu2map, enu2map_cov);
+        // A zero covariance (e.g. a default-constructed "exactly known" geo-reference)
+        // is singular for GTSAM: floor it to the tiny variance used for YAML-defined ones.
+        auto T_enu_to_map = state_.geo_reference->T_enu_to_map;
+        for (int i = 0; i < 6; i++)
+        {
+            T_enu_to_map.cov(i, i) = std::max(T_enu_to_map.cov(i, i), 1e-6);
+        }
+
+        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(T_enu_to_map, enu2map, enu2map_cov);
 
         // Update into last_estimated_frames too, so estimated_T_enu_to_map() returns it:
         state_.last_estimated_frames[REFERENCE_FRAME_ID] = state_.geo_reference->T_enu_to_map;
