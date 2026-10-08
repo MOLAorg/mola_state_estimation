@@ -473,7 +473,7 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        ``odom_motion_model_a1`` .. ``a4``.
      - Increments as above, plus wheel velocities (``sigma_wheel_odom_*``).
    * - ``sensor_msgs/Imu``
-     - Orientation as an absolute attitude factor (``imu_attitude_sigma_deg``,
+     - Orientation as an absolute attitude factor (``imu_attitude_sigma_deg``, 0 disables;
        ``imu_attitude_azimuth_offset_deg``); acceleration as gravity direction
        (``imu_normalized_gravity_alignment_sigma``, 0 disables); angular velocity as a prior
        on :math:`\boldsymbol{\omega}_k` (``imu_angular_velocity_sigma``, 0 disables).
