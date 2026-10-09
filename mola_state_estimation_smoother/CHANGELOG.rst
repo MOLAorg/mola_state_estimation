@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.0.4 (2026-10-09)
+------------------
 * Merge pull request `#83 <https://github.com/MOLAorg/mola_state_estimation/issues/83>`_ from MOLAorg/fix/imu-attitude-and-georef-cov
   Smoother: allow ignoring IMU attitude, warn on placeholder orientation; fix zero-covariance geo-reference
 * smoother: allow ignoring IMU attitude, warn if it contradicts gravity
