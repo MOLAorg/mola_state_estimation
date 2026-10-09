@@ -2,6 +2,25 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Merge pull request `#83 <https://github.com/MOLAorg/mola_state_estimation/issues/83>`_ from MOLAorg/fix/imu-attitude-and-georef-cov
+  Smoother: allow ignoring IMU attitude, warn on placeholder orientation; fix zero-covariance geo-reference
+* smoother: allow ignoring IMU attitude, warn if it contradicts gravity
+  - imu_attitude_sigma_deg: 0 now disables IMU attitude factors, like the
+  other IMU sigmas already do.
+  - Warn when the attitude reported by an IMU disagrees with its own
+  accelerometer by more than 30 deg. Some drivers publish a constant
+  placeholder orientation without flagging it as unavailable, which
+  makes the attitude and gravity factors fight each other.
+  - New unit test, also covering a zero-covariance geo-reference.
+* smoother: floor zero variances of a fixed geo-reference
+  A geo-reference given with an all-zero covariance (the default for an
+  "exactly known" T_enu_to_map, e.g. as loaded from a map file) produced
+  a singular prior and GTSAM failures. Floor its variances to the same
+  tiny value already used for YAML-defined geo-references.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.0.3 (2026-10-06)
 ------------------
 * Smoother: fuse every non-map odometry frame as relative increments (remove relative_factors_frame_ids_re; relative_pose_increment_sigma_lin/_ang now required)
