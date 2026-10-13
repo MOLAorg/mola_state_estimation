@@ -307,8 +307,10 @@ params:
   # --------------------------------------------------------------------------
 
   # Regular expression to filter IMU sensor labels/topics for processing
-  # Default accepts all: ".*"
-  do_process_imu_labels_re: ".*"
+  # Default accepts all: ".*". Same variable as mola_lidar_odometry's
+  # state-estimation-simple.yaml, e.g. to leave out an IMU that is only meant
+  # to be stored in simplemap keyframes.
+  do_process_imu_labels_re: "${MOLA_NAVSTATE_IMU_SENSOR_NAME|.*}"
 
   # Regular expression to filter odometry input labels/topics for processing
   # Default accepts all: ".*"
