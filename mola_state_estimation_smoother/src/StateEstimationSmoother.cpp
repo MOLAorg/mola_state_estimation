@@ -357,6 +357,40 @@ struct StateEstimationSmoother::GtsamImpl
     std::optional<GaugeAnchor>   enuYawAnchor;
     std::optional<gtsam::Point2> firstGnssEnuXY;
 
+    /** Once {map} is observed only in position (e.g. GNSS through a fixed
+     *  geo-reference, with no attitude source), pins the orientation of the
+     *  odometry frame `orientationAnchorKey`, which nothing observes yet.
+     *  Roll/pitch and yaw are released independently, as sources observe them.
+     */
+    std::optional<GaugeAnchor>   orientationAnchor;
+    std::optional<gtsam::Key>    orientationAnchorKey;
+    bool                         rollPitchObserved = false;
+    bool                         yawObserved       = false;
+    std::optional<gtsam::Point2> firstGnssXYForYaw;
+
+    /// Whether the reported orientation is pinned by a gauge anchor, not observed
+    [[nodiscard]] bool rollPitchPinned() const { return orientationAnchor && !rollPitchObserved; }
+    [[nodiscard]] bool yawPinned() const { return orientationAnchor && !yawObserved; }
+
+    /// Re-creates the orientation anchor for what is still unobserved
+    void update_orientation_anchor()
+    {
+        withdraw_anchor(orientationAnchor);
+        if (!orientationAnchorKey || (rollPitchObserved && yawObserved))
+        {
+            return;
+        }
+        // Pose3 tangent: rotation (x, y, z), then translation.
+        const double   rp = rollPitchObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
+        const double   y  = yawObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
+        gtsam::Vector6 sigmas;
+        sigmas << rp, rp, y, INIT_ODOM_FRAME_POSE_SIGMA, INIT_ODOM_FRAME_POSE_SIGMA,
+            INIT_ODOM_FRAME_POSE_SIGMA;
+        add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
+            orientationAnchor, *orientationAnchorKey, gtsam::Pose3::Identity(),
+            gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+    }
+
     /// Queues a new anchor factor, built in place from `args`
     template <class FACTOR, class... Args>
     void add_anchor(std::optional<GaugeAnchor>& anchor, Args&&... args)
@@ -376,7 +410,7 @@ struct StateEstimationSmoother::GtsamImpl
         {
             const size_t idx = *anchor->pendingIndex;
             newFactors.erase(newFactors.begin() + static_cast<std::ptrdiff_t>(idx));
-            for (auto* other : {&mapAnchor, &enuYawAnchor})
+            for (auto* other : {&mapAnchor, &enuYawAnchor, &orientationAnchor})
             {
                 if (*other && (*other)->pendingIndex && *(*other)->pendingIndex > idx)
                 {
@@ -394,7 +428,7 @@ struct StateEstimationSmoother::GtsamImpl
     /// Records the iSAM2 index of anchors passed in the last update()
     void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
     {
-        for (auto* anchor : {&mapAnchor, &enuYawAnchor})
+        for (auto* anchor : {&mapAnchor, &enuYawAnchor, &orientationAnchor})
         {
             if (*anchor && (*anchor)->pendingIndex)
             {
@@ -1182,6 +1216,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             if (params_.fixed_geo_reference.has_value())
             {
                 mark_map_observed_locked();
+                mark_orientation_observed_locked(true, true);
             }
         }
     }
@@ -1208,6 +1243,12 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
                 symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
                 accNoise);
+
+            // Gravity observes roll and pitch:
+            if (params_.fixed_geo_reference.has_value())
+            {
+                mark_orientation_observed_locked(true, false);
+            }
         }
     }
 
@@ -1351,6 +1392,29 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         mark_map_observed_locked();
     }
 
+    // Likewise, a pinned yaw becomes observable once the fixes span a baseline
+    // long enough for a few degrees of accuracy (static noise must not count):
+    if (state_.gtsam->yawPinned())
+    {
+        constexpr double    YAW_FROM_BASELINE_ACCURACY_DEG = 5.0;
+        const gtsam::Point2 xy(ENU_point.x, ENU_point.y);
+        if (!state_.gtsam->firstGnssXYForYaw)
+        {
+            state_.gtsam->firstGnssXYForYaw = xy;
+        }
+        else
+        {
+            const auto&  cov     = *gps.covariance_enu;
+            const double sigmaXY = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
+            const double minBaseline =
+                std::sqrt(2.0) * sigmaXY / mrpt::DEG2RAD(YAW_FROM_BASELINE_ACCURACY_DEG);
+            if ((xy - *state_.gtsam->firstGnssXYForYaw).norm() >= minBaseline)
+            {
+                mark_orientation_observed_locked(false, true);
+            }
+        }
+    }
+
     // The azimuth of T_enu_to_map becomes observable only once the fixes span a
     // horizontal baseline long enough for the configured convergence accuracy:
     if (state_.gtsam->enuYawAnchor)
@@ -1474,6 +1538,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     {
         // ref is "map":
         mark_map_observed_locked();
+        mark_orientation_observed_locked(true, true);
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out,
             with_huber(
@@ -2494,14 +2559,40 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
             gtsam::noiseModel::Isotropic::Sigma(6, GAUGE_ANCHOR_SIGMA));
         state_.gtsam->mapAnchorFrame = newId;
     }
+    else if (state_.gtsam->mapObserved && !state_.gtsam->orientationAnchorKey)
+    {
+        // {map} is already observed, maybe in position only:
+        state_.gtsam->orientationAnchorKey = symbol_T_map_to_odom_i_base + newId;
+        state_.gtsam->update_orientation_anchor();
+    }
 
     return newId;
 }
 
 void StateEstimationSmoother::mark_map_observed_locked()
 {
-    state_.gtsam->mapObserved = true;
-    state_.gtsam->withdraw_anchor(state_.gtsam->mapAnchor);
+    auto& g = *state_.gtsam;
+    // The map anchor also pinned the orientation of its odometry frame:
+    // keep pinning what no source observes yet.
+    if (g.mapAnchor && !g.orientationAnchorKey)
+    {
+        g.orientationAnchorKey = symbol_T_map_to_odom_i_base + g.mapAnchorFrame;
+        g.update_orientation_anchor();
+    }
+    g.mapObserved = true;
+    g.withdraw_anchor(g.mapAnchor);
+}
+
+void StateEstimationSmoother::mark_orientation_observed_locked(bool rollPitch, bool yaw)
+{
+    auto& g = *state_.gtsam;
+    if ((!rollPitch || g.rollPitchObserved) && (!yaw || g.yawObserved))
+    {
+        return;
+    }
+    g.rollPitchObserved = g.rollPitchObserved || rollPitch;
+    g.yawObserved       = g.yawObserved || yaw;
+    g.update_orientation_anchor();
 }
 
 // The identity initial value set above can be arbitrarily far from the truth
@@ -3422,8 +3513,9 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
         }
         else
         {
-            const mrpt::math::CMatrixDouble66 poseCov = snap->anchor.pose.cov_inv.inverse_LLt();
-            const double                      maxPos =
+            mrpt::math::CMatrixDouble66 poseCov = snap->anchor.pose.cov_inv.inverse_LLt();
+            inflate_pinned_orientation_cov_locked(poseCov);
+            const double maxPos =
                 std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
             const double maxOriDeg =
                 mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
@@ -3620,6 +3712,10 @@ bool StateEstimationSmoother::has_converged_localization(
         return false;
     }
 
+    mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
+    // An orientation pinned by a gauge anchor looks certain, but is unknown:
+    inflate_pinned_orientation_cov_locked(poseCov);
+
     bool converged;
     if (params_.estimate_geo_reference)
     {
@@ -3644,8 +3740,6 @@ bool StateEstimationSmoother::has_converged_localization(
         // relocalize mode since estimate_geo_reference is false there by
         // design -- so relocalization could never be reported as converged
         // no matter how good the GNSS+IMU fix actually was).
-        const mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
-
         const double pos_sigma_x   = std::sqrt(poseCov(0, 0));
         const double pos_sigma_y   = std::sqrt(poseCov(1, 1));
         const double pos_sigma_z   = std::sqrt(poseCov(2, 2));
@@ -3678,9 +3772,37 @@ bool StateEstimationSmoother::has_converged_localization(
     if (converged)
     {
         pose.copyFrom(ns.pose);
+        if (state_.gtsam->rollPitchPinned() || state_.gtsam->yawPinned())
+        {
+            pose.cov = poseCov;
+        }
     }
 
     return converged;
+}
+
+void StateEstimationSmoother::inflate_pinned_orientation_cov_locked(
+    mrpt::math::CMatrixDouble66& cov) const
+{
+    // MRPT order: x, y, z, yaw, pitch, roll
+    const auto unknown = [&cov](int i, double sigma)
+    {
+        for (int j = 0; j < 6; j++)
+        {
+            cov(i, j) = 0;
+            cov(j, i) = 0;
+        }
+        cov(i, i) = sigma * sigma;
+    };
+    if (state_.gtsam->yawPinned())
+    {
+        unknown(3, M_PI);
+    }
+    if (state_.gtsam->rollPitchPinned())
+    {
+        unknown(4, M_PI_2);
+        unknown(5, M_PI_2);
+    }
 }
 
 std::optional<mola::Georeferencing> StateEstimationSmoother::current_georeferencing() const

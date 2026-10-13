@@ -507,6 +507,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Some measurement now observes {map}: its gauge anchor is no longer needed.
     void mark_map_observed_locked();
+    /// A source observes the vehicle roll/pitch and/or yaw in {map}
+    void mark_orientation_observed_locked(bool rollPitch, bool yaw);
+    /// Replaces the orientation entries of a pose covariance that only a gauge
+    /// anchor pins (not observed) with "unknown" ones
+    void inflate_pinned_orientation_cov_locked(mrpt::math::CMatrixDouble66& cov) const;
 
     // ---- _locked variants: assume stateMutex_ is already held by the caller ----
     void reset_locked();

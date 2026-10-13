@@ -35,6 +35,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-relocalize-without-attitude
+  SOURCES test-relocalize-without-attitude.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-relocalize-not-converged-on-odometry-only
   SOURCES test-relocalize-not-converged-on-odometry-only.cpp
   LINK_LIBRARIES

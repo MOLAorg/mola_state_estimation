@@ -27,6 +27,11 @@
 #include <mrpt/math/TTwist3D.h>
 #include <mrpt/typemeta/TEnumType.h>
 
+/// With a fixed geo-reference, an orientation that only position sources
+/// (e.g. GNSS without IMU) observe is held fixed and reported as unknown,
+/// instead of leaving the solver indeterminate:
+#define MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE 1
+
 namespace mola::state_estimation_smoother
 {
 
