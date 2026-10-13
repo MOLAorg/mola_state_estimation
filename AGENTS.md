@@ -160,9 +160,9 @@ Georeferencing and relocalization:
 - `set_geo_reference()` / `fixed_geo_reference`: fixes `T_enu_to_map` and
   resets the estimator. Zero variances are floored to 1e-6 (singular otherwise).
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once
-  the geo-reference is known; otherwise, when `{map}` is observed (not just
-  pinned by its gauge anchor, which makes the pose look certain at the
-  odometry origin) and the vehicle's own pose sigmas pass the same thresholds.
+  the geo-reference is known; otherwise, when `{map}` is observed in the last
+  solve (not just pinned by its gauge anchor, which makes the pose look certain
+  at the odometry origin) and the vehicle's own pose sigmas pass the same thresholds.
   Steady-state position sigma is bounded by the raw GNSS noise, so the
   thresholds must match the receiver.
 - `fuse_imu()` applies a fixed +90 deg yaw so North-referenced IMU yaw becomes

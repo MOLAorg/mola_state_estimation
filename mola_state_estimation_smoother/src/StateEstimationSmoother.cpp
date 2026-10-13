@@ -350,6 +350,8 @@ struct StateEstimationSmoother::GtsamImpl
     std::optional<GaugeAnchor> mapAnchor;
     odometry_frameid_t         mapAnchorFrame = 0;
     bool                       mapObserved    = false;
+    /// mapObserved, as of the last solve (the observation is in the estimate)
+    bool mapObservedSolved = false;
 
     /// Pins the azimuth of T_enu_to_map while no IMU attitude or GNSS observes it
     std::optional<GaugeAnchor>   enuYawAnchor;
@@ -2800,6 +2802,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         }
     }
 
+    state_.gtsam->mapObservedSolved = state_.gtsam->mapObserved;
+
     // Age out keyframes that fell outside the window, now that the writeback
     // above has given every one of them its final solved value. Done here,
     // once per batch, rather than per fuse_*() call: in async mode several
@@ -3423,7 +3427,7 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
                 std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
             const double maxOriDeg =
                 mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
-            converged = state_.gtsam->mapObserved &&
+            converged = state_.gtsam->mapObservedSolved &&
                         maxPos <= params_.convergence_max_position_sigma &&
                         maxOriDeg <= params_.convergence_max_orientation_sigma_deg;
         }
@@ -3656,15 +3660,16 @@ bool StateEstimationSmoother::has_converged_localization(
         // Until some source observes {map} (e.g. a GNSS fix through the
         // fixed geo-reference), it is defined as the first odometry frame by
         // a gauge anchor, which makes the vehicle pose look certain at the
-        // odometry origin: that is not a localization.
-        converged = state_.gtsam->mapObserved &&
+        // odometry origin: that is not a localization. The observation must
+        // already be in the solved estimate, not just queued.
+        converged = state_.gtsam->mapObservedSolved &&
                     max_pos_sigma <= params_.convergence_max_position_sigma &&
                     max_ori_sigma_deg <= params_.convergence_max_orientation_sigma_deg;
 
         MRPT_LOG_DEBUG_FMT(
             "[has_converged_localization] converged=%s map_observed=%s pos_sigmas=(%.3f,%.3f,%.3f) "
             "m ori_sigmas=(%.2f,%.2f,%.2f) deg thresholds=(%.3f m, %.2f deg)",
-            converged ? "YES" : "NO", state_.gtsam->mapObserved ? "YES" : "NO", pos_sigma_x,
+            converged ? "YES" : "NO", state_.gtsam->mapObservedSolved ? "YES" : "NO", pos_sigma_x,
             pos_sigma_y, pos_sigma_z, mrpt::RAD2DEG(ori_sigma_yaw), mrpt::RAD2DEG(ori_sigma_pitch),
             mrpt::RAD2DEG(ori_sigma_roll), params_.convergence_max_position_sigma,
             params_.convergence_max_orientation_sigma_deg);

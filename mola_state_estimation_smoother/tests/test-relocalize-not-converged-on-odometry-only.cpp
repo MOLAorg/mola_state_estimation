@@ -17,7 +17,8 @@
  * @brief  In relocalize mode, odometry alone must not count as a converged
  *         localization: until some source observes the map frame, it is
  *         defined as the first odometry frame by a gauge anchor, which makes
- *         the vehicle pose look certain (at the odometry origin).
+ *         the vehicle pose look certain (at the odometry origin). A map
+ *         observation counts once it is in the solved estimate.
  */
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
@@ -87,6 +88,50 @@ void run_test()
             throw std::runtime_error(
                 "Reported converged with odometry only, at: " + pose.mean.asString());
         }
+    }
+
+    // A pose in the map frame, far from the odometry origin, for the last
+    // (already solved) keyframe. Until it is solved, the estimate still is
+    // the odometry origin:
+    mrpt::poses::CPose3DPDFGaussian inMap;
+    inMap.mean = mrpt::poses::CPose3D::FromXYZYawPitchRoll(5.0, 3.0, 0, 0, 0, 0);
+    inMap.cov.setDiagonal(std::vector<double>({1e-4, 1e-4, 1e-4, 1e-6, 1e-6, 1e-6}));
+    odo.mean = mrpt::poses::CPose3D::Identity();
+
+    const auto expectNear = [&](const mrpt::poses::CPose3DPDFGaussian& pose)
+    {
+        if (pose.mean.distanceTo(inMap.mean) > 0.5)
+        {
+            throw std::runtime_error(
+                "Reported converged far from the map observation, at: " + pose.mean.asString());
+        }
+    };
+
+    stateEst.fuse_pose(mrpt::Clock::fromDouble(t - 0.1), inMap, "map");
+    if (mrpt::poses::CPose3DPDFGaussian pose; stateEst.has_converged_localization(pose))
+    {
+        expectNear(pose);
+    }
+
+    // Once solved, it converges there:
+    bool converged = false;
+    for (int i = 0; i < 20 && !converged; i++)
+    {
+        t += 0.1;
+        stateEst.fuse_pose(mrpt::Clock::fromDouble(t), odo, "odom_wheels");
+        stateEst.fuse_pose(mrpt::Clock::fromDouble(t), inMap, "map");
+        std::ignore = stateEst.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
+
+        mrpt::poses::CPose3DPDFGaussian pose;
+        converged = stateEst.has_converged_localization(pose);
+        if (converged)
+        {
+            expectNear(pose);
+        }
+    }
+    if (!converged)
+    {
+        throw std::runtime_error("Did not converge with map observations");
     }
 }
 }  // namespace
