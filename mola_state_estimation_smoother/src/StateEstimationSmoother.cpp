@@ -3423,7 +3423,8 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
                 std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
             const double maxOriDeg =
                 mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
-            converged = maxPos <= params_.convergence_max_position_sigma &&
+            converged = state_.gtsam->mapObserved &&
+                        maxPos <= params_.convergence_max_position_sigma &&
                         maxOriDeg <= params_.convergence_max_orientation_sigma_deg;
         }
     }
@@ -3652,14 +3653,19 @@ bool StateEstimationSmoother::has_converged_localization(
         const double max_ori_sigma_deg =
             mrpt::RAD2DEG(std::max({ori_sigma_yaw, ori_sigma_pitch, ori_sigma_roll}));
 
-        converged = max_pos_sigma <= params_.convergence_max_position_sigma &&
+        // Until some source observes {map} (e.g. a GNSS fix through the
+        // fixed geo-reference), it is defined as the first odometry frame by
+        // a gauge anchor, which makes the vehicle pose look certain at the
+        // odometry origin: that is not a localization.
+        converged = state_.gtsam->mapObserved &&
+                    max_pos_sigma <= params_.convergence_max_position_sigma &&
                     max_ori_sigma_deg <= params_.convergence_max_orientation_sigma_deg;
 
         MRPT_LOG_DEBUG_FMT(
-            "[has_converged_localization] converged=%s pos_sigmas=(%.3f,%.3f,%.3f) m "
-            "ori_sigmas=(%.2f,%.2f,%.2f) deg thresholds=(%.3f m, %.2f deg)",
-            converged ? "YES" : "NO", pos_sigma_x, pos_sigma_y, pos_sigma_z,
-            mrpt::RAD2DEG(ori_sigma_yaw), mrpt::RAD2DEG(ori_sigma_pitch),
+            "[has_converged_localization] converged=%s map_observed=%s pos_sigmas=(%.3f,%.3f,%.3f) "
+            "m ori_sigmas=(%.2f,%.2f,%.2f) deg thresholds=(%.3f m, %.2f deg)",
+            converged ? "YES" : "NO", state_.gtsam->mapObserved ? "YES" : "NO", pos_sigma_x,
+            pos_sigma_y, pos_sigma_z, mrpt::RAD2DEG(ori_sigma_yaw), mrpt::RAD2DEG(ori_sigma_pitch),
             mrpt::RAD2DEG(ori_sigma_roll), params_.convergence_max_position_sigma,
             params_.convergence_max_orientation_sigma_deg);
     }
