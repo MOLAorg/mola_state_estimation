@@ -3712,6 +3712,10 @@ bool StateEstimationSmoother::has_converged_localization(
         return false;
     }
 
+    mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
+    // An orientation pinned by a gauge anchor looks certain, but is unknown:
+    inflate_pinned_orientation_cov_locked(poseCov);
+
     bool converged;
     if (params_.estimate_geo_reference)
     {
@@ -3736,10 +3740,6 @@ bool StateEstimationSmoother::has_converged_localization(
         // relocalize mode since estimate_geo_reference is false there by
         // design -- so relocalization could never be reported as converged
         // no matter how good the GNSS+IMU fix actually was).
-        mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
-        // An orientation pinned by a gauge anchor looks certain, but is unknown:
-        inflate_pinned_orientation_cov_locked(poseCov);
-
         const double pos_sigma_x   = std::sqrt(poseCov(0, 0));
         const double pos_sigma_y   = std::sqrt(poseCov(1, 1));
         const double pos_sigma_z   = std::sqrt(poseCov(2, 2));
@@ -3774,8 +3774,6 @@ bool StateEstimationSmoother::has_converged_localization(
         pose.copyFrom(ns.pose);
         if (state_.gtsam->rollPitchPinned() || state_.gtsam->yawPinned())
         {
-            mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
-            inflate_pinned_orientation_cov_locked(poseCov);
             pose.cov = poseCov;
         }
     }

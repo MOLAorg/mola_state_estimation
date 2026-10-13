@@ -152,7 +152,8 @@ Other behavior:
   yaw until IMU attitude or a GNSS baseline good for ~5 deg; both by a `{map}`
   pose. `has_converged_localization()` then reports the pinned angles as
   unknown (yaw sigma pi, roll/pitch pi/2), so a robot without IMU converges on
-  position only if `convergence_max_orientation_sigma_deg` allows it.
+  position only if `convergence_max_orientation_sigma_deg` allows it. Feature
+  macro `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE` (`Parameters.h`).
 - A new `T_map_to_odom_i` is seeded from its first reading. A new key is never
   marginalized in the update that inserts it.
 - Observations labeled `ground_truth` are ignored by both estimators unless
