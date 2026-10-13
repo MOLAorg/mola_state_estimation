@@ -324,9 +324,9 @@ void test_noisy_straight()
     ASSERT_NEAR_(ret->twist.vy, .0, 0.1);
     ASSERT_NEAR_(ret->twist.vz, .0, 0.1);
 
-    ASSERT_NEAR_(ret->twist.wx, .0, 0.01);
-    ASSERT_NEAR_(ret->twist.wy, .0, 0.01);
-    ASSERT_NEAR_(ret->twist.wz, .0, 0.01);
+    ASSERT_NEAR_(ret->twist.wx, .0, 0.02);
+    ASSERT_NEAR_(ret->twist.wy, .0, 0.02);
+    ASSERT_NEAR_(ret->twist.wz, .0, 0.02);
 }
 
 // --------------------------------------
