@@ -2,6 +2,13 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Smoother: IMU label filter settable with MOLA_NAVSTATE_IMU_SENSOR_NAME.
+* Smoother: pin the orientation while only positions observe the map (GNSS without IMU), with a feature macro for dependent packages.
+* Relocalize mode: not converged while {map} is only pinned by its gauge anchor.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.0.4 (2026-10-09)
 ------------------
 * Merge pull request `#83 <https://github.com/MOLAorg/mola_state_estimation/issues/83>`_ from MOLAorg/fix/imu-attitude-and-georef-cov
