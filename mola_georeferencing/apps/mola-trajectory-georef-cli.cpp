@@ -13,6 +13,7 @@
 */
 
 #include <mp2p_icp/metricmap.h>
+#include <mrpt/containers/yaml.h>
 #include <mrpt/io/CFileGZInputStream.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/serialization/CArchive.h>
@@ -36,6 +37,11 @@ std::string argOutKML;
 
 CLI::Option* optMM;
 CLI::Option* optGeoRef;
+
+bool is_binary_georef(const std::string& fil)
+{
+    return mrpt::system::extractFileExtension(fil) == "georef";
+}
 
 }  // namespace
 
@@ -66,10 +72,17 @@ void run_traj_georef()
     }
     else if (optGeoRef->count() > 0)
     {
-        mrpt::io::CFileGZInputStream f(argGeoRef);
+        if (is_binary_georef(argGeoRef))
+        {
+            mrpt::io::CFileGZInputStream f(argGeoRef);
 
-        auto arch = mrpt::serialization::archiveFrom(f);
-        arch >> geo;
+            auto arch = mrpt::serialization::archiveFrom(f);
+            arch >> geo;
+        }
+        else
+        {
+            geo = mp2p_icp::FromYAML(mrpt::containers::yaml::FromFile(argGeoRef));
+        }
     }
     else
     {
@@ -134,7 +147,9 @@ void run_traj_georef()
 int main(int argc, char** argv)
 {
     optMM     = cmd.add_option("-m,--map", argMM, "Input .mm map with georef info");
-    optGeoRef = cmd.add_option("-g,--geo-ref", argGeoRef, "Input .georef file with georef info");
+    optGeoRef = cmd.add_option(
+        "-g,--geo-ref", argGeoRef,
+        "Input geo-referencing file (binary `*.georef` or YAML `*.yaml`/`*.yml`)");
     cmd.add_option("-t,--trajectory", argTraj, "Input .tum trajectory, in map local coordinates")
         ->required();
     cmd.add_option("-o,--output", argOutKML, "The name of the google earth kml file to write to")
