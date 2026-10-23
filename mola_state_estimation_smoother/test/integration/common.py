@@ -10,8 +10,10 @@
 #   See also test-static-gnss-imu-orientation.cpp, vehicleToAzimuth formula.
 import logging
 import math
+import os
 import time
 
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 import numpy as np
 
 logging.basicConfig(level=logging.INFO,
@@ -38,6 +40,19 @@ MOVING_DURATION_S = 60.0
 # ---------------------------------------------------------------------------
 # Math helpers
 # ---------------------------------------------------------------------------
+
+def integration_skip_reason(package='mola_state_estimation_smoother'):
+    """Why these tests cannot run here, or None. They launch the installed package (its
+    share/ files and its mola-cli module), which a Debian package build does not have yet
+    when it runs the tests: they are skipped there and run under `colcon test`."""
+    if os.environ.get('MOLA_SKIP_INTEGRATION_TESTS'):
+        return 'MOLA_SKIP_INTEGRATION_TESTS is set'
+    try:
+        get_package_share_directory(package)
+    except PackageNotFoundError:
+        return f'{package} is not installed yet (e.g. a Debian package build)'
+    return None
+
 
 def wrap_pi(angle):
     """Wrap angle (radians) to [-pi, pi]."""

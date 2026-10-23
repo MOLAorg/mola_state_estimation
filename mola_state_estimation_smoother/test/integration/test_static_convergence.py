@@ -17,6 +17,7 @@ import launch.actions
 import launch_ros.actions
 import launch_testing
 import launch_testing.actions
+import launch_testing.util
 import launch_testing.markers
 import pytest
 import rclpy
@@ -26,9 +27,8 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import PoseLatest, wrap_pi, wait_for_convergence  # noqa: E402, isort:skip
+from common import integration_skip_reason, PoseLatest, wrap_pi, wait_for_convergence  # noqa: E402, isort:skip
 
-_SKIP_ENV = 'MOLA_SKIP_INTEGRATION_TESTS'
 
 # ------------------------------------------------------------------
 # Launch description
@@ -37,8 +37,10 @@ _SKIP_ENV = 'MOLA_SKIP_INTEGRATION_TESTS'
 
 @pytest.mark.launch_test
 def generate_test_description():
-    if os.environ.get(_SKIP_ENV):
+    if integration_skip_reason():
+        # nothing to launch: keep the launch alive until the (skipped) tests have run
         return launch.LaunchDescription([
+            launch_testing.util.KeepAliveProc(),
             launch_testing.actions.ReadyToTest(),
         ])
 
@@ -144,8 +146,9 @@ class TestStaticConvergence(unittest.TestCase):
         rclpy.shutdown()
 
     def test_pose_convergence(self):
-        if os.environ.get(_SKIP_ENV):
-            self.skipTest('MOLA_SKIP_INTEGRATION_TESTS is set')
+        reason = integration_skip_reason()
+        if reason:
+            self.skipTest(reason)
 
         wait_for_convergence(
             self.checker,

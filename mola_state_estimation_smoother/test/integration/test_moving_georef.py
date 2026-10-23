@@ -16,6 +16,7 @@ import launch.actions
 import launch_ros.actions
 import launch_testing
 import launch_testing.actions
+import launch_testing.util
 import pytest
 import rclpy
 from ament_index_python import get_package_share_directory
@@ -23,9 +24,8 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import PoseLatest, wait_for_convergence  # noqa: E402, isort:skip
+from common import integration_skip_reason, PoseLatest, wait_for_convergence  # noqa: E402, isort:skip
 
-_SKIP_ENV = 'MOLA_SKIP_INTEGRATION_TESTS'
 
 # ------------------------------------------------------------------
 # Launch description
@@ -34,8 +34,10 @@ _SKIP_ENV = 'MOLA_SKIP_INTEGRATION_TESTS'
 
 @pytest.mark.launch_test
 def generate_test_description():
-    if os.environ.get(_SKIP_ENV):
+    if integration_skip_reason():
+        # nothing to launch: keep the launch alive until the (skipped) tests have run
         return launch.LaunchDescription([
+            launch_testing.util.KeepAliveProc(),
             launch_testing.actions.ReadyToTest(),
         ])
 
@@ -142,8 +144,9 @@ class TestMovingGeoRef(unittest.TestCase):
         rclpy.shutdown()
 
     def test_moving_trajectory_tracking(self):
-        if os.environ.get(_SKIP_ENV):
-            self.skipTest('MOLA_SKIP_INTEGRATION_TESTS is set')
+        reason = integration_skip_reason()
+        if reason:
+            self.skipTest(reason)
 
         # The estimator publishes pose in the `map` frame, while ground truth is
         # in the `enu` frame. With link_first_pose_to_reference_origin_sigma=1e-6
