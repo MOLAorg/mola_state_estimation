@@ -1,5 +1,5 @@
 import difflib
-from distutils import spawn
+import shutil
 import glob
 import os
 import sys
@@ -47,7 +47,7 @@ class ClangFormat:
                     programs[i] += '.exe'
 
             for program in programs:
-                self.clang_path = spawn.find_executable(program)
+                self.clang_path = shutil.which(program)
 
                 if self.clang_path:
                     if not self._validate_version():
