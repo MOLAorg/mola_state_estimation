@@ -474,7 +474,8 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
      - Increments as above, plus wheel velocities (``sigma_wheel_odom_*``).
    * - ``sensor_msgs/Imu``
      - Orientation as an absolute attitude factor (``imu_attitude_sigma_deg``, 0 disables;
-       ``imu_attitude_azimuth_offset_deg``); acceleration as gravity direction
+       ``imu_attitude_azimuth_offset_deg``; at most one per ``imu_attitude_min_sample_period``;
+       optional azimuth bias state, see below); acceleration as gravity direction
        (``imu_normalized_gravity_alignment_sigma``, 0 disables); angular velocity as a prior
        on :math:`\boldsymbol{\omega}_k` (``imu_angular_velocity_sigma``, 0 disables).
        Readings are averaged over ``imu_min_sample_period``.
@@ -499,6 +500,25 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
    that yaw is taken as the absolute heading. By default (offset 0), yaw zero is assumed to point
    North; IMUs whose yaw zero points East (ENU, as in REP-103) need
    ``imu_attitude_azimuth_offset_deg: -90``.
+
+   **IMU azimuth bias.** Magnetometer-based headings carry an error shared by all readings
+   (hard/soft-iron residuals, mounting offsets). Fused as independent readings, their average
+   looks ever more precise while it keeps that error. With ``imu_attitude_yaw_bias_sigma_deg``
+   > 0, the smoother estimates it as a state :math:`b_k` (one per keyframe with attitude), so
+   that each reading observes :math:`R_z(b_k) R_k`, with a first-order Gauss-Markov model:
+
+   .. math::
+
+      b_k = \phi b_{k-1} + w_k, \quad \phi = e^{-\Delta t / \tau}, \quad
+      \sigma_{w_k}^2 = \sigma_b^2 (1 - \phi^2)
+
+   with :math:`\sigma_b` = ``imu_attitude_yaw_bias_sigma_deg`` (stationary sigma) and
+   :math:`\tau` = ``imu_attitude_yaw_bias_time_constant``. While only the IMU observes the
+   heading, its sigma stays near :math:`\sigma_b`; once other sources (e.g. LiDAR
+   localization in a map) observe it, the bias is estimated and keeps correcting the IMU
+   heading for a time of the order of :math:`\tau`. ``publish_imu_yaw_bias: true`` publishes
+   it (ROS 2: ``std_msgs/Float32`` ``mola_diagnostics/<module>/imu_yaw_bias_deg`` and
+   ``imu_yaw_bias_sigma_deg``).
 
 3.3. Outputs
 ~~~~~~~~~~~~~~

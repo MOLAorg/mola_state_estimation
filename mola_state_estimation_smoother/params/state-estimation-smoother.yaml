@@ -51,6 +51,11 @@ params:
   publish_fused_vehicle_tf: ${MOLA_PUBLISH_FUSED_VEHICLE_TF|false}
   fused_vehicle_frame_name: "${MOLA_TF_BASE_LINK_FUSED|base_link_fused}"
 
+  # If true, publish the estimated IMU attitude yaw bias (imu_attitude_yaw_bias_sigma_deg > 0)
+  # as module diagnostics, once per diagnostics period: the ROS 2 bridge publishes them as
+  # std_msgs/Float32 mola_diagnostics/<module>/imu_yaw_bias_deg and imu_yaw_bias_sigma_deg.
+  publish_imu_yaw_bias: ${MOLA_NAVSTATE_PUBLISH_IMU_YAW_BIAS|false}
+
   # --------------------------------------------------------------------------
   # Kinematic Model & Motion Factors
   # --------------------------------------------------------------------------
@@ -248,6 +253,19 @@ params:
   # - IMU absolute yaw=0 points True North ==> offset=0
   # - IMU absolute yaw=0 points East ==> offset=-90
   imu_attitude_azimuth_offset_deg: "${MOLA_IMU_ATTITUDE_AZIMUTH_OFFSET|0.0}"
+
+  # Stationary sigma [deg] of an unknown bias of the IMU azimuth (yaw), estimated as a state
+  # shared by all readings, so averaging them never brings the heading sigma below it while
+  # nothing else observes the heading. 0 disables it (readings fused as independent).
+  imu_attitude_yaw_bias_sigma_deg: "${MOLA_IMU_ATTITUDE_YAW_BIAS_SIGMA|0.0}"
+
+  # Correlation time [s] of that bias (first-order Gauss-Markov process).
+  imu_attitude_yaw_bias_time_constant: "${MOLA_IMU_ATTITUDE_YAW_BIAS_TIME_CONSTANT|120.0}"
+
+  # Minimum period [s] between fused attitude readings of each IMU (0 = all, after
+  # imu_min_sample_period). Consecutive readings are strongly correlated: a high rate adds
+  # cost but no information. Gravity and angular velocity are not affected.
+  imu_attitude_min_sample_period: "${MOLA_IMU_ATTITUDE_MIN_SAMPLE_PERIOD|0.5}"
 
   # When using an IMU with acceleration, use this sigma to estimate the up-vector, hence
   # gravity-align the map.

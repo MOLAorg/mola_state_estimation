@@ -59,6 +59,7 @@
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
+#include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
 
 #if __has_include(<mola_imu_preintegration/ImuAverager.h>)
@@ -287,6 +288,7 @@ using gtsam::symbol_shorthand::F;  // Frame of references (Pose3)
 const auto symbol_T_enu_to_map         = F(0);
 const auto symbol_T_map_to_odom_i_base = F(0);  // odom[i] = thisSymbol + i (with i>=1)
 
+using gtsam::symbol_shorthand::B;  // IMU attitude yaw bias [rad]   (double)
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
@@ -367,6 +369,15 @@ struct StateEstimationSmoother::GtsamImpl
     bool                         rollPitchObserved = false;
     bool                         yawObserved       = false;
     std::optional<gtsam::Point2> firstGnssXYForYaw;
+
+    /// Tail of the chain of IMU attitude yaw bias variables B(k), and its key stamp
+    std::optional<frame_index_t> lastYawBiasKf;
+    double                       lastYawBiasStamp = 0;
+
+    /// Latest solved IMU attitude yaw bias: mean and sigma [rad], and the key stamp of
+    /// its last sigma update
+    std::optional<std::pair<double, double>> yawBiasEstimate;
+    double                                   yawBiasSigmaStamp = 0;
 
     /// Whether the reported orientation is pinned by a gauge anchor, not observed
     [[nodiscard]] bool rollPitchPinned() const { return orientationAnchor && !rollPitchObserved; }
@@ -605,6 +616,17 @@ void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& geor
 
 void StateEstimationSmoother::spinOnce()
 {
+    if (params_.publish_imu_yaw_bias && module_is_time_to_publish_diagnostics())
+    {
+        if (const auto bias = estimated_imu_yaw_bias(); bias)
+        {
+            const auto now = mrpt::Clock::now();
+            module_publish_diagnostics({now, "imu_yaw_bias_deg", mrpt::RAD2DEG(bias->first)});
+            module_publish_diagnostics(
+                {now, "imu_yaw_bias_sigma_deg", mrpt::RAD2DEG(bias->second)});
+        }
+    }
+
     // At the predefined module rate, publish the current estimation, if we have any subscriber:
     if (!anyUpdateLocalizationSubscriber())
     {
@@ -769,6 +791,10 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::reset_locked()
 {
     state_ = State();
+    {
+        std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
+        lastYawBias_.reset();
+    }
     if (fastPredictor_)
     {
         fastPredictor_->clear();
@@ -1144,6 +1170,26 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // From the fused reading: an average can carry channels its newest reading lacks.
     const bool fuseAngularVelocity = hasAngularVelocity(imu);
 
+    // Absolute attitude readings, at most one per imu_attitude_min_sample_period:
+    bool fuseAttitude = imu.has(mrpt::obs::IMU_ORI_QUAT_W) && params_.imu_attitude_sigma_deg > 0;
+    if (fuseAttitude && params_.imu_attitude_min_sample_period > 0)
+    {
+        const auto it = state_.last_imu_attitude_stamp.find(imu.sensorLabel);
+        if (it != state_.last_imu_attitude_stamp.end() &&
+            std::abs(mrpt::system::timeDifference(it->second, imu.timestamp)) <
+                params_.imu_attitude_min_sample_period)
+        {
+            fuseAttitude = false;
+        }
+    }
+
+    const bool fuseGravity =
+        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    if (!fuseAttitude && !fuseGravity && !fuseAngularVelocity)
+    {
+        return;  // a keyframe without factors would only add cost
+    }
+
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
         imu.timestamp, params_.imu_nearby_keyframe_stamp_tolerance);
@@ -1152,12 +1198,12 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         "[fuse_imu]: t=%f  this_kf_id=%zu ", mrpt::Clock::toDouble(imu.timestamp),
         static_cast<size_t>(this_kf_id));
 
-    // Shared by every branch below (at least one runs, given the early return above):
+    // Shared by every branch below (at least one runs, given the early returns above):
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
 
     // Direct azimuth observation?
     // -------------------------------------------------
-    if (imu.has(mrpt::obs::IMU_ORI_QUAT_W) && params_.imu_attitude_sigma_deg > 0)
+    if (fuseAttitude)
     {
         const double qw = imu.get(mrpt::obs::IMU_ORI_QUAT_W);
         const double qx = imu.get(mrpt::obs::IMU_ORI_QUAT_X);
@@ -1206,9 +1252,21 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             auto rotationNoise = gtsam::noiseModel::Isotropic::Sigma(
                 3, mrpt::DEG2RAD(params_.imu_attitude_sigma_deg));
 
-            state_.gtsam->newFactors.emplace_shared<mola::factors::Pose3RotationFactor>(
-                symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredRotation,
-                rotationNoise);
+            state_.last_imu_attitude_stamp[imu.sensorLabel] = imu.timestamp;
+
+            if (params_.imu_attitude_yaw_bias_sigma_deg > 0)
+            {
+                add_imu_yaw_bias_variable_locked(this_kf_id);
+                state_.gtsam->newFactors.emplace_shared<mola::factors::Pose3RotationYawBiasFactor>(
+                    symbol_T_enu_to_map, T(this_kf_id), B(this_kf_id), sensorOnVehicle,
+                    measuredRotation, rotationNoise);
+            }
+            else
+            {
+                state_.gtsam->newFactors.emplace_shared<mola::factors::Pose3RotationFactor>(
+                    symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredRotation,
+                    rotationNoise);
+            }
 
             // Absolute attitude observes the azimuth of T_enu_to_map, and through
             // a fixed one, the orientation of {map}:
@@ -1223,7 +1281,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
 
     // Gravity-aligned acceleration observation?
     // -------------------------------------------------
-    if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
+    if (fuseGravity)
     {
         // TODO: Use ImuTransformer, etc.
 
@@ -1287,6 +1345,54 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             state_.gtsam->newFactors.addPrior(W(this_kf_id), measuredW_vehicle, gyroNoise);
         }
     }
+}
+
+// One yaw bias variable per keyframe with attitude readings, all of them linked
+// as a first-order Gauss-Markov process, so it can slowly change over time. Its
+// stationary sigma is that of the prior on the first variable of the chain.
+void StateEstimationSmoother::add_imu_yaw_bias_variable_locked(const frame_index_t kf)
+{
+    auto&            g   = *state_.gtsam;
+    const gtsam::Key key = B(kf);
+    if (g.newValues.exists(key) || g.smoother->getLinearizationPoint().exists(key))
+    {
+        return;  // another reading on the same keyframe
+    }
+
+    const double stamp  = key_stamp_seconds(state_.stamp2frame_index.inverse(kf));
+    const double sigmaB = mrpt::DEG2RAD(params_.imu_attitude_yaw_bias_sigma_deg);
+
+    double initialValue = 0;
+
+    // Same check as for other chains: a factor on a marginalized variable would
+    // bring it back as a free one.
+    if (g.lastYawBiasKf && state_.last_estimated_states.count(*g.lastYawBiasKf) != 0)
+    {
+        const double dt  = std::abs(stamp - g.lastYawBiasStamp);
+        const double phi = std::exp(-dt / params_.imu_attitude_yaw_bias_time_constant);
+        // Floor: two keyframes may be (almost) simultaneous.
+        constexpr double minSigma = 1e-6;
+        const double     sigmaW   = std::max(sigmaB * std::sqrt(1.0 - phi * phi), minSigma);
+
+        if (g.yawBiasEstimate)
+        {
+            initialValue = phi * g.yawBiasEstimate->first;
+        }
+
+        const gtsam::Expression<double> bPrev(B(*g.lastYawBiasKf));
+        const gtsam::Expression<double> bNew(key);
+        g.newFactors.emplace_shared<gtsam::ExpressionFactor<double>>(
+            gtsam::noiseModel::Isotropic::Sigma(1, sigmaW), 0.0, bNew - phi * bPrev);
+    }
+    else
+    {
+        g.newFactors.addPrior(key, 0.0, gtsam::noiseModel::Isotropic::Sigma(1, sigmaB));
+    }
+
+    g.newValues.insert(key, initialValue);
+    g.newKeyStamps[key] = stamp;
+    g.lastYawBiasKf     = kf;
+    g.lastYawBiasStamp  = stamp;
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
@@ -2807,6 +2913,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 ++nTwistPrior;
             else if (dynamic_cast<const mola::factors::Pose3RotationFactor*>(p))
                 ++nImuAttitude;
+            else if (dynamic_cast<const mola::factors::Pose3RotationYawBiasFactor*>(p))
+                ++nImuAttitude;
             else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
                 ++nImuGravity;
             else if (dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p))
@@ -2891,6 +2999,24 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 enforce_planar_twist(kf.twist);
             }
         }
+    }
+
+    if (const auto& kf = state_.gtsam->lastYawBiasKf; kf && optValues.exists(B(*kf)))
+    {
+        auto& g = *state_.gtsam;
+
+        // Its marginal is as costly as a solve: refreshed at most once per second of data.
+        constexpr double sigmaPeriod = 1.0;
+        double           sigma       = g.yawBiasEstimate ? g.yawBiasEstimate->second : 0;
+        if (!g.yawBiasEstimate || g.lastYawBiasStamp - g.yawBiasSigmaStamp >= sigmaPeriod)
+        {
+            sigma               = std::sqrt(smoother.marginalCovariance(B(*kf))(0, 0));
+            g.yawBiasSigmaStamp = g.lastYawBiasStamp;
+        }
+        g.yawBiasEstimate = {optValues.at<double>(B(*kf)), sigma};
+
+        std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
+        lastYawBias_ = g.yawBiasEstimate;
     }
 
     state_.gtsam->mapObservedSolved = state_.gtsam->mapObserved;
@@ -3618,6 +3744,12 @@ std::optional<mrpt::poses::CPose3DPDFGaussian> StateEstimationSmoother::estimate
 {
     auto lck = mrpt::lockHelper(stateMutex_);
     return estimated_T_enu_to_map_locked();
+}
+
+std::optional<std::pair<double, double>> StateEstimationSmoother::estimated_imu_yaw_bias() const
+{
+    std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
+    return lastYawBias_;
 }
 
 std::optional<mrpt::poses::CPose3DPDFGaussian>
