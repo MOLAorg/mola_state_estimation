@@ -55,6 +55,7 @@ mola_add_library(
     include/mola_gtsam_factors/MapGravityFactor.h
     include/mola_gtsam_factors/MeasuredGravityFactor.h
     include/mola_gtsam_factors/Pose3RotationFactor.h
+    include/mola_gtsam_factors/Pose3RotationYawBiasFactor.h
     src/FactorAngularVelocityIntegration.cpp
     src/FactorConstLocalVelocity.cpp
     src/FactorGnssEnu.cpp
@@ -65,6 +66,7 @@ mola_add_library(
     src/MapGravityFactor.cpp
     src/MeasuredGravityFactor.cpp
     src/Pose3RotationFactor.cpp
+    src/Pose3RotationYawBiasFactor.cpp
     src/register.cpp
   PUBLIC_LINK_LIBRARIES
     gtsam
