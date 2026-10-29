@@ -36,6 +36,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, map_to_odom_child_frame);
     MCP_LOAD_OPT(cfg, publish_fused_vehicle_tf);
     MCP_LOAD_OPT(cfg, fused_vehicle_frame_name);
+    MCP_LOAD_OPT(cfg, publish_imu_yaw_bias);
 
     // Kinematic factors and keyframe creation (motion model)
     // -------------------------------------------------------
@@ -102,6 +103,11 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, imu_attitude_sigma_deg);
     MCP_LOAD_OPT(cfg, imu_attitude_azimuth_offset_deg);
+    MCP_LOAD_OPT(cfg, imu_attitude_yaw_bias_sigma_deg);
+    MCP_LOAD_OPT(cfg, imu_attitude_yaw_bias_time_constant);
+    MCP_LOAD_OPT(cfg, imu_attitude_min_sample_period);
+    ASSERT_GE_(imu_attitude_yaw_bias_sigma_deg, 0.0);
+    ASSERT_GT_(imu_attitude_yaw_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
 

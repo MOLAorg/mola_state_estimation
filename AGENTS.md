@@ -71,7 +71,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (26) | `tests/test-*.cpp` |
+| Unit tests (30) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -95,6 +95,15 @@ Sensor inputs:
   `1e-4` variance floor).
 - `fuse_imu()`: attitude, gravity (`MeasuredGravityFactor`) and a Huber-robust
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
+  Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
+  With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
+  bias state `B(k)` (double, one per keyframe with attitude,
+  `Pose3RotationYawBiasFactor`), a first-order Gauss-Markov chain
+  (`imu_attitude_yaw_bias_time_constant`; prior on the chain's first variable,
+  restarted if its tail was marginalized). While only the IMU observes the
+  heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
+  `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
+  diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
 
@@ -192,6 +201,7 @@ the C++ defaults.
 | `odometry_min_sample_period` (`MOLA_ODOMETRY_MIN_SAMPLE_PERIOD`) | 0.1 | 0 |
 | `imu_min_sample_period` (`MOLA_IMU_MIN_SAMPLE_PERIOD`) | 0.1 | 0 |
 | `sliding_window_length` (`MOLA_NAVSTATE_SLIDING_WINDOW_SEC`) | 6.0 | 5.0 |
+| `imu_attitude_min_sample_period` (`MOLA_IMU_ATTITUDE_MIN_SAMPLE_PERIOD`) | 0.5 | 0 |
 | `sigma_integrator_orientation` (`MOLA_NAVSTATE_SIGMA_INTEGRATOR_ANG`) | 1.0 | 0.1 |
 
 Set `async_backend: false` for offline, reproducible runs
@@ -221,6 +231,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |
+| `Pose3RotationYawBiasFactor` | `ExpressionFactorN` | Rotation-only, with a scalar azimuth bias variable |
 
 `imu_helpers.h`: accelerometer/quaternion sanity checks and the ENU azimuth
 correction shared by the estimators and georeferencing.

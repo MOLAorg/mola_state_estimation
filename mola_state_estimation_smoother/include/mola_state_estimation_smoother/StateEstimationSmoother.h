@@ -236,6 +236,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Gets the latest estimated transform of T_enu_to_map
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map() const;
 
+    /** Gets the latest estimated IMU attitude yaw bias, as mean and sigma [rad], or empty if
+     *  it is not estimated (`imu_attitude_yaw_bias_sigma_deg` = 0) or not solved yet.
+     *  A reading's ENU yaw is the true one plus this bias. */
+    [[nodiscard]] std::optional<std::pair<double, double>> estimated_imu_yaw_bias() const;
+
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_map_to_odometry_frame(
         const std::string& frame_id) const;
@@ -424,6 +429,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Created on first use. See ImuDecimator.
         std::shared_ptr<ImuDecimator> imu_decimator;
 
+        /// Per IMU sensor label, stamp of its last fused attitude reading
+        std::map<std::string, mrpt::Clock::time_point> last_imu_attitude_stamp;
+
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
          * georeferencing parameters.
@@ -447,6 +455,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     State      state_;
     std::mutex stateMutex_;
+
+    /// Copy of the latest solved IMU yaw bias (mean, sigma) [rad], with its own
+    /// mutex so readers never wait for a solve holding stateMutex_.
+    std::optional<std::pair<double, double>> lastYawBias_;
+    mutable std::mutex                       lastYawBiasMutex_;
 
     /// Poses of the keyframes already marginalized out, in the reference frame,
     /// each recorded at the moment it left the window. Only filled when
@@ -529,6 +542,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_odometry_locked(
         const mrpt::obs::CObservationOdometry& odom, const std::string& odomName);
     void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);
+    /// Creates the yaw bias variable of keyframe `kf`, if it does not exist yet
+    void add_imu_yaw_bias_variable_locked(frame_index_t kf);
     void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
     void fuse_twist_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
