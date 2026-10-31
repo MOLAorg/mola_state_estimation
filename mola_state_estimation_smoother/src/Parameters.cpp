@@ -109,6 +109,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     ASSERT_GE_(imu_attitude_yaw_bias_sigma_deg, 0.0);
     ASSERT_GT_(imu_attitude_yaw_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
+    MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
 
     // Geo-referencing

@@ -1183,8 +1183,35 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         }
     }
 
-    const bool fuseGravity =
-        imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
+    // Gravity: the average of the accelerometer over imu_gravity_min_sample_period, if
+    // that period just completed:
+    std::optional<gtsam::Vector3> measuredGravity;
+    if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
+    {
+        const mrpt::math::TVector3D acc = {
+            imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
+            imu.get(mrpt::obs::IMU_Z_ACC)};
+
+        auto& avg = state_.imu_gravity_average[imu.sensorLabel];
+        if (!avg.first_stamp)
+        {
+            avg.first_stamp = imu.timestamp;
+        }
+        avg.sum += acc;
+        avg.count++;
+
+        // Each decimated reading already covers about imu_min_sample_period:
+        const double covered = mrpt::system::timeDifference(*avg.first_stamp, imu.timestamp) +
+                               params_.imu_min_sample_period;
+        if (covered >= params_.imu_gravity_min_sample_period - 1e-6)
+        {
+            const auto mean = avg.sum * (1.0 / static_cast<double>(avg.count));
+            measuredGravity = gtsam::Vector3(mean.x, mean.y, mean.z);
+            avg             = {};
+        }
+    }
+    const bool fuseGravity = measuredGravity.has_value();
+
     if (!fuseAttitude && !fuseGravity && !fuseAngularVelocity)
     {
         return;  // a keyframe without factors would only add cost
@@ -1285,14 +1312,10 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     {
         // TODO: Use ImuTransformer, etc.
 
-        const gtsam::Vector3 measuredGravity = {
-            imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
-            imu.get(mrpt::obs::IMU_Z_ACC)};
-
         // Some IMU drivers publishes normalized acc:
-        if (mola::factors::imu_accel_looks_like_gravity(measuredGravity))
+        if (mola::factors::imu_accel_looks_like_gravity(*measuredGravity))
         {
-            const gtsam::Vector3 measuredGravityNormalized = measuredGravity.normalized();
+            const gtsam::Vector3 measuredGravityNormalized = measuredGravity->normalized();
 
             // Create noise model for gravity alignment:
             auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
