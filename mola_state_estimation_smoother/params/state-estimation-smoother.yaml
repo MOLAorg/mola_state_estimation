@@ -267,10 +267,15 @@ params:
   # cost but no information. Gravity and angular velocity are not affected.
   imu_attitude_min_sample_period: "${MOLA_IMU_ATTITUDE_MIN_SAMPLE_PERIOD|0.5}"
 
-  # When using an IMU with acceleration, use this sigma to estimate the up-vector, hence
+  # When using an IMU with acceleration, use this sigma [deg] to estimate the up-vector, hence
   # gravity-align the map.
   # Set to 0 to disable.
-  imu_normalized_gravity_alignment_sigma: "${MOLA_IMU_GRAVITY_ALIGNMENT_SIGMA|0.4}"
+  imu_normalized_gravity_alignment_sigma: "${MOLA_IMU_GRAVITY_ALIGNMENT_SIGMA|2.0}"
+
+  # Accelerometer readings are averaged over periods of about this length [s], one gravity
+  # factor per period (0 = one per imu_min_sample_period reading). Short averages on a
+  # vibrating vehicle tilt by several degrees; vibration averages out over ~1 s.
+  imu_gravity_min_sample_period: "${MOLA_IMU_GRAVITY_MIN_SAMPLE_PERIOD|1.0}"
 
   # When an IMU provides angular velocity (gyroscope), add a direct prior on the
   # corresponding keyframe's body-frame angular-velocity variable [rad/s], instead of

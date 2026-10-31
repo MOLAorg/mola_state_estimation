@@ -413,11 +413,18 @@ class Parameters
      */
     double imu_attitude_min_sample_period = 0.0;
 
-    /** When using an IMU with acceleration, use this sigma to estimate the up-vector, hence
+    /** When using an IMU with acceleration, use this sigma [deg] to estimate the up-vector, hence
      * gravity-align the map.
      * Set to 0 to disable.
      */
-    double imu_normalized_gravity_alignment_sigma = 0.4;
+    double imu_normalized_gravity_alignment_sigma = 2.0;
+
+    /** Accelerometer readings are averaged over periods of about this length [s], and one
+     * gravity factor is fused per period (0 = one per imu_min_sample_period reading).
+     * On a vibrating vehicle short averages tilt by several degrees, while vibration averages
+     * out over ~1 s; vehicle accelerations still bias it, hence the sigma above.
+     */
+    double imu_gravity_min_sample_period = 1.0;
 
     /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
      * corresponding keyframe's body-frame angular-velocity variable, sensor-to-vehicle

@@ -38,6 +38,7 @@
 #include <mrpt/containers/bimap.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/pimpl.h>
+#include <mrpt/math/TPoint3D.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
@@ -431,6 +432,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         /// Per IMU sensor label, stamp of its last fused attitude reading
         std::map<std::string, mrpt::Clock::time_point> last_imu_attitude_stamp;
+
+        /// Per IMU sensor label, accelerometer readings being averaged for the next
+        /// gravity factor (see imu_gravity_min_sample_period)
+        struct GravityAverage
+        {
+            std::optional<mrpt::Clock::time_point> first_stamp;
+            mrpt::math::TVector3D                  sum{0, 0, 0};
+            size_t                                 count = 0;
+        };
+        std::map<std::string, GravityAverage> imu_gravity_average;
 
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
