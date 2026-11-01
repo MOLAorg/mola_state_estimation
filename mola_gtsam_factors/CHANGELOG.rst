@@ -2,6 +2,11 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* New Pose3RotationYawBiasFactor: absolute attitude with a scalar azimuth bias variable (`#89 <https://github.com/MOLAorg/mola_state_estimation/issues/89>`_)
+* Contributors: Jose Luis Blanco-Claraco
+
 3.1.0 (2026-10-19)
 ------------------
 
