@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.2.0 (2026-11-01)
+------------------
 * mola-trajectory-georef: accept YAML geo-referencing files, as sm2mm and mm-georef do (`#88 <https://github.com/MOLAorg/mola_state_estimation/issues/88>`_)
 * Contributors: Jose Luis Blanco-Claraco
 

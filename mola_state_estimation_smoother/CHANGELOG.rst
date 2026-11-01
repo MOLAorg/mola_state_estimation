@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.2.0 (2026-11-01)
+------------------
 * Optional IMU attitude azimuth bias state (Gauss-Markov), attitude decimation and bias diagnostics (`#89 <https://github.com/MOLAorg/mola_state_estimation/issues/89>`_)
 * Average the IMU gravity factor over ~1 s (imu_gravity_min_sample_period), default sigma 2 deg (`#90 <https://github.com/MOLAorg/mola_state_estimation/issues/90>`_)
 * Integration tests: skip, instead of failing, when the package is not installed yet (`#87 <https://github.com/MOLAorg/mola_state_estimation/issues/87>`_)
