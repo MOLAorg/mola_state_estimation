@@ -354,6 +354,11 @@ struct StateEstimationSmoother::GtsamImpl
     bool                       mapObserved    = false;
     /// mapObserved, as of the last solve (the observation is in the estimate)
     bool mapObservedSolved = false;
+    /// Whether some source observes the position of {map} (GNSS through a
+    /// fixed geo-reference, or a pose in {map}), not just its orientation
+    /// (absolute attitude), and its value as of the last solve:
+    bool mapPositionObserved       = false;
+    bool mapPositionObservedSolved = false;
 
     /// Pins the azimuth of T_enu_to_map while no IMU attitude or GNSS observes it
     std::optional<GaugeAnchor>   enuYawAnchor;
@@ -614,6 +619,27 @@ void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& geor
 }
 #endif
 
+bool StateEstimationSmoother::reference_frame_position_observed()
+{
+    if (params_.async_backend)
+    {
+        const auto snap = fastPredictor_->snapshot();
+        return snap && (!snap->geoReference.has_value() || snap->mapPositionObserved);
+    }
+    auto lck = mrpt::lockHelper(stateMutex_);
+    if (!state_.geo_reference.has_value())
+    {
+        return true;
+    }
+    // The synchronous solve is lazy: run it, as estimated_navstate() would, but
+    // only until the flag is set, so publishing does not solve twice.
+    if (!state_.gtsam->mapPositionObservedSolved)
+    {
+        process_pending_gtsam_updates_locked();
+    }
+    return state_.gtsam->mapPositionObservedSolved;
+}
+
 void StateEstimationSmoother::spinOnce()
 {
     if (params_.publish_imu_yaw_bias && module_is_time_to_publish_diagnostics())
@@ -650,6 +676,20 @@ void StateEstimationSmoother::spinOnce()
     if (!tNowOpt)
     {
         MRPT_LOG_THROTTLE_WARN(5.0, "Cannot publish vehicle pose (no input data yet?)");
+        return;
+    }
+
+    // With a fixed geo-reference (relocalization in a known map), the position
+    // of {map} is only that of the first odometry frame until some source
+    // observes it (a GNSS fix, or a pose in {map}; an absolute attitude only
+    // observes its orientation): a pose in it would be the raw odometry one.
+    // Do not publish it, nor map->odom, until then.
+    if (!params_.estimate_geo_reference && !reference_frame_position_observed())
+    {
+        MRPT_LOG_THROTTLE_INFO(
+            5.0,
+            "Not publishing the vehicle pose yet: waiting for an observation of the "
+            "geo-referenced reference frame (e.g. GNSS).");
         return;
     }
 
@@ -1519,6 +1559,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     if (params_.fixed_geo_reference.has_value())
     {
         mark_map_observed_locked();
+        state_.gtsam->mapPositionObserved = true;
     }
 
     // Likewise, a pinned yaw becomes observable once the fixes span a baseline
@@ -1667,6 +1708,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     {
         // ref is "map":
         mark_map_observed_locked();
+        state_.gtsam->mapPositionObserved = true;
         mark_orientation_observed_locked(true, true);
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out,
@@ -3042,7 +3084,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         lastYawBias_ = g.yawBiasEstimate;
     }
 
-    state_.gtsam->mapObservedSolved = state_.gtsam->mapObserved;
+    state_.gtsam->mapObservedSolved         = state_.gtsam->mapObserved;
+    state_.gtsam->mapPositionObservedSolved = state_.gtsam->mapPositionObserved;
 
     // Age out keyframes that fell outside the window, now that the writeback
     // above has given every one of them its final solved value. Done here,
@@ -3674,6 +3717,7 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
         }
     }
     snap->localizationConverged = converged;
+    snap->mapPositionObserved   = state_.gtsam->mapPositionObservedSolved;
 
     snap->valid = true;
     return snap;

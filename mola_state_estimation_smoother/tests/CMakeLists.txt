@@ -154,6 +154,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-publish-needs-map-observation
+  SOURCES test-publish-needs-map-observation.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-predict-twist-filter
   SOURCES test-predict-twist-filter.cpp
   LINK_LIBRARIES

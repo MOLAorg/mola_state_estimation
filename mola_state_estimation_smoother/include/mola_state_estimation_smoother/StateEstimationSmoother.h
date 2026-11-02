@@ -531,6 +531,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Some measurement now observes {map}: its gauge anchor is no longer needed.
     void mark_map_observed_locked();
+
+    /// False while a fixed geo-reference is set but no source has observed the
+    /// position of {map} yet (it is only the first odometry frame then). Runs a pending
+    /// synchronous solve, as estimated_navstate() does. Takes the locks
+    /// it needs: not to be called with stateMutex_ held.
+    [[nodiscard]] bool reference_frame_position_observed();
     /// A source observes the vehicle roll/pitch and/or yaw in {map}
     void mark_orientation_observed_locked(bool rollPitch, bool yaw);
     /// Replaces the orientation entries of a pose covariance that only a gauge
