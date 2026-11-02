@@ -76,6 +76,11 @@ struct Snapshot
     /// Whether localization has converged (mode-aware, mirrors
     /// has_converged_localization()).
     bool localizationConverged = false;
+
+    /// Whether some source has observed the position of {map} in the solved
+    /// estimate (GNSS, or a pose in {map}). Until then, with a fixed
+    /// geo-reference, it is only the position of the first odometry frame.
+    bool mapPositionObserved = false;
 };
 
 }  // namespace mola::state_estimation_smoother
