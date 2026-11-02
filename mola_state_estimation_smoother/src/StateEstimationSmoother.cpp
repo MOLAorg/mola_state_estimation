@@ -631,8 +631,12 @@ bool StateEstimationSmoother::reference_frame_position_observed()
     {
         return true;
     }
-    // The synchronous solve is lazy: run it, as estimated_navstate() would.
-    process_pending_gtsam_updates_locked();
+    // The synchronous solve is lazy: run it, as estimated_navstate() would, but
+    // only until the flag is set, so publishing does not solve twice.
+    if (!state_.gtsam->mapPositionObservedSolved)
+    {
+        process_pending_gtsam_updates_locked();
+    }
     return state_.gtsam->mapPositionObservedSolved;
 }
 
