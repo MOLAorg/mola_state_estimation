@@ -171,8 +171,13 @@ Other behavior:
 
 Georeferencing and relocalization:
 - `estimate_geo_reference: true`: `T_enu_to_map` estimated from GNSS/IMU,
-  published once its sigmas pass `convergence_max_position_sigma`/
-  `convergence_max_orientation_sigma_deg`.
+  published (and reported by `current_georeferencing()`) only once its sigmas pass
+  `convergence_max_position_sigma`/`convergence_max_orientation_sigma_deg` (roll/pitch
+  only if observed). Without an attitude source, while its azimuth is pinned by the
+  gauge anchor, neither GNSS nor gravity factors are added: once marginalized at the
+  pinned azimuth (standing still longer than the window), they biased it for good.
+  The fix completing the baseline replaces the anchor with a prior at the azimuth
+  measured by the GNSS vs. {map} antenna displacement.
 - `set_geo_reference()` / `fixed_geo_reference`: fixes `T_enu_to_map` and
   resets the estimator. Zero variances are floored to 1e-6 (singular otherwise).
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once

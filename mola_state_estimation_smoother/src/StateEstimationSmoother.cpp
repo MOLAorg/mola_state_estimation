@@ -128,9 +128,11 @@ constexpr double ENU2MAP_WEAK_SIGMA          = 1e4;
 constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
 constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
 constexpr double GAUGE_ANCHOR_SIGMA          = 1e-3;
-constexpr double PLANAR_XY_SIGMA             = 1e10;
-constexpr double PLANAR_Z_SIGMA              = 1e-4;
-constexpr double TRICYCLE_LARGE_SIGMAS       = 1e6;
+// T_enu_to_map angles with a larger sigma [rad] are unobserved (only their weak prior):
+constexpr double UNOBSERVED_ENU2MAP_ANGLE_SIGMA = 1.0;
+constexpr double PLANAR_XY_SIGMA                = 1e10;
+constexpr double PLANAR_Z_SIGMA                 = 1e-4;
+constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 
 /// Huber threshold [whitened units] for raw gyro observations; the standard
 /// value giving ~95% efficiency under Gaussian noise.
@@ -363,6 +365,8 @@ struct StateEstimationSmoother::GtsamImpl
     /// Pins the azimuth of T_enu_to_map while no IMU attitude or GNSS observes it
     std::optional<GaugeAnchor>   enuYawAnchor;
     std::optional<gtsam::Point2> firstGnssEnuXY;
+    /// Where the vehicle had the GNSS antenna in {map} at that first fix
+    std::optional<gtsam::Point2> firstGnssMapXY;
 
     /** Once {map} is observed only in position (e.g. GNSS through a fixed
      *  geo-reference, with no attitude source), pins the orientation of the
@@ -1348,7 +1352,11 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
 
     // Gravity-aligned acceleration observation?
     // -------------------------------------------------
-    if (fuseGravity)
+    // Not while the azimuth of an estimated geo-reference is still pinned by its
+    // gauge anchor: these factors tie T_enu_to_map to the vehicle, and once
+    // marginalized, at the pinned azimuth, which the real one may be far from
+    // (see fuse_gnss_locked()). Meanwhile the vehicle attitude comes from odometry.
+    if (fuseGravity && !(params_.estimate_geo_reference && state_.gtsam->enuYawAnchor))
     {
         // TODO: Use ImuTransformer, etc.
 
@@ -1528,6 +1536,120 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
 
+    // The azimuth of T_enu_to_map becomes observable only once the fixes span a
+    // horizontal baseline long enough for the configured convergence accuracy.
+    // Until then (no attitude source) it is pinned by its gauge anchor at an
+    // arbitrary value, and fixes are not fused: they would tie T_enu_to_map to the
+    // vehicle at that azimuth, and once marginalized (e.g. while the vehicle stands
+    // still for longer than the sliding window), at a linearization point far from
+    // the real one. Starting from there, the solver does not reach the real azimuth
+    // (it may be up to 180 deg away, and the robust GNSS kernel weakens the large
+    // residuals), so the anchor is replaced by a prior at the azimuth measured by
+    // the baseline: the GNSS displacement vs. the antenna displacement in {map}.
+    if (state_.gtsam->enuYawAnchor)
+    {
+        // Solved antenna position in {map} at the fix time: from the solved keyframe
+        // closest in time, moved by its twist to that time.
+        std::optional<gtsam::Point2> antennaMapXY;
+        {
+            constexpr double      MAX_DT = 0.25;  // [s]
+            const auto            nearby = find_before_after(gps.timestamp, true);
+            std::optional<double> bestDt;
+            for (const auto& it : {nearby.first, nearby.second})
+            {
+                if (it == state_.stamp2frame_index.getDirectMap().end())
+                {
+                    continue;
+                }
+                const auto st = state_.last_estimated_states.find(it->second);
+                if (st == state_.last_estimated_states.end())
+                {
+                    continue;
+                }
+                const double dt = mrpt::system::timeDifference(it->first, gps.timestamp);
+                if (std::abs(dt) > MAX_DT || (bestDt && std::abs(dt) >= std::abs(*bestDt)))
+                {
+                    continue;
+                }
+                bestDt         = dt;
+                const auto& fs = st->second;
+                const auto  v  = fs.twist;
+                const auto  at = fs.pose + mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                                               v.vx * dt, v.vy * dt, v.vz * dt, v.wz * dt, 0, 0);
+                const auto p = at.composePoint(gps.sensorPose.translation());
+                antennaMapXY = gtsam::Point2(p.x, p.y);
+            }
+        }
+        if (!antennaMapXY)
+        {
+            return;  // no solved vehicle pose near the fix time yet
+        }
+
+        const gtsam::Point2 xy(ENU_point.x, ENU_point.y);
+        auto&               g = *state_.gtsam;
+        if (!g.firstGnssEnuXY)
+        {
+            g.firstGnssEnuXY = xy;
+            g.firstGnssMapXY = antennaMapXY;
+            return;
+        }
+        const auto&  cov          = *gps.covariance_enu;
+        const double sigmaXY      = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
+        const auto   enuBaseline  = xy - *g.firstGnssEnuXY;
+        const auto   mapBaseline  = *antennaMapXY - *g.firstGnssMapXY;
+        const double baselineNorm = enuBaseline.norm();
+        const double minBaseline =
+            std::sqrt(2.0) * sigmaXY / mrpt::DEG2RAD(params_.convergence_max_orientation_sigma_deg);
+        if (baselineNorm < minBaseline)
+        {
+            return;
+        }
+
+        // Odometry and GNSS must agree on the distance, or the azimuth is not
+        // reliable: keep the anchor and measure a new baseline from here.
+        if (std::abs(mapBaseline.norm() - baselineNorm) >= 0.5 * baselineNorm)
+        {
+            g.firstGnssEnuXY = xy;
+            g.firstGnssMapXY = antennaMapXY;
+            return;
+        }
+
+        g.withdraw_anchor(g.enuYawAnchor);
+        {
+            const double yaw = std::atan2(enuBaseline.y(), enuBaseline.x()) -
+                               std::atan2(mapBaseline.y(), mapBaseline.x());
+            // Its accuracy, from the two fixes, with margin for the odometry:
+            const double yawSigma = 2.0 * std::sqrt(2.0) * sigmaXY / baselineNorm;
+
+            const auto  current = estimated_T_enu_to_map_locked();
+            const auto& cur     = current ? current->mean : mrpt::poses::CPose3D();
+            const auto  rot = mrpt::poses::CPose3D::FromYawPitchRoll(yaw, cur.pitch(), cur.roll());
+            const auto  antennaMap = mrpt::math::TPoint3D(antennaMapXY->x(), antennaMapXY->y(), 0);
+            const auto  rotated    = rot.rotateVector(antennaMap);
+            const auto  mean       = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                       ENU_point.x - rotated.x, ENU_point.y - rotated.y, cur.z(), yaw, cur.pitch(),
+                       cur.roll());
+
+            // Its horizontal position follows from the same fix, and roll/pitch are
+            // held loosely until gravity observes them (not fused while pinned): tied
+            // loosely, so the solver starts near them instead of from the pinned values.
+            // Pose3 tangent: rotation (x, y, z), then translation:
+            constexpr double TILT_SIGMA     = 0.2;  // [rad]
+            constexpr double POSITION_SIGMA = 1.0;  // [m]
+            gtsam::Vector6   sigmas;
+            sigmas << TILT_SIGMA, TILT_SIGMA, yawSigma, POSITION_SIGMA, POSITION_SIGMA,
+                ENU2MAP_WEAK_SIGMA;
+            g.newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                symbol_T_enu_to_map, mrpt::gtsam_wrappers::toPose3(mean),
+                gtsam::noiseModel::Diagonal::Sigmas(sigmas));
+
+            MRPT_LOG_DEBUG_FMT(
+                "[fuse_gnss] Azimuth of T_enu_to_map observable: %.2f deg (sigma %.2f deg) "
+                "from a %.2f m GNSS baseline",
+                mrpt::RAD2DEG(yaw), mrpt::RAD2DEG(yawSigma), baselineNorm);
+        }
+    }
+
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
         gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance);
@@ -1581,28 +1703,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
             if ((xy - *state_.gtsam->firstGnssXYForYaw).norm() >= minBaseline)
             {
                 mark_orientation_observed_locked(false, true);
-            }
-        }
-    }
-
-    // The azimuth of T_enu_to_map becomes observable only once the fixes span a
-    // horizontal baseline long enough for the configured convergence accuracy:
-    if (state_.gtsam->enuYawAnchor)
-    {
-        const gtsam::Point2 xy(ENU_point.x, ENU_point.y);
-        if (!state_.gtsam->firstGnssEnuXY)
-        {
-            state_.gtsam->firstGnssEnuXY = xy;
-        }
-        else
-        {
-            const auto&  cov         = *gps.covariance_enu;
-            const double sigmaXY     = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
-            const double minBaseline = std::sqrt(2.0) * sigmaXY /
-                                       mrpt::DEG2RAD(params_.convergence_max_orientation_sigma_deg);
-            if ((xy - *state_.gtsam->firstGnssEnuXY).norm() >= minBaseline)
-            {
-                state_.gtsam->withdraw_anchor(state_.gtsam->enuYawAnchor);
             }
         }
     }
@@ -3160,8 +3260,13 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             const double em_ori_sigma_yaw   = std::sqrt(pdf.cov(3, 3));
             const double em_ori_sigma_pitch = std::sqrt(pdf.cov(4, 4));
             const double em_ori_sigma_roll  = std::sqrt(pdf.cov(5, 5));
-            const double em_max_ori_sigma_rad =
-                std::max({em_ori_sigma_yaw, em_ori_sigma_pitch, em_ori_sigma_roll});
+            // Roll and pitch that nothing observes (no IMU) keep their level prior,
+            // so they do not count; the azimuth always does:
+            const auto observedOrNot = [](double sigma)
+            { return sigma < UNOBSERVED_ENU2MAP_ANGLE_SIGMA ? sigma : 0.0; };
+            const double em_max_ori_sigma_rad = std::max(
+                {em_ori_sigma_yaw, observedOrNot(em_ori_sigma_pitch),
+                 observedOrNot(em_ori_sigma_roll)});
             const double em_max_ori_sigma_deg = mrpt::RAD2DEG(em_max_ori_sigma_rad);
 
             // Check against thresholds
@@ -4012,22 +4117,14 @@ std::optional<mola::Georeferencing> StateEstimationSmoother::current_georeferenc
 
 void StateEstimationSmoother::publishEstimatedGeoreferencing()
 {
-    // Must be called with lock held
-    if (!state_.tentative_geo_coord_reference.has_value())
+    // Must be called with lock held. Only a converged estimate is published:
+    // process_pending_gtsam_updates_locked() stores it in state_.geo_reference
+    // once the T_enu_to_map sigmas pass the convergence thresholds and its
+    // azimuth is no longer pinned by its gauge anchor.
+    if (!state_.geo_reference.has_value())
     {
         return;
     }
-
-    auto T_enu_map_opt = estimated_T_enu_to_map_locked();
-    if (!T_enu_map_opt.has_value())
-    {
-        return;
-    }
-
-    // Store as our now-fixed geo-reference
-    state_.geo_reference.emplace();
-    state_.geo_reference->geo_coord    = *state_.tentative_geo_coord_reference;
-    state_.geo_reference->T_enu_to_map = *T_enu_map_opt;
 
     // Publish via MapSourceBase
     MapUpdate mu;
