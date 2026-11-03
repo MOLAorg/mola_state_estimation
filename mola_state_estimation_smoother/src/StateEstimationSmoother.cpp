@@ -82,6 +82,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -646,7 +647,37 @@ bool StateEstimationSmoother::reference_frame_position_observed()
 
 void StateEstimationSmoother::spinOnce()
 {
-    if (params_.publish_imu_yaw_bias && module_is_time_to_publish_diagnostics())
+    const bool diagnosticsTime = module_is_time_to_publish_diagnostics();
+    if (params_.publish_georef_convergence && params_.estimate_geo_reference && diagnosticsTime)
+    {
+        if (!params_.async_backend)
+        {
+            // The synchronous solve is lazy: run the pending one, so the values are
+            // current even without localization subscribers.
+            auto lck = mrpt::lockHelper(stateMutex_);
+            process_pending_gtsam_updates_locked();
+        }
+        std::optional<GeorefConvergence> c;
+        {
+            std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
+            c = lastGeorefConvergence_;
+        }
+        const auto now = mrpt::Clock::now();
+        module_publish_diagnostics(
+            {now, "georef_max_pos_sigma_m", params_.convergence_max_position_sigma});
+        module_publish_diagnostics(
+            {now, "georef_max_ori_sigma_deg", params_.convergence_max_orientation_sigma_deg});
+        module_publish_diagnostics({now, "georef_converged", c && c->converged ? 1.0 : 0.0});
+        if (c)
+        {
+            module_publish_diagnostics({now, "georef_pos_sigma_m", c->pos_sigma});
+            module_publish_diagnostics({now, "georef_ori_sigma_deg", c->ori_sigma_deg});
+            module_publish_diagnostics(
+                {now, "georef_azimuth_pinned", c->azimuth_pinned ? 1.0 : 0.0});
+        }
+    }
+
+    if (params_.publish_imu_yaw_bias && diagnosticsTime)
     {
         if (const auto bias = estimated_imu_yaw_bias(); bias)
         {
@@ -754,6 +785,24 @@ void StateEstimationSmoother::publishMapToOdom(
     // configured one, or the single known source when unambiguous.
     const auto knownFrames = known_odometry_frame_ids();
 
+    // Extra sources, each under its own frame_id:
+    std::istringstream extraFrames(params_.map_to_odom_extra_frames);
+    for (std::string frame; std::getline(extraFrames, frame, ',');)
+    {
+        std::istringstream words(frame);
+        for (std::string f; words >> f;)
+        {
+            if (knownFrames.count(f) == 0)
+            {
+                continue;
+            }
+            if (const auto T = estimated_T_map_to_odometry_frame(f); T.has_value())
+            {
+                advertiseMapToOdom(stamp, methodLabel, f, *T);
+            }
+        }
+    }
+
     const auto knownFramesList = [&knownFrames]()
     {
         std::string s;
@@ -814,14 +863,21 @@ void StateEstimationSmoother::publishMapToOdom(
     const std::string childFrame =
         params_.map_to_odom_child_frame.empty() ? odomFrame : params_.map_to_odom_child_frame;
 
+    advertiseMapToOdom(stamp, methodLabel, childFrame, *T_map_to_odom);
+}
+
+void StateEstimationSmoother::advertiseMapToOdom(
+    const mrpt::Clock::time_point& stamp, const std::string& methodLabel,
+    const std::string& childFrame, const mrpt::poses::CPose3DPDFGaussian& T_map_to_odom)
+{
     LocalizationUpdate lu;
     lu.child_frame     = childFrame;
     lu.reference_frame = params_.reference_frame_name;
     lu.method          = methodLabel + "/map_odom";
     lu.quality         = 1;
     lu.timestamp       = stamp;
-    lu.pose            = T_map_to_odom->mean.asTPose();
-    lu.cov             = T_map_to_odom->cov;
+    lu.pose            = T_map_to_odom.mean.asTPose();
+    lu.cov             = T_map_to_odom.cov;
 
     advertiseUpdatedLocalization(lu);
 }
@@ -838,6 +894,10 @@ void StateEstimationSmoother::reset_locked()
     {
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_.reset();
+    }
+    {
+        std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
+        lastGeorefConvergence_.reset();
     }
     if (fastPredictor_)
     {
@@ -3290,13 +3350,21 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 params_.convergence_max_orientation_sigma_deg);
 
             // While pinned by its anchor, the azimuth sigma says nothing about the data:
-            if (converged && state_.tentative_geo_coord_reference.has_value() &&
-                !state_.gtsam->enuYawAnchor)
+            const bool azimuthPinned = static_cast<bool>(state_.gtsam->enuYawAnchor);
+            if (converged && state_.tentative_geo_coord_reference.has_value() && !azimuthPinned)
             {
                 state_.geo_reference.emplace();
                 state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();
                 state_.geo_reference->T_enu_to_map = pdf;
                 state_.estimated_georef_published  = false;  // so it's re-published
+            }
+
+            {
+                std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
+                lastGeorefConvergence_ = GeorefConvergence{
+                    std::max(max_pos_sigma, em_max_pos_sigma),
+                    std::max(max_ori_sigma_deg, em_max_ori_sigma_deg), azimuthPinned,
+                    state_.geo_reference.has_value()};
             }
         }
     }

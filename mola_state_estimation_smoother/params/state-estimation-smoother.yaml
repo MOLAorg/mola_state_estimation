@@ -44,6 +44,10 @@ params:
   # REP-105 odom /tf frame the external wheel driver publishes odom->base_link
   # for (they must match for map->odom->base_link to connect).
   map_to_odom_child_frame: "${MOLA_MAP_TO_ODOM_CHILD_FRAME|}"
+  # Other odometry source frame_ids (comma or space separated) whose T_map_to_odom is
+  # also published, as reference_frame -> <frame_id> (e.g. "lidar_odom", to draw the
+  # LiDAR odometry local map in the map frame).
+  map_to_odom_extra_frames: "${MOLA_MAP_TO_ODOM_EXTRA_FRAMES|}"
 
   # If true, also advertise the fused vehicle pose in a distinct child frame
   # (below) at the module rate: a high-rate fused pose that never collides with
@@ -55,6 +59,12 @@ params:
   # as module diagnostics, once per diagnostics period: the ROS 2 bridge publishes them as
   # std_msgs/Float32 mola_diagnostics/<module>/imu_yaw_bias_deg and imu_yaw_bias_sigma_deg.
   publish_imu_yaw_bias: ${MOLA_NAVSTATE_PUBLISH_IMU_YAW_BIAS|false}
+
+  # If true (and estimate_geo_reference), publish the geo-reference convergence as module
+  # diagnostics, once per diagnostics period: georef_pos_sigma_m, georef_ori_sigma_deg,
+  # their thresholds georef_max_pos_sigma_m and georef_max_ori_sigma_deg,
+  # georef_azimuth_pinned and georef_converged (0/1).
+  publish_georef_convergence: ${MOLA_SE_PUBLISH_GEOREF_CONVERGENCE|false}
 
   # --------------------------------------------------------------------------
   # Kinematic Model & Motion Factors
