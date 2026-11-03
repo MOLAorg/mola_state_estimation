@@ -204,6 +204,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-live-georef-without-attitude
+  SOURCES test-live-georef-without-attitude.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-imu-placeholder-attitude
   SOURCES test-imu-placeholder-attitude.cpp
   LINK_LIBRARIES

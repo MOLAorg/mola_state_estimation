@@ -123,6 +123,10 @@ params:
     # Enable estimation of geo-referencing from GNSS and other sensors
     # If false, geo-reference must be provided externally or via fixed_geo_reference
     estimate_geo_reference: true
+    # Without an IMU, the azimuth (from the GNSS track) and the vehicle attitude
+    # end up with ~6-7 deg sigmas: within what this test requires
+    # (MAXIMUM_ENU2MAP_ROTATION_ERROR), above the 5 deg default.
+    convergence_max_orientation_sigma_deg: 10.0
 
     # Fixed geo-reference to use when estimate_geo_reference is false
     #fixed_geo_reference: { latitude_deg: 0.0, longitude_deg: 0.0, altitude: 0.0 }
