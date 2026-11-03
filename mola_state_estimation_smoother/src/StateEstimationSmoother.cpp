@@ -650,6 +650,13 @@ void StateEstimationSmoother::spinOnce()
     const bool diagnosticsTime = module_is_time_to_publish_diagnostics();
     if (params_.publish_georef_convergence && params_.estimate_geo_reference && diagnosticsTime)
     {
+        if (!params_.async_backend)
+        {
+            // The synchronous solve is lazy: run the pending one, so the values are
+            // current even without localization subscribers.
+            auto lck = mrpt::lockHelper(stateMutex_);
+            process_pending_gtsam_updates_locked();
+        }
         std::optional<GeorefConvergence> c;
         {
             std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
