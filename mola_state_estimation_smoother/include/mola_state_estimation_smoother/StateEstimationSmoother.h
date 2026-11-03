@@ -472,6 +472,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::optional<std::pair<double, double>> lastYawBias_;
     mutable std::mutex                       lastYawBiasMutex_;
 
+    /// Latest geo-reference convergence state (see publish_georef_convergence).
+    struct GeorefConvergence
+    {
+        double pos_sigma      = 0;  //!< [m]
+        double ori_sigma_deg  = 0;
+        bool   azimuth_pinned = false;
+        bool   converged      = false;
+    };
+    std::optional<GeorefConvergence> lastGeorefConvergence_;
+    mutable std::mutex               lastGeorefConvergenceMutex_;
+
     /// Poses of the keyframes already marginalized out, in the reference frame,
     /// each recorded at the moment it left the window. Only filled when
     /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
@@ -593,6 +604,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Advertises the REP-105 correction reference_frame -> {odom} from the
     /// estimator's own T_map_to_odom_i (see publish_map_to_odom_tf).
     void publishMapToOdom(const mrpt::Clock::time_point& stamp, const std::string& methodLabel);
+
+    /// Advertises one `reference_frame -> childFrame` correction (see publishMapToOdom).
+    void advertiseMapToOdom(
+        const mrpt::Clock::time_point& stamp, const std::string& methodLabel,
+        const std::string& childFrame, const mrpt::poses::CPose3DPDFGaussian& T_map_to_odom);
 
     using pair_nearby_frame_iterators_t = std::pair<
         std::map<mrpt::Clock::time_point, frame_index_t>::const_iterator,

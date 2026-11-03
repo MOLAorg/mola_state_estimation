@@ -96,6 +96,13 @@ class Parameters
      * label (e.g. `odom_wheels`) is often not that ROS frame (`odom`). */
     std::string map_to_odom_child_frame;
 
+    /** Other odometry source frame_ids (comma or space separated) whose
+     * `T_map_to_odom` is also advertised when `publish_map_to_odom_tf` is true, as
+     * `reference_frame -> <frame_id>`, so data in those frames (e.g. the local map
+     * of a LiDAR odometry source, in `lidar_odom`) can be transformed to the map
+     * frame. Sources not known or not solved yet are skipped. */
+    std::string map_to_odom_extra_frames;
+
     /** If true, `spinOnce()` additionally advertises the fused vehicle pose in a
      * separate child frame `fused_vehicle_frame_name` (default `base_link_fused`)
      * at the module rate. Because it is a distinct child frame it never collides
@@ -113,6 +120,15 @@ class Parameters
      * `mola_diagnostics/<module>/imu_yaw_bias_deg` and `.../imu_yaw_bias_sigma_deg`).
      * Default off. */
     bool publish_imu_yaw_bias = false;
+
+    /** If true (and `estimate_geo_reference`), publish the geo-reference convergence
+     * as module diagnostics, once per diagnostics period: `georef_pos_sigma_m` and
+     * `georef_ori_sigma_deg` (the largest position and orientation sigmas compared
+     * against the thresholds), the thresholds themselves (`georef_max_pos_sigma_m`,
+     * `georef_max_ori_sigma_deg`), `georef_azimuth_pinned` (1 while the azimuth is
+     * still held by its initial anchor) and `georef_converged` (1 once the
+     * geo-reference has been accepted). Default off. */
+    bool publish_georef_convergence = false;
 
     /** @}  */
 
