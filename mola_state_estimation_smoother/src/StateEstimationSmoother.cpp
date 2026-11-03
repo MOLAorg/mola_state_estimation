@@ -1548,21 +1548,41 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     // the baseline: the GNSS displacement vs. the antenna displacement in {map}.
     if (state_.gtsam->enuYawAnchor)
     {
-        // Latest solved antenna position in {map}:
+        // Solved antenna position in {map} at the fix time: from the solved keyframe
+        // closest in time, moved by its twist to that time.
         std::optional<gtsam::Point2> antennaMapXY;
-        if (!state_.stamp2frame_index.empty())
         {
-            const auto it = state_.last_estimated_states.find(
-                state_.stamp2frame_index.getDirectMap().rbegin()->second);
-            if (it != state_.last_estimated_states.end())
+            constexpr double      MAX_DT = 0.25;  // [s]
+            const auto            nearby = find_before_after(gps.timestamp, true);
+            std::optional<double> bestDt;
+            for (const auto& it : {nearby.first, nearby.second})
             {
-                const auto p = it->second.pose.composePoint(gps.sensorPose.translation());
+                if (it == state_.stamp2frame_index.getDirectMap().end())
+                {
+                    continue;
+                }
+                const auto st = state_.last_estimated_states.find(it->second);
+                if (st == state_.last_estimated_states.end())
+                {
+                    continue;
+                }
+                const double dt = mrpt::system::timeDifference(it->first, gps.timestamp);
+                if (std::abs(dt) > MAX_DT || (bestDt && std::abs(dt) >= std::abs(*bestDt)))
+                {
+                    continue;
+                }
+                bestDt         = dt;
+                const auto& fs = st->second;
+                const auto  v  = fs.twist;
+                const auto  at = fs.pose + mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                                               v.vx * dt, v.vy * dt, v.vz * dt, v.wz * dt, 0, 0);
+                const auto p = at.composePoint(gps.sensorPose.translation());
                 antennaMapXY = gtsam::Point2(p.x, p.y);
             }
         }
         if (!antennaMapXY)
         {
-            return;  // no solved vehicle pose yet
+            return;  // no solved vehicle pose near the fix time yet
         }
 
         const gtsam::Point2 xy(ENU_point.x, ENU_point.y);
@@ -1585,10 +1605,16 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
             return;
         }
 
-        g.withdraw_anchor(g.enuYawAnchor);
+        // Odometry and GNSS must agree on the distance, or the azimuth is not
+        // reliable: keep the anchor and measure a new baseline from here.
+        if (std::abs(mapBaseline.norm() - baselineNorm) >= 0.5 * baselineNorm)
+        {
+            g.firstGnssEnuXY = xy;
+            g.firstGnssMapXY = antennaMapXY;
+            return;
+        }
 
-        // Odometry and GNSS must agree on the distance, or the azimuth is not reliable:
-        if (std::abs(mapBaseline.norm() - baselineNorm) < 0.5 * baselineNorm)
+        g.withdraw_anchor(g.enuYawAnchor);
         {
             const double yaw = std::atan2(enuBaseline.y(), enuBaseline.x()) -
                                std::atan2(mapBaseline.y(), mapBaseline.x());
