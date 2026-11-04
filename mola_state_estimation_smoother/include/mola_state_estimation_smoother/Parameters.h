@@ -124,7 +124,8 @@ class Parameters
     /** If true (and `imu_bias_tracking`), publish the gyroscope bias of each tracked IMU as
      * module diagnostics, once per diagnostics period: `imu_bias_<label>_gyro_{x,y,z}_deg_s`
      * and `imu_bias_<label>_gyro_sigma_deg_s` (largest axis sigma), with the label's
-     * non-alphanumeric characters replaced by `_`. Default off. */
+     * non-alphanumeric characters replaced by `_`, plus the motion hint counts
+     * `imu_bias_hints_static` and `imu_bias_hints_moving`. Default off. */
     bool publish_imu_biases = false;
 
     /** If true (and `estimate_geo_reference`), publish the geo-reference convergence
@@ -483,13 +484,16 @@ class Parameters
     /// angular velocity readings before fusing them (imu_angular_velocity_sigma).
     bool imu_bias_correct_angular_velocity = true;
 
-    /** Motion hints for the bias tracker, from the increments of each odometry input
-     * (poses in a frame other than the reference one, wheel odometry) over at least
-     * `imu_bias_hint_min_period` seconds, and from fused twists: "static" if both the
-     * speed and the angular speed are below these thresholds, else "moving". */
-    double imu_bias_hint_max_speed             = 0.02;  // [m/s]
+    /** Motion hints for the bias tracker, from the increments of each pose input (any
+     * frame, by frame name) and wheel odometry over at least `imu_bias_hint_min_period`
+     * seconds, and from fused twists: "static" if both the speed and the angular speed
+     * are below these thresholds, else "moving". The thresholds must be above the
+     * jitter of the inputs at rest (LiDAR odometry: a few mm and hundredths of a
+     * degree per scan); the speed one can be loose, since a straight constant speed
+     * motion does not bias the readings. */
+    double imu_bias_hint_max_speed             = 0.1;  // [m/s]
     double imu_bias_hint_max_angular_speed_deg = 0.1;  // [deg/s]
-    double imu_bias_hint_min_period            = 0.5;  // [s]
+    double imu_bias_hint_min_period            = 1.0;  // [s]
 
     /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
     mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();

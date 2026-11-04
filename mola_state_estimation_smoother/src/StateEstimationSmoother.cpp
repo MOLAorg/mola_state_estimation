@@ -506,6 +506,17 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
         imuBiasTracker_.reset();
         imuBiasTracker_.parameters.load_from(params_.imu_bias_tracker);
         imuBiasHintRefs_.clear();
+        imuBiasUpdatedLabels_.clear();
+        try
+        {
+            (void)imuBiasLabelsRe_.get_regex(params_.imu_bias_labels_re);
+        }
+        catch (const std::regex_error& e)
+        {
+            THROW_EXCEPTION_FMT(
+                "Invalid imu_bias_labels_re '%s': %s", params_.imu_bias_labels_re.c_str(),
+                e.what());
+        }
 #else
         MRPT_LOG_WARN(
             "imu_bias_tracking ignored: built against mola_kernel or mola_imu_preintegration "
@@ -703,6 +714,7 @@ void StateEstimationSmoother::spinOnce()
         }
     }
 
+    advertise_imu_biases();
     if (params_.publish_imu_biases && diagnosticsTime)
     {
         publish_imu_bias_diagnostics();
@@ -1286,14 +1298,13 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     {
         state_.imu_decimator = std::make_shared<ImuDecimator>();
     }
-    const auto decimated = state_.imu_decimator->add(rawImu, params_.imu_min_sample_period);
+    auto decimated = state_.imu_decimator->add(rawImu, params_.imu_min_sample_period);
     if (!decimated)
     {
         return;
     }
-    mrpt::obs::CObservationIMU imuCorrected = *decimated;
-    imu_bias_correct(imuCorrected);
-    const mrpt::obs::CObservationIMU& imu = imuCorrected;
+    imu_bias_correct(*decimated);
+    const mrpt::obs::CObservationIMU& imu = *decimated;
     // From the fused reading: an average can carry channels its newest reading lacks.
     const bool fuseAngularVelocity = hasAngularVelocity(imu);
 
@@ -1795,10 +1806,7 @@ void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     const std::string& frame_id)
 {
-    if (frame_id != params_.reference_frame_name)
-    {
-        imu_bias_add_pose(timestamp, pose.mean, frame_id);
-    }
+    imu_bias_add_pose(timestamp, pose.mean, frame_id);
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(timestamp);
@@ -4249,6 +4257,10 @@ void StateEstimationSmoother::publishEstimatedGeoreferencing()
 
 std::vector<std::string> StateEstimationSmoother::imu_bias_sensor_labels() const
 {
+    if (!params_.imu_bias_tracking)
+    {
+        return {};
+    }
     auto lck = mrpt::lockHelper(imuBiasMutex_);
     return imuBiasTracker_.sensor_labels();
 }
@@ -4275,6 +4287,10 @@ mola::ImuBias StateEstimationSmoother::to_imu_bias(
 std::optional<mola::ImuBias> StateEstimationSmoother::imu_bias_impl(
     const std::string& sensorLabel, const std::optional<mrpt::Clock::time_point>& t) const
 {
+    if (!params_.imu_bias_tracking)
+    {
+        return std::nullopt;
+    }
     auto       lck = mrpt::lockHelper(imuBiasMutex_);
     const auto e   = imuBiasTracker_.estimate(sensorLabel);
     if (!e)
@@ -4292,26 +4308,40 @@ std::optional<mola::ImuBias> StateEstimationSmoother::imu_bias_impl(
     return to_imu_bias(sensorLabel, *e);
 }
 
-void StateEstimationSmoother::advertise_imu_biases(const std::vector<std::string>& labels)
+void StateEstimationSmoother::queue_imu_bias_updates_locked(const std::vector<std::string>& labels)
 {
-    if (labels.empty() || !any_imu_bias_subscriber())
+    for (const auto& l : labels)
     {
-        return;
+        imuBiasUpdatedLabels_.insert(l);
     }
+}
+
+void StateEstimationSmoother::advertise_imu_biases()
+{
+    // From spinOnce(), the module's own thread: never from the threads of the
+    // modules that feed this one, which may hold their own locks.
     std::vector<ImuBias> biases;
     {
         auto lck = mrpt::lockHelper(imuBiasMutex_);
-        for (const auto& label : labels)
+        for (const auto& label : imuBiasUpdatedLabels_)
         {
             if (const auto e = imuBiasTracker_.estimate(label); e)
             {
                 biases.push_back(to_imu_bias(label, *e));
             }
         }
+        imuBiasUpdatedLabels_.clear();
     }
     for (const auto& b : biases)
     {
-        advertise_updated_imu_bias(b);
+        MRPT_LOG_THROTTLE_INFO_FMT(
+            5.0, "IMU bias '%s': gyro [%.4f %.4f %.4f] deg/s, sigma %.4f deg/s",
+            b.sensor_label.c_str(), mrpt::RAD2DEG(b.gyro.x), mrpt::RAD2DEG(b.gyro.y),
+            mrpt::RAD2DEG(b.gyro.z), mrpt::RAD2DEG(std::sqrt(b.gyro_cov(2, 2))));
+        if (any_imu_bias_subscriber())
+        {
+            advertise_updated_imu_bias(b);
+        }
     }
 }
 
@@ -4322,15 +4352,17 @@ void StateEstimationSmoother::imu_bias_add_reading(const mrpt::obs::CObservation
     {
         return;
     }
-    bool updated = false;
+    auto lck = mrpt::lockHelper(imuBiasMutex_);
+    if (imuBiasTracker_.add(imu) > 0)
     {
-        auto lck = mrpt::lockHelper(imuBiasMutex_);
-        updated  = imuBiasTracker_.add(imu);
+        imuBiasUpdatedLabels_.insert(imu.sensorLabel);
     }
-    if (updated)
-    {
-        advertise_imu_biases({imu.sensorLabel});
-    }
+}
+
+void StateEstimationSmoother::imu_bias_add_hint_locked(double t, bool isStatic)
+{
+    queue_imu_bias_updates_locked(imuBiasTracker_.add_motion_hint(t, isStatic));
+    (isStatic ? imuBiasHintsStatic_ : imuBiasHintsMoving_)++;
 }
 
 void StateEstimationSmoother::imu_bias_add_pose(
@@ -4340,40 +4372,39 @@ void StateEstimationSmoother::imu_bias_add_pose(
     {
         return;
     }
-    const double             tNow = mrpt::Clock::toDouble(t);
-    std::vector<std::string> updated;
+    const double tNow = mrpt::Clock::toDouble(t);
+    auto         lck  = mrpt::lockHelper(imuBiasMutex_);
+    auto         it   = imuBiasHintRefs_.find(source);
+    if (it == imuBiasHintRefs_.end() || tNow < it->second.t)
     {
-        auto lck = mrpt::lockHelper(imuBiasMutex_);
-        auto it  = imuBiasHintRefs_.find(source);
-        if (it == imuBiasHintRefs_.end() || tNow < it->second.t)
-        {
-            imuBiasHintRefs_[source] = {tNow, pose};
-            return;
-        }
-        auto&        ref = it->second;
-        const double dt  = tNow - ref.t;
-        if (dt < params_.imu_bias_hint_min_period)
-        {
-            return;
-        }
-        // A pose increment over [ref.t, tNow]: the vehicle moved or not over it.
-        const mrpt::poses::CPose3D inc = pose - ref.pose;
-        const double               v   = inc.translation().norm() / dt;
-        const double w        = mrpt::poses::Lie::SO<3>::log(inc.getRotationMatrix()).norm() / dt;
-        const bool   isStatic = v < params_.imu_bias_hint_max_speed &&
-                              w < mrpt::DEG2RAD(params_.imu_bias_hint_max_angular_speed_deg);
-        // Too long without readings of this source: only its end is known.
-        if (dt < 4 * params_.imu_bias_hint_min_period)
-        {
-            updated = imuBiasTracker_.add_motion_hint(ref.t, isStatic);
-        }
-        for (const auto& l : imuBiasTracker_.add_motion_hint(tNow, isStatic))
-        {
-            updated.push_back(l);
-        }
-        ref = {tNow, pose};
+        imuBiasHintRefs_[source] = {tNow, pose};
+        return;
     }
-    advertise_imu_biases(updated);
+    auto&        ref = it->second;
+    const double dt  = tNow - ref.t;
+    if (dt < params_.imu_bias_hint_min_period)
+    {
+        return;
+    }
+    // A pose increment over [ref.t, tNow]: the vehicle moved or not over it.
+    const mrpt::poses::CPose3D inc = pose - ref.pose;
+    const double               v   = inc.translation().norm() / dt;
+    const double w        = mrpt::poses::Lie::SO<3>::log(inc.getRotationMatrix()).norm() / dt;
+    const bool   isStatic = v < params_.imu_bias_hint_max_speed &&
+                          w < mrpt::DEG2RAD(params_.imu_bias_hint_max_angular_speed_deg);
+    // Hints hold forward for a while only: cover the whole increment, unless this
+    // source was silent for long (then only its end is known).
+    constexpr double MAX_INCREMENT = 5.0;  // [s]
+    if (dt <= MAX_INCREMENT)
+    {
+        const double step = 0.5 * imuBiasTracker_.parameters.motion_hint_hold;
+        for (double th = ref.t; th < tNow; th += step)
+        {
+            imu_bias_add_hint_locked(th, isStatic);
+        }
+    }
+    imu_bias_add_hint_locked(tNow, isStatic);
+    ref = {tNow, pose};
 }
 
 void StateEstimationSmoother::imu_bias_add_twist(
@@ -4387,12 +4418,8 @@ void StateEstimationSmoother::imu_bias_add_twist(
     const double w = std::sqrt(mrpt::square(tw.wx) + mrpt::square(tw.wy) + mrpt::square(tw.wz));
     const bool   isStatic = v < params_.imu_bias_hint_max_speed &&
                           w < mrpt::DEG2RAD(params_.imu_bias_hint_max_angular_speed_deg);
-    std::vector<std::string> updated;
-    {
-        auto lck = mrpt::lockHelper(imuBiasMutex_);
-        updated  = imuBiasTracker_.add_motion_hint(mrpt::Clock::toDouble(t), isStatic);
-    }
-    advertise_imu_biases(updated);
+    auto lck = mrpt::lockHelper(imuBiasMutex_);
+    imu_bias_add_hint_locked(mrpt::Clock::toDouble(t), isStatic);
 }
 
 void StateEstimationSmoother::imu_bias_correct(mrpt::obs::CObservationIMU& imu) const
@@ -4428,6 +4455,8 @@ void StateEstimationSmoother::publish_imu_bias_diagnostics()
         }
     }
     const auto now = mrpt::Clock::now();
+    module_publish_diagnostics({now, "imu_bias_hints_static", double(imuBiasHintsStatic_.load())});
+    module_publish_diagnostics({now, "imu_bias_hints_moving", double(imuBiasHintsMoving_.load())});
     for (const auto& b : biases)
     {
         std::string key = b.sensor_label;
@@ -4460,6 +4489,7 @@ void StateEstimationSmoother::imu_bias_add_twist(
 }
 void StateEstimationSmoother::imu_bias_correct(mrpt::obs::CObservationIMU&) const {}
 void StateEstimationSmoother::publish_imu_bias_diagnostics() {}
+void StateEstimationSmoother::advertise_imu_biases() {}
 
 #endif
 

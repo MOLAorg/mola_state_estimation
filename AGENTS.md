@@ -107,13 +107,14 @@ Sensor inputs:
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
-- IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker`
-  for all IMUs matching `imu_bias_labels_re` (raw readings from
-  `onNewObservation()`, even if not fused), under its own `imuBiasMutex_` (never
-  take `stateMutex_` while holding it; advertise with no lock held). Motion hints
-  from the increments of every odometry input (>= `imu_bias_hint_min_period`) and
-  twists. Gyro bias subtracted from fused angular velocities. Kept across
-  `reset()`. `publish_imu_biases`: diagnostics `imu_bias_<label>_gyro_*`.
+- IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
+  IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
+  fused), under its own leaf `imuBiasMutex_`. Motion hints from the increments (>=
+  `imu_bias_hint_min_period`, hinted along the whole increment) of every pose input by frame
+  name (including the reference frame), wheel odometry and twists; thresholds above LIO jitter
+  at rest. Updates are advertised from `spinOnce()` only (never from callers' threads). Gyro
+  bias subtracted from fused angular velocities. Kept across `reset()`.
+  `publish_imu_biases`: diagnostics `imu_bias_<label>_gyro_*` and hint counts.
 
 Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source):
 - One absolute factor on the source's first reading resolves

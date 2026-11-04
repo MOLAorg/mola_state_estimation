@@ -104,11 +104,12 @@ struct Result
 {
     std::optional<mola::ImuBias> bias;  //!< final estimate, via the interface
     std::vector<double>          update_times;  //!< advertised updates [s from start]
+    std::vector<std::string>     update_labels;
     bool                         untracked_known = false;
 };
 
-/// Simulates the run; `withLio`: the LiDAR odometry poses are fused.
-Result run(bool tracking, bool withLio)
+/// Simulates the run; `withLio`: the LiDAR odometry poses are fused, in `lioFrame`.
+Result run(bool tracking, bool withLio, const std::string& lioFrame = "lidar_odom")
 {
     auto& rng = mrpt::random::getRandomGenerator();
     rng.randomize(3);
@@ -126,7 +127,7 @@ Result run(bool tracking, bool withLio)
     source->subscribe_to_imu_bias_updates(
         [&](const mola::ImuBias& b)
         {
-            ASSERT_EQUAL_(b.sensor_label, std::string("lidar_imu"));
+            r.update_labels.push_back(b.sensor_label);
             r.update_times.push_back(mrpt::Clock::toDouble(*b.last_update) - T0);
         });
 
@@ -162,14 +163,18 @@ Result run(bool tracking, bool withLio)
             o->set(mrpt::obs::IMU_Z_ACC, 9.81 + rng.drawGaussian1D(0, ACC_NOISE));
             est->onNewObservation(o);
         }
+        est->spinOnce();  // advertises the updates
 
-        // LiDAR odometry: 10 Hz, mm / millidegree noise, fused late.
+        // LiDAR odometry: 10 Hz, with the jitter of a real one at rest (5 mm, 0.02 deg
+        // per scan, all axes), fused late.
         if (withLio && i % static_cast<int>(IMU_RATE / LIO_RATE) == 0)
         {
+            const double sa = mrpt::DEG2RAD(0.02);
             lioQueue.emplace_back(
                 t, mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-                       rng.drawGaussian1D(0, 0.001), rng.drawGaussian1D(0, 0.001), 0,
-                       yaw + rng.drawGaussian1D(0, 2e-5), 0, 0));
+                       rng.drawGaussian1D(0, 0.005), rng.drawGaussian1D(0, 0.005),
+                       rng.drawGaussian1D(0, 0.005), yaw + rng.drawGaussian1D(0, sa),
+                       rng.drawGaussian1D(0, sa), rng.drawGaussian1D(0, sa)));
         }
         while (!lioQueue.empty() && t - lioQueue.front().first >= LIO_LATENCY)
         {
@@ -177,7 +182,7 @@ Result run(bool tracking, bool withLio)
             p.mean = lioQueue.front().second;
             p.cov.setIdentity();
             p.cov *= 1e-4;
-            est->fuse_pose(mrpt::Clock::fromDouble(T0 + lioQueue.front().first), p, "lidar_odom");
+            est->fuse_pose(mrpt::Clock::fromDouble(T0 + lioQueue.front().first), p, lioFrame);
             lioQueue.pop_front();
         }
     }
@@ -202,17 +207,22 @@ void test_disabled()
     ASSERT_(r.update_times.empty());
 }
 
-void test_lio_vetoes_slow_turn()
+void check_lio_vetoes_slow_turn(const std::string& lioFrame)
 {
-    const auto r = run(true, true);
+    const auto r = run(true, true, lioFrame);
+    for (const auto& l : r.update_labels)
+    {
+        ASSERT_EQUAL_(l, std::string("lidar_imu"));
+    }
     ASSERT_(r.bias && r.bias->last_update);
     ASSERT_(!r.untracked_known);  // not in imu_bias_labels_re
 
     const double err = (r.bias->gyro - BIAS).norm();
     if (VERBOSE)
     {
-        std::cout << "with LIO: " << r.update_times.size() << " updates, error " << err
-                  << " rad/s, bias " << r.bias->gyro.asString() << "\n";
+        std::cout << "with LIO in '" << lioFrame << "': " << r.update_times.size()
+                  << " updates, error " << err << " rad/s, bias " << r.bias->gyro.asString()
+                  << "\n";
     }
     ASSERT_LT_(err, 4e-4);
     // Updates only at the two stops, none during the turn (LIO saw it):
@@ -222,6 +232,13 @@ void test_lio_vetoes_slow_turn()
         const bool inTurn = t > T_FIRST_STOP + 0.5 && t < T_FIRST_STOP + T_TURN;
         ASSERT_(!inTurn);
     }
+}
+
+// LIO odometry (relative poses), and LIO localizing in a map (absolute poses):
+void test_lio_vetoes_slow_turn()
+{
+    check_lio_vetoes_slow_turn("lidar_odom");
+    check_lio_vetoes_slow_turn("map");
 }
 
 void test_without_lio_the_turn_is_taken_as_bias()

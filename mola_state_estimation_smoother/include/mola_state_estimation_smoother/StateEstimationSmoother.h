@@ -527,9 +527,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Converts a tracker estimate (imuBiasMutex_ held).
     [[nodiscard]] ImuBias to_imu_bias(
         const std::string& label, const mola::imu::ImuBiasTracker::Estimate& e) const;
-    /// Advertises the current estimates of those IMUs (no lock held).
-    void advertise_imu_biases(const std::vector<std::string>& labels);
+    /// IMUs updated since the last advertise_imu_biases() (imuBiasMutex_).
+    std::set<std::string> imuBiasUpdatedLabels_;
+    void                  queue_imu_bias_updates_locked(const std::vector<std::string>& labels);
+    /// A motion hint to the tracker, counted (imuBiasMutex_ held).
+    void imu_bias_add_hint_locked(double t, bool isStatic);
 #endif
+    std::atomic_size_t imuBiasHintsStatic_{0};
+    std::atomic_size_t imuBiasHintsMoving_{0};
+    /// Advertises (from spinOnce()) the estimates updated since the last call.
+    void advertise_imu_biases();
     /// Feeds a raw IMU reading to the bias tracker, if enabled.
     void imu_bias_add_reading(const mrpt::obs::CObservationIMU& imu);
     /// Motion hint from a new pose of an odometry input, if enabled.
