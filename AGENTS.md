@@ -82,6 +82,8 @@ Structure:
   assume it is held.
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
+  With `imu_preintegration.enabled`, also IMU biases `Z(k)`
+  (`imuBias::ConstantBias`), chained by a random walk on every link.
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame`; consecutive keyframes are linked
   by kinematic factors (`ConstantVelocity` or `Tricycle` model).
@@ -105,6 +107,16 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
+- IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
+  are buffered before decimation; each kinematic link gets a
+  `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with body-frame velocities)
+  once the readings cover it (`attach_imu_factors_locked()`), with a covariance
+  floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
+  (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
+  `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
+- `relative_pose_increment_from_source_covariance` (default off): odometry-frame
+  increments take each reading's own covariance instead of
+  `relative_pose_increment_sigma_*`.
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
