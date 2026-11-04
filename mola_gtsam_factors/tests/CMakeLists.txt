@@ -12,3 +12,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_gtsam_factors
 )
+
+mola_add_test(
+  TARGET  test_imu_preintegration_body_vel_factor
+  SOURCES test_imu_preintegration_body_vel_factor.cpp
+  LINK_LIBRARIES
+    mola::mola_gtsam_factors
+)

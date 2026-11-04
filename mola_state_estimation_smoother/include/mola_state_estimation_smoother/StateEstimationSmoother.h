@@ -698,6 +698,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  replace it. Cheap if the link has not reached the solver yet; otherwise its
      *  factors are queued for removal at the next update().
      */
+    /// IMU preintegration: keeps the raw readings of the IMU in use.
+    void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
+
+    /// IMU preintegration: adds the factor of every link whose interval the
+    /// raw readings now cover.
+    void attach_imu_factors_locked();
+
     void remove_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
 
     /// Gets the latest state of a pose wrt the reference frame ("map")

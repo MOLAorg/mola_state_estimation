@@ -498,6 +498,58 @@ class Parameters
     /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
     mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();
 
+    /** IMU preintegration between consecutive keyframes: every kinematic link
+     * whose interval is covered by raw readings gets an on-manifold
+     * preintegration factor (gtsam::ImuFactor on the raw accelerometer and
+     * gyroscope readings), and every keyframe gets a gyroscope and
+     * accelerometer bias variable, chained by a random walk. The reference
+     * frame is assumed gravity-aligned (z up). Default off. */
+    struct ImuPreintegration
+    {
+        bool        enabled         = false;
+        std::string sensor_label_re = ".*";  //!< IMUs used (regex of labels)
+
+        double gyro_noise_density     = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
+        double accel_noise_density    = 1.6e-3;  //!< [m/s^2/sqrt(Hz)]
+        double gyro_bias_random_walk  = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
+        double accel_bias_random_walk = 3e-4;  //!< [m/s^3/sqrt(Hz)]
+        double integration_sigma      = 1e-4;  //!< position integration noise
+        double gravity                = 9.80665;  //!< [m/s^2]
+
+        double initial_gyro_bias_sigma  = 0.02;  //!< [rad/s]
+        double initial_accel_bias_sigma = 0.2;  //!< [m/s^2]
+
+        /** The constant-velocity linear factors of a link (velocity and position
+         * integration) contradict any acceleration the IMU measures: their
+         * sigmas are multiplied by this while preintegration is on. They stay,
+         * weak, so a link without IMU data is still determined. */
+        double linear_kinematics_sigma_scale = 10.0;
+
+        /// Largest gap between consecutive readings integrated across [s].
+        double max_reading_gap = 0.1;
+
+        /** Floor of the preintegrated uncertainty, added to it: unmodeled errors
+         * (timing, extrinsics, vibration), and numerical conditioning, since
+         * keyframes can be milliseconds apart. Rotation [rad], position [m],
+         * velocity [m/s]. */
+        double min_sigma_rotation = 2e-4;
+        double min_sigma_position = 1e-3;
+        double min_sigma_velocity = 5e-3;
+
+        /// Links shorter than this get no preintegration factor [s].
+        double min_link_duration = 2e-3;
+    };
+    ImuPreintegration imu_preintegration;
+
+    /** If true, the increments that fuse_pose() asserts for an odometry frame
+     * use the covariance the source publishes with each reading, as the
+     * covariance of the motion since its previous reading, instead of
+     * relative_pose_increment_sigma_*. Right for a registration against a
+     * local map built from the recent trajectory, whose covariance is relative
+     * to it; wrong for a dead-reckoned source, whose covariance grows without
+     * bound. Default off. */
+    bool relative_pose_increment_from_source_covariance = false;
+
     /** @} */
 
     /** @name Geo-referencing

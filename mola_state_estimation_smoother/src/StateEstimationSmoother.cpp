@@ -52,15 +52,21 @@
 #endif
 
 // Custom factors:
+#include <gtsam/navigation/ImuBias.h>
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
+#include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
+
+#include <deque>
+#include <regex>
+#include <set>
 
 #if __has_include(<mola_imu_preintegration/ImuAverager.h>)
 #include <mola_imu_preintegration/ImuAverager.h>
@@ -296,6 +302,7 @@ using gtsam::symbol_shorthand::B;  // IMU attitude yaw bias [rad]   (double)
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
+using gtsam::symbol_shorthand::Z;  // IMU biases (imuBias::ConstantBias), with imu_preintegration
 //  TODO: IMU bias
 
 constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
@@ -446,6 +453,23 @@ struct StateEstimationSmoother::GtsamImpl
         }
         anchor.reset();
     }
+
+#if !GTSAM_USES_BOOST
+    // ---- IMU preintegration (Parameters::imu_preintegration) ----
+    struct RawImu
+    {
+        double         t = 0;
+        gtsam::Vector3 acc;
+        gtsam::Vector3 gyr;
+    };
+    std::deque<RawImu>                           rawImu;  //!< oldest first
+    std::string                                  rawImuLabel;  //!< the IMU in use
+    std::optional<std::regex>                    rawImuLabelRe;
+    std::shared_ptr<gtsam::PreintegrationParams> pimParams;
+    std::set<frame_pair_t>                       imuLinksAwaiting;
+    gtsam::imuBias::ConstantBias                 lastBias;
+    double                                       lastBiasStamp = 0;
+#endif
 
     /// Records the iSAM2 index of anchors passed in the last update()
     void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
@@ -1273,6 +1297,14 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
 {
+#if !GTSAM_USES_BOOST
+    // Preintegration needs every raw reading, before any decimation below.
+    if (params_.imu_preintegration.enabled)
+    {
+        buffer_raw_imu_locked(rawImu);
+    }
+#endif
+
     // Ignore an IMU reading with no usable content up front, before touching the
     // decimation stamp or creating a keyframe: otherwise an empty sample would
     // consume the decimation interval (skipping the next, useful one) and add a
@@ -1999,6 +2031,13 @@ void StateEstimationSmoother::fuse_pose_locked(
                 gtsam::Pose3   incr_out;
                 gtsam::Matrix6 incrCov_out;
                 mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
+                if (params_.relative_pose_increment_from_source_covariance)
+                {
+                    // The covariance of the reading, in the right tangent of the
+                    // current pose: with the previous pose held fixed, that is
+                    // also the right tangent of the increment.
+                    incrCov_out = cov_out;
+                }
 
                 state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                     T(*chain.last_kf), T(this_kf_id), incr_out,
@@ -2576,7 +2615,13 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     ASSERT_GT_(dt, 0.);
 
     // errors in constant vel:
-    const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear;
+    // The IMU measures the accelerations this model denies: with
+    // preintegration its linear part is only kept, weak, so that links without
+    // IMU data stay determined.
+    const double linScale      = params_.imu_preintegration.enabled
+                                     ? params_.imu_preintegration.linear_kinematics_sigma_scale
+                                     : 1.0;
+    const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear * linScale;
     const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
     if (dt > params_.time_between_frames_to_warning)
@@ -2612,7 +2657,7 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // 2) Add kinematics / numerical integration factor
     // ---------------------------------------------------
     auto noise_kinematicsPosition =
-        gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_position);
+        gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_position * linScale);
 
     auto noise_kinematicsOrientation =
         gtsam::noiseModel::Isotropic::Sigma(3, params_.sigma_integrator_orientation);
@@ -2773,6 +2818,13 @@ void StateEstimationSmoother::delete_too_old_entries()
     {
         it = touchesErased(it->first) ? state_.gtsam->pendingKinematic.erase(it) : std::next(it);
     }
+#if !GTSAM_USES_BOOST
+    for (auto it = state_.gtsam->imuLinksAwaiting.begin();
+         it != state_.gtsam->imuLinksAwaiting.end();)
+    {
+        it = touchesErased(*it) ? state_.gtsam->imuLinksAwaiting.erase(it) : std::next(it);
+    }
+#endif
 }
 
 // Creates a new frame index for timestamp t, or returns the existing one if close enough.
@@ -3074,6 +3126,13 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         }
     }
 
+#if !GTSAM_USES_BOOST
+    if (params_.imu_preintegration.enabled)
+    {
+        attach_imu_factors_locked();
+    }
+#endif
+
     // Flush the per-link kinematic factors into newFactors, remembering the range
     // each link occupies so its iSAM2 indices can be recovered below.
     std::vector<std::pair<GtsamImpl::frame_pair_t, std::pair<size_t, size_t>>> flushedRanges;
@@ -3105,12 +3164,12 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             const auto& newIdx = smoother.getISAM2Result().newFactorsIndices;
             for (const auto& [linkKey, range] : flushedRanges)
             {
-                gtsam::FactorIndices indices;
+                // Append: a link's IMU factor can be flushed after the rest of it.
+                auto& indices = state_.gtsam->flushedKinematic[linkKey];
                 for (size_t i = range.first; i < range.second && i < newIdx.size(); i++)
                 {
                     indices.push_back(newIdx[i]);
                 }
-                state_.gtsam->flushedKinematic[linkKey] = indices;
             }
             state_.gtsam->on_update_done(newIdx);
             state_.gtsam->factorsToRemove.clear();
@@ -3223,6 +3282,27 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         reset_locked();
         return;
     }
+
+#if !GTSAM_USES_BOOST
+    // The latest bias estimate is the linearization point of new links.
+    if (params_.imu_preintegration.enabled)
+    {
+        auto& g = *state_.gtsam;
+        for (const auto& [kfIdx, kf] : state_.last_estimated_states)
+        {
+            if (!optValues.exists(Z(kfIdx)))
+            {
+                continue;
+            }
+            const double ts = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(kfIdx));
+            if (ts >= g.lastBiasStamp)
+            {
+                g.lastBias      = optValues.at<gtsam::imuBias::ConstantBias>(Z(kfIdx));
+                g.lastBiasStamp = ts;
+            }
+        }
+    }
+#endif
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
     {
@@ -3692,6 +3772,25 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newValues.insert(W(id), angVelocity);
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
+#if !GTSAM_USES_BOOST
+    // Z: IMU biases, seeded with the latest estimate. The first keyframe gets
+    // a prior; every later one is chained by the random walk of its links.
+    if (params_.imu_preintegration.enabled)
+    {
+        state_.gtsam->newValues.insert(Z(id), state_.gtsam->lastBias);
+        state_.gtsam->newKeyStamps[Z(id)] = stamp_s;
+        if (!closest_idx_opt.has_value())
+        {
+            const auto&    ip = params_.imu_preintegration;
+            gtsam::Vector6 sig;
+            sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
+                gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
+            state_.gtsam->newFactors.addPrior(
+                Z(id), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
+        }
+    }
+#endif
+
     // Add planar constraints:
     if (params_.enforce_planar_motion)
     {
@@ -3759,6 +3858,25 @@ void StateEstimationSmoother::add_kinematic_factor_between(
         default:
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
+
+#if !GTSAM_USES_BOOST
+    if (params_.imu_preintegration.enabled)
+    {
+        // The bias random walk goes with the link from its creation, so no bias
+        // variable is ever left unconstrained; the preintegration factor itself
+        // is attached once the raw readings cover the link's interval.
+        const auto&    ip  = params_.imu_preintegration;
+        const double   adt = std::max(std::abs(dt), 1e-3);
+        gtsam::Vector6 sig;
+        sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
+            gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
+        auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(from, to)];
+        sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
+            Z(from), Z(to), gtsam::imuBias::ConstantBias(),
+            gtsam::noiseModel::Diagonal::Sigmas(sig));
+        state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
+    }
+#endif
 }
 
 size_t StateEstimationSmoother::count_const_vel_factors_for_testing() const
@@ -3822,6 +3940,149 @@ std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
     return links;
 }
 
+void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)
+{
+#if !GTSAM_USES_BOOST
+    using namespace mrpt::obs;
+    if (!imu.has(IMU_X_ACC) || !imu.has(IMU_Y_ACC) || !imu.has(IMU_Z_ACC) || !imu.has(IMU_WX) ||
+        !imu.has(IMU_WY) || !imu.has(IMU_WZ))
+    {
+        return;
+    }
+    auto&       g  = *state_.gtsam;
+    const auto& ip = params_.imu_preintegration;
+    if (!g.rawImuLabelRe)
+    {
+        g.rawImuLabelRe.emplace(ip.sensor_label_re);
+    }
+    if (!std::regex_match(imu.sensorLabel, *g.rawImuLabelRe))
+    {
+        return;
+    }
+    // One IMU: the first one seen that matches.
+    if (g.rawImuLabel.empty())
+    {
+        g.rawImuLabel = imu.sensorLabel;
+        auto p        = gtsam::PreintegrationParams::MakeSharedU(ip.gravity);
+        p->setGyroscopeCovariance(mrpt::square(ip.gyro_noise_density) * gtsam::I_3x3);
+        p->setAccelerometerCovariance(mrpt::square(ip.accel_noise_density) * gtsam::I_3x3);
+        p->setIntegrationCovariance(mrpt::square(ip.integration_sigma) * gtsam::I_3x3);
+        p->setBodyPSensor(mrpt::gtsam_wrappers::toPose3(imu.sensorPose));
+        g.pimParams = p;
+        MRPT_LOG_INFO_STREAM(
+            "[imu_preintegration] Preintegrating IMU '"
+            << imu.sensorLabel << "', pose on vehicle: " << imu.sensorPose);
+    }
+    if (imu.sensorLabel != g.rawImuLabel)
+    {
+        return;
+    }
+    const double t = mrpt::Clock::toDouble(imu.timestamp);
+    if (!g.rawImu.empty() && t <= g.rawImu.back().t)
+    {
+        return;  // repeated or out of order
+    }
+    GtsamImpl::RawImu r;
+    r.t   = t;
+    r.acc = {imu.get(IMU_X_ACC), imu.get(IMU_Y_ACC), imu.get(IMU_Z_ACC)};
+    r.gyr = {imu.get(IMU_WX), imu.get(IMU_WY), imu.get(IMU_WZ)};
+    g.rawImu.push_back(r);
+
+    // Readings older than the window can no longer be part of any link.
+    const double keepSince = t - params_.sliding_window_length - 2.0;
+    while (!g.rawImu.empty() && g.rawImu.front().t < keepSince)
+    {
+        g.rawImu.pop_front();
+    }
+#else
+    (void)imu;
+#endif
+}
+
+void StateEstimationSmoother::attach_imu_factors_locked()
+{
+#if !GTSAM_USES_BOOST
+    auto& g = *state_.gtsam;
+    if (!g.pimParams || g.rawImu.empty())
+    {
+        return;
+    }
+    const auto&  ip        = params_.imu_preintegration;
+    const double newestImu = g.rawImu.back().t;
+
+    for (auto it = g.imuLinksAwaiting.begin(); it != g.imuLinksAwaiting.end();)
+    {
+        const auto [a, b] = *it;
+        const auto ia     = state_.last_estimated_states.find(a);
+        const auto ib     = state_.last_estimated_states.find(b);
+        if (ia == state_.last_estimated_states.end() || ib == state_.last_estimated_states.end() ||
+            ia->second.kinematic_links_to.count(b) == 0)
+        {
+            it = g.imuLinksAwaiting.erase(it);  // the link is gone
+            continue;
+        }
+        frame_index_t i  = a;
+        frame_index_t j  = b;
+        double        ti = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(a));
+        double        tj = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(b));
+        if (tj < ti)
+        {
+            std::swap(i, j);
+            std::swap(ti, tj);
+        }
+        if (newestImu < tj)
+        {
+            ++it;  // its readings have not all arrived yet
+            continue;
+        }
+
+        // Zero-order hold: each reading holds until the next one. Start at the
+        // last reading at or before ti (or the first one, if close enough).
+        auto first = std::upper_bound(
+            g.rawImu.begin(), g.rawImu.end(), ti,
+            [](double v, const GtsamImpl::RawImu& r) { return v < r.t; });
+        bool ok = true;
+        if (first == g.rawImu.begin())
+        {
+            ok = (first->t - ti) <= ip.max_reading_gap;
+        }
+        else
+        {
+            --first;
+        }
+
+        gtsam::PreintegratedImuMeasurements pim(g.pimParams, g.lastBias);
+        double                              tc = ti;
+        for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
+        {
+            const auto   next  = std::next(k);
+            const double tNext = (next != g.rawImu.end()) ? std::min(next->t, tj) : tj;
+            if (next != g.rawImu.end() && next->t - k->t > ip.max_reading_gap)
+            {
+                ok = false;
+                break;
+            }
+            if (tNext > tc)
+            {
+                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+            }
+            tc = tNext;
+        }
+
+        if (ok && tj - ti >= ip.min_link_duration && std::abs(pim.deltaTij() - (tj - ti)) < 1e-6)
+        {
+            gtsam::Matrix9 floor    = gtsam::Matrix9::Zero();
+            floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;
+            floor.block<3, 3>(3, 3) = mrpt::square(ip.min_sigma_position) * gtsam::I_3x3;
+            floor.block<3, 3>(6, 6) = mrpt::square(ip.min_sigma_velocity) * gtsam::I_3x3;
+            g.pendingKinematic[*it].emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
+                T(i), V(i), T(j), V(j), Z(i), pim, floor);
+        }
+        it = g.imuLinksAwaiting.erase(it);
+    }
+#endif
+}
+
 void StateEstimationSmoother::remove_kinematic_factor_between(
     const frame_index_t from, const frame_index_t to)  // NOLINT
 {
@@ -3837,12 +4098,17 @@ void StateEstimationSmoother::remove_kinematic_factor_between(
 
     const auto key = GtsamImpl::link_key(from, to);
 
+#if !GTSAM_USES_BOOST
+    state_.gtsam->imuLinksAwaiting.erase(key);
+#endif
+
     // Still pending: it never reached the solver, so dropping it costs nothing.
+    // A link can be partly pending and partly flushed (an IMU factor attached
+    // after the rest), so both are handled.
     if (auto it = state_.gtsam->pendingKinematic.find(key);
         it != state_.gtsam->pendingKinematic.end())
     {
         state_.gtsam->pendingKinematic.erase(it);
-        return;
     }
 
     // Already inside the smoother: queue its factors for removal at the next update.
