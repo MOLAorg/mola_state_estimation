@@ -38,6 +38,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, publish_fused_vehicle_tf);
     MCP_LOAD_OPT(cfg, fused_vehicle_frame_name);
     MCP_LOAD_OPT(cfg, publish_imu_yaw_bias);
+    MCP_LOAD_OPT(cfg, publish_imu_biases);
     MCP_LOAD_OPT(cfg, publish_georef_convergence);
 
     // Kinematic factors and keyframe creation (motion model)
@@ -113,6 +114,17 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
+    MCP_LOAD_OPT(cfg, imu_bias_tracking);
+    MCP_LOAD_OPT(cfg, imu_bias_labels_re);
+    MCP_LOAD_OPT(cfg, imu_bias_correct_angular_velocity);
+    MCP_LOAD_OPT(cfg, imu_bias_hint_max_speed);
+    MCP_LOAD_OPT(cfg, imu_bias_hint_max_angular_speed_deg);
+    MCP_LOAD_OPT(cfg, imu_bias_hint_min_period);
+    if (cfg.has("imu_bias_tracker"))
+    {
+        const mrpt::containers::yaml sub = cfg["imu_bias_tracker"];
+        imu_bias_tracker                 = sub;
+    }
 
     // Geo-referencing
     // -----------------------------------------------------
