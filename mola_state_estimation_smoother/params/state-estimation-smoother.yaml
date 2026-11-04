@@ -397,7 +397,7 @@ params:
 
   # Regular expression to filter GNSS (GPS) labels/topics for processing
   # Default accepts all: ".*"
-  do_process_gnss_labels_re: ".*"
+  do_process_gnss_labels_re: "${MOLA_NAVSTATE_GNSS_SENSOR_NAME|.*}"
 
 # ============================================================================
 # End of Configuration
