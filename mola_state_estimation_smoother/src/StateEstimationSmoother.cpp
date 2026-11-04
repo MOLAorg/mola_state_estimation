@@ -965,6 +965,7 @@ void StateEstimationSmoother::reset_locked()
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         ingestQueue_.clear();
+        deferredCovs_.clear();
         resetEpoch_.fetch_add(1, std::memory_order_relaxed);
     }
     if (params_loaded_)
@@ -1000,6 +1001,7 @@ void StateEstimationSmoother::backend_loop()
     while (!backendStop_.load())
     {
         std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> batch;
+        std::vector<std::shared_future<mrpt::math::CMatrixDouble66>>          covs;
         uint64_t                                                              batchEpoch = 0;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
@@ -1009,7 +1011,15 @@ void StateEstimationSmoother::backend_loop()
                 break;
             }
             batch.swap(ingestQueue_);
+            covs.swap(deferredCovs_);
             batchEpoch = resetEpoch_.load(std::memory_order_relaxed);
+        }
+
+        // Covariances still being computed by their producer: wait for them
+        // before taking the state lock, so nobody else is blocked meanwhile.
+        for (const auto& c : covs)
+        {
+            c.wait();
         }
 
         // Apply in timestamp order, so most residual out-of-order arrivals become
@@ -1850,6 +1860,30 @@ void StateEstimationSmoother::fuse_pose(
     auto lck = mrpt::lockHelper(stateMutex_);
     fuse_pose_locked(timestamp, pose, frame_id);
 }
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+void StateEstimationSmoother::fuse_pose_deferred(
+    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
+    const std::shared_future<mrpt::math::CMatrixDouble66>& cov, const std::string& frame_id)
+{
+    if (!params_.async_backend)
+    {
+        fuse_pose(timestamp, mrpt::poses::CPose3DPDFGaussian(mean, cov.get()), frame_id);
+        return;
+    }
+    imu_bias_add_pose(timestamp, mean, frame_id);
+    fastPredictor_->note_observation_stamp(timestamp);
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        deferredCovs_.push_back(cov);
+    }
+    enqueue_async(
+        timestamp,
+        [this, timestamp, mean, cov, frame_id] {
+            fuse_pose_locked(timestamp, mrpt::poses::CPose3DPDFGaussian(mean, cov.get()), frame_id);
+        });
+}
+#endif
 
 void StateEstimationSmoother::fuse_pose_locked(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,

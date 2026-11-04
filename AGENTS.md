@@ -117,6 +117,9 @@ Sensor inputs:
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.
+- `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
+  covariance is a future; with `async_backend` the backend waits for it before
+  taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all

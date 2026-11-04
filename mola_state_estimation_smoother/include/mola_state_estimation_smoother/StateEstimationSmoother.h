@@ -192,6 +192,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id) override;
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+    /** As fuse_pose(), with a covariance that becomes ready later. With
+     *  `async_backend`, the backend thread waits for it (before taking the
+     *  state lock), so the caller never does; otherwise it is awaited here.
+     */
+    void fuse_pose_deferred(
+        const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
+        const std::shared_future<mrpt::math::CMatrixDouble66>& cov,
+        const std::string&                                     frame_id) override;
+#endif
+
     /** Integrates new wheels-based odometry observations into the estimator.
      *  This is a convenience method that internally ends up calling
      *  fuse_pose(), but computing the uncertainty of odometry increments
@@ -571,7 +582,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::condition_variable                                               queueCv_;
     std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> ingestQueue_;
     std::atomic<bool>                                                     backendStop_{false};
-    bool                                                                  backendRunning_ = false;
+    /// Covariances of queued fuse_pose_deferred() calls, guarded by
+    /// queueMutex_: the backend waits for them before taking stateMutex_.
+    std::vector<std::shared_future<mrpt::math::CMatrixDouble66>> deferredCovs_;
+    bool                                                         backendRunning_ = false;
 
     /// Bumped by reset_locked() so a batch already detached by backend_loop()
     /// (pre-reset) is discarded instead of repopulating the fresh graph with

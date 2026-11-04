@@ -229,6 +229,12 @@ params:
   #   - Pure odometry (no GNSS)      : optional. Without it, the map frame is the frame of the
   #     first odometry source; with it, the map origin is the robot's first pose.
   #
+  # The pinned pose has identity rotation, so {map} is then as tilted as the robot's first
+  # pose (e.g. a base_link that is not level, or an IMU-defined base_link mounted upside
+  # down). Gravity-dependent factors (imu_preintegration) need a gravity-aligned {map}:
+  # with a front end that levels its own odometry frame with gravity, leave this empty so
+  # {map} is that frame instead.
+  #
   # When to leave empty:
   #   - estimate_geo_reference=false with GNSS and a pre-built geo-referenced map: the robot
   #     may start anywhere in the map; the fixed T_enu_to_map + GNSS directly constrain its
@@ -320,7 +326,9 @@ params:
 
   # IMU preintegration between consecutive keyframes (gtsam::ImuFactor on the raw
   # readings), with gyroscope and accelerometer biases as states. The reference
-  # frame must be gravity-aligned (z up). Noise densities are per sqrt(Hz).
+  # frame must be gravity-aligned (z up): see link_first_pose_to_reference_origin_sigma,
+  # which defines {map} as the first robot pose, tilted if the robot is not level
+  # there. Noise densities are per sqrt(Hz).
   imu_preintegration:
     enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|false}
     sensor_label_re: "${MOLA_SMOOTHER_IMU_PREINT_LABELS|.*}"
