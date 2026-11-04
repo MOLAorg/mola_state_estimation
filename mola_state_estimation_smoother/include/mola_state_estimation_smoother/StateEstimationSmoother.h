@@ -34,6 +34,14 @@
 // MOLA:
 #include <mola_imu_preintegration/ImuIntegrator.h>
 
+#if __has_include(<mola_kernel/interfaces/ImuBiasSource.h>) && \
+    __has_include(<mola_imu_preintegration/ImuBiasTracker.h>)
+#include <mola_imu_preintegration/ImuBiasTracker.h>
+#include <mola_kernel/interfaces/ImuBiasSource.h>
+/** Feature macro: the smoother can track IMU biases and offer them as an ImuBiasSource. */
+#define MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE 1
+#endif
+
 // MRPT:
 #include <mrpt/containers/bimap.h>
 #include <mrpt/containers/yaml.h>
@@ -42,6 +50,7 @@
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
+#include <mrpt/poses/CPose3D.h>
 #include <mrpt/poses/CPose3DInterpolator.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/system/COutputLogger.h>
@@ -52,6 +61,7 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -122,6 +132,10 @@ class FastPredictor;
 class StateEstimationSmoother : public mola::NavStateFilter,
                                 public mola::LocalizationSourceBase,
                                 public mola::MapSourceBase
+#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
+    ,
+                                public mola::ImuBiasSource
+#endif
 
 {
     DEFINE_MRPT_OBJECT(StateEstimationSmoother, mola::state_estimation_smoother)
@@ -154,8 +168,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     void spinOnce() override;
 
-    /** Resets the estimator state to an initial state */
+    /** Resets the estimator state to an initial state. Tracked IMU biases are kept. */
     void reset() override;
+
+#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
+    /** \name ImuBiasSource (with `imu_bias_tracking`)
+     *  @{ */
+    [[nodiscard]] std::vector<std::string> imu_bias_sensor_labels() const override;
+    /** @} */
+#endif
 
     /** Integrates a new SE(3) pose of the vehicle wrt frame_id.
      *
@@ -482,6 +503,44 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     };
     std::optional<GeorefConvergence> lastGeorefConvergence_;
     mutable std::mutex               lastGeorefConvergenceMutex_;
+
+#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
+    /// IMU bias tracking (imu_bias_tracking), with its own mutex: fed from the raw
+    /// data threads, read by the solver and other modules. Never lock stateMutex_
+    /// while holding it.
+    mola::imu::ImuBiasTracker imuBiasTracker_;
+    mutable std::mutex        imuBiasMutex_;
+    RegexCache                imuBiasLabelsRe_;
+
+    /// The reference pose of each odometry input, for motion hints.
+    struct MotionHintRef
+    {
+        double               t = 0;  //!< [s]
+        mrpt::poses::CPose3D pose;
+    };
+    std::map<std::string, MotionHintRef> imuBiasHintRefs_;
+
+    [[nodiscard]] std::optional<ImuBias> imu_bias_impl(
+        const std::string&                            sensorLabel,
+        const std::optional<mrpt::Clock::time_point>& t) const override;
+
+    /// Converts a tracker estimate (imuBiasMutex_ held).
+    [[nodiscard]] ImuBias to_imu_bias(
+        const std::string& label, const mola::imu::ImuBiasTracker::Estimate& e) const;
+    /// Advertises the current estimates of those IMUs (no lock held).
+    void advertise_imu_biases(const std::vector<std::string>& labels);
+#endif
+    /// Feeds a raw IMU reading to the bias tracker, if enabled.
+    void imu_bias_add_reading(const mrpt::obs::CObservationIMU& imu);
+    /// Motion hint from a new pose of an odometry input, if enabled.
+    void imu_bias_add_pose(
+        const mrpt::Clock::time_point& t, const mrpt::poses::CPose3D& pose,
+        const std::string& source);
+    /// Motion hint from a twist, if enabled.
+    void imu_bias_add_twist(const mrpt::Clock::time_point& t, const mrpt::math::TTwist3D& tw);
+    /// Removes the tracked gyroscope bias from a reading (fused angular velocity).
+    void imu_bias_correct(mrpt::obs::CObservationIMU& imu) const;
+    void publish_imu_bias_diagnostics();
 
     /// Poses of the keyframes already marginalized out, in the reference frame,
     /// each recorded at the moment it left the window. Only filled when

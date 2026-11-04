@@ -121,6 +121,12 @@ class Parameters
      * Default off. */
     bool publish_imu_yaw_bias = false;
 
+    /** If true (and `imu_bias_tracking`), publish the gyroscope bias of each tracked IMU as
+     * module diagnostics, once per diagnostics period: `imu_bias_<label>_gyro_{x,y,z}_deg_s`
+     * and `imu_bias_<label>_gyro_sigma_deg_s` (largest axis sigma), with the label's
+     * non-alphanumeric characters replaced by `_`. Default off. */
+    bool publish_imu_biases = false;
+
     /** If true (and `estimate_geo_reference`), publish the geo-reference convergence
      * as module diagnostics, once per diagnostics period: `georef_pos_sigma_m` and
      * `georef_ori_sigma_deg` (the largest position and orientation sigmas compared
@@ -461,6 +467,32 @@ class Parameters
      * genuinely well-characterized, well-isolated gyro.
      */
     double imu_angular_velocity_sigma = 0.10;
+
+    /** If true, track the gyroscope and accelerometer biases of each IMU
+     * (mola::imu::ImuBiasTracker: standstill windows detected from its readings, vetoed by
+     * motion hints from the odometry inputs) and offer them to other modules as a
+     * mola::ImuBiasSource. Requires mola_kernel and mola_imu_preintegration versions that
+     * have them; otherwise it is ignored with a warning. Default off. */
+    bool imu_bias_tracking = false;
+
+    /// IMUs whose biases are tracked (regex of sensor labels), whether fused or not
+    /// (do_process_imu_labels_re does not apply here).
+    std::string imu_bias_labels_re = ".*";
+
+    /// If true (and `imu_bias_tracking`), subtract the tracked gyroscope bias from the
+    /// angular velocity readings before fusing them (imu_angular_velocity_sigma).
+    bool imu_bias_correct_angular_velocity = true;
+
+    /** Motion hints for the bias tracker, from the increments of each odometry input
+     * (poses in a frame other than the reference one, wheel odometry) over at least
+     * `imu_bias_hint_min_period` seconds, and from fused twists: "static" if both the
+     * speed and the angular speed are below these thresholds, else "moving". */
+    double imu_bias_hint_max_speed             = 0.02;  // [m/s]
+    double imu_bias_hint_max_angular_speed_deg = 0.1;  // [deg/s]
+    double imu_bias_hint_min_period            = 0.5;  // [s]
+
+    /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
+    mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();
 
     /** @} */
 

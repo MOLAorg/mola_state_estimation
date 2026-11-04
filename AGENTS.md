@@ -76,7 +76,8 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 
 Structure:
 - Inherits `mola::NavStateFilter`, `mola::LocalizationSourceBase`,
-  `mola::MapSourceBase`. GTSAM details are hidden in the `GtsamImpl` pimpl.
+  `mola::MapSourceBase`, and `mola::ImuBiasSource` when both mola_kernel and
+  mola_imu_preintegration have it (`MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE`). GTSAM details are hidden in the `GtsamImpl` pimpl.
 - State is guarded by `stateMutex_` (`std::mutex`); `*_locked()` methods
   assume it is held.
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
@@ -106,6 +107,13 @@ Sensor inputs:
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
+- IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker`
+  for all IMUs matching `imu_bias_labels_re` (raw readings from
+  `onNewObservation()`, even if not fused), under its own `imuBiasMutex_` (never
+  take `stateMutex_` while holding it; advertise with no lock held). Motion hints
+  from the increments of every odometry input (>= `imu_bias_hint_min_period`) and
+  twists. Gyro bias subtracted from fused angular velocities. Kept across
+  `reset()`. `publish_imu_biases`: diagnostics `imu_bias_<label>_gyro_*`.
 
 Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source):
 - One absolute factor on the source's first reading resolves

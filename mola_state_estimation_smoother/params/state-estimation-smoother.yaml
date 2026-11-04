@@ -60,6 +60,10 @@ params:
   # std_msgs/Float32 mola_diagnostics/<module>/imu_yaw_bias_deg and imu_yaw_bias_sigma_deg.
   publish_imu_yaw_bias: ${MOLA_NAVSTATE_PUBLISH_IMU_YAW_BIAS|false}
 
+  # If true (and imu_bias_tracking), publish each IMU gyroscope bias as module diagnostics:
+  # mola_diagnostics/<module>/imu_bias_<label>_gyro_{x,y,z}_deg_s and ..._gyro_sigma_deg_s.
+  publish_imu_biases: ${MOLA_NAVSTATE_PUBLISH_IMU_BIASES|false}
+
   # If true (and estimate_geo_reference), publish the geo-reference convergence as module
   # diagnostics, once per diagnostics period: georef_pos_sigma_m, georef_ori_sigma_deg,
   # their thresholds georef_max_pos_sigma_m and georef_max_ori_sigma_deg,
@@ -294,6 +298,24 @@ params:
   # sample taken as the keyframe-interval average on a vibrating platform; tighter
   # values over-constrain and can make the window singular. See Parameters.h.
   imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.10}"
+
+  # IMU bias tracking: gyroscope and accelerometer biases of each IMU, updated at every
+  # standstill (detected from its readings, vetoed by motion hints from the odometry
+  # inputs), offered to other modules (mola::ImuBiasSource, e.g. LiDAR odometry deskew).
+  imu_bias_tracking: ${MOLA_NAVSTATE_IMU_BIAS_TRACKING|false}
+  # IMUs tracked, whether fused or not (do_process_imu_labels_re does not apply):
+  imu_bias_labels_re: "${MOLA_NAVSTATE_IMU_BIAS_LABELS|.*}"
+  # Subtract the tracked gyro bias from the fused angular velocities:
+  imu_bias_correct_angular_velocity: true
+  # Motion hints: "static" below both thresholds, over pose increments of at least:
+  imu_bias_hint_max_speed: 0.02  # [m/s]
+  imu_bias_hint_max_angular_speed_deg: 0.1  # [deg/s]
+  imu_bias_hint_min_period: 0.5  # [s]
+  # mola::imu::ImuBiasTracker parameters (defaults if not given):
+  imu_bias_tracker:
+    standstill_window: 1.0  # [s]
+    # [s] how long readings wait for odometry hints: hint period plus odometry latency
+    max_hint_latency: 1.0
 
   # --------------------------------------------------------------------------
   # Geo-referencing
