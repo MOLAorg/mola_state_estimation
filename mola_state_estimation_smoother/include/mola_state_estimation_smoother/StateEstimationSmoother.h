@@ -57,6 +57,7 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -382,6 +383,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             mrpt::poses::CPose3DPDFGaussian pose;  //!< in {odom_i}
         };
         std::map<odometry_frameid_t, RawSourcePose> last_raw_pose_by_source;
+
+        /// Per odometry source: running mean of the squared one-step prediction
+        /// error per unit time squared, in twist order (vx vy vz wx wy wz).
+        struct PredictionResiduals
+        {
+            std::array<double, 6> varRate{};
+            size_t                count = 0;
+        };
+        std::map<odometry_frameid_t, PredictionResiduals> prediction_residuals;
 
         /// Per-source bookkeeping for the fuse_pose() odometry frames, which
         /// are always fused as relative increments: the
@@ -727,6 +737,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Updates the low-pass-filtered predict twist with the newest keyframe's
     /// optimized twist (dt-aware exponential moving average). No-op unless
     /// `predict_twist_filter_enabled`. See `State::filtered_predict_twist`.
+    /// Compares a new reading of an odometry source against what was predicted
+    /// for it, for predict_covariance_from_residuals. Call before storing it as
+    /// the source's last raw pose.
+    void update_prediction_residuals_locked(
+        odometry_frameid_t src, const mrpt::Clock::time_point& t, const mrpt::poses::CPose3D& pose);
+
     void update_predict_twist_filter_locked(
         const mrpt::math::TTwist3D& rawTwist, const mrpt::Clock::time_point& stamp);
 

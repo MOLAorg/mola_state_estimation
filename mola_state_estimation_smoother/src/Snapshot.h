@@ -25,6 +25,7 @@
 #include <mrpt/core/Clock.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -69,6 +70,10 @@ struct Snapshot
         mrpt::poses::CPose3DPDFGaussian pose;  //!< in {odom_i}
     };
     std::map<odometry_frameid_t, RawSourcePose> lastRawPoseBySource;
+
+    /// Sources with enough prediction errors: their mean squared error per unit
+    /// time squared (see State::prediction_residuals).
+    std::map<odometry_frameid_t, std::array<double, 6>> predictionVarRate;
 
     /// Current georeference (fixed or estimated), if any.
     std::optional<mola::Georeferencing> geoReference;

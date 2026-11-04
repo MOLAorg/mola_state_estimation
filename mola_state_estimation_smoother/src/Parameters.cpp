@@ -52,6 +52,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
+    MCP_LOAD_OPT(cfg, predict_covariance_from_residuals);
+    MCP_LOAD_OPT(cfg, predict_residual_time_const);
     // Wheel odometry is always fused as relative increments. The key is still
     // accepted when set to true, so existing configuration files keep working.
     if (cfg.has("odometry_relative_factors"))
@@ -113,6 +115,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     ASSERT_GT_(imu_attitude_yaw_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
+    MCP_LOAD_OPT(cfg, imu_gravity_compensate_centripetal);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
     MCP_LOAD_OPT(cfg, imu_bias_tracking);
     MCP_LOAD_OPT(cfg, imu_bias_labels_re);
@@ -191,6 +194,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // Nonlinear optimization
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, additional_isam2_update_steps);
+    MCP_LOAD_OPT(cfg, isam2_relinearize_threshold);
 
     // name Sensor input names
     // -----------------------------------------------------

@@ -605,8 +605,28 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     // Forward parameters to GTSAM smoother & iSAM2:
     gtsam::ISAM2Params isam2Params;
     isam2Params.findUnusedFactorSlots = true;  // Important, must be set for fixed-lag smoother
-    isam2Params.relinearizeThreshold  = 0.1;
-    isam2Params.relinearizeSkip       = 1;
+    // Poses are relinearized at a fine threshold: at the default 0.1, the
+    // solution can stay away from the optimum by more than an accurate pose
+    // source's own error. Velocities and biases keep the coarse one: they do
+    // not need it, and their weakly observed directions (e.g. before the first
+    // pose reading) make relinearizing them often numerically fragile.
+    {
+        const double poseThr   = params_.isam2_relinearize_threshold;
+        const double coarseThr = 0.1;
+
+        // Keyed by symbol character, which must cover every variable type:
+        const auto chr = [](gtsam::Key k) { return gtsam::Symbol(k).chr(); };
+
+        gtsam::FastMap<char, gtsam::Vector> thresholds;
+        thresholds[chr(T(0))]            = gtsam::Vector6::Constant(poseThr);
+        thresholds[chr(F(0))]            = gtsam::Vector6::Constant(poseThr);
+        thresholds[chr(V(0))]            = gtsam::Vector3::Constant(coarseThr);
+        thresholds[chr(W(0))]            = gtsam::Vector3::Constant(coarseThr);
+        thresholds[chr(Z(0))]            = gtsam::Vector6::Constant(coarseThr);
+        thresholds[chr(B(0))]            = gtsam::Vector1::Constant(coarseThr);
+        isam2Params.relinearizeThreshold = thresholds;
+    }
+    isam2Params.relinearizeSkip = 1;
     // isam2Params.optimizationParams    = gtsam::ISAM2DoglegParams();
 
     state_.gtsam->smoother.emplace(params_.sliding_window_length, isam2Params);
@@ -1222,6 +1242,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
     // Unconditional, and independent of which factor is added below: this is the
     // anchor estimated_navstate() extrapolates from when a front end asks for a
     // pose in the source's OWN frame, so it has to track every kept reading.
+    update_prediction_residuals_locked(frame_id_idx, odom.timestamp, absolutePoseInOdom.mean);
     state_.last_raw_pose_by_source[frame_id_idx] =
         State::RawSourcePose{odom.timestamp, absolutePoseInOdom};
 
@@ -1368,9 +1389,35 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     std::optional<gtsam::Vector3> measuredGravity;
     if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
     {
-        const mrpt::math::TVector3D acc = {
+        mrpt::math::TVector3D acc = {
             imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
             imu.get(mrpt::obs::IMU_Z_ACC)};
+
+        if (params_.imu_gravity_compensate_centripetal && imu.has(mrpt::obs::IMU_WX) &&
+            imu.has(mrpt::obs::IMU_WY) && imu.has(mrpt::obs::IMU_WZ) &&
+            !state_.stamp2frame_index.empty())
+        {
+            const auto newestKf = state_.stamp2frame_index.getDirectMap().rbegin()->second;
+            if (const auto it = state_.last_estimated_states.find(newestKf);
+                it != state_.last_estimated_states.end())
+            {
+                // Vehicle velocity in the IMU frame (lever arm neglected):
+                const auto& tw = it->second.twist;
+                const auto  vS = imu.sensorPose.inverseRotateVector({tw.vx, tw.vy, tw.vz});
+                const mrpt::math::TVector3D wS = {
+                    imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY),
+                    imu.get(mrpt::obs::IMU_WZ)};
+                // a = w x v, for a velocity constant in the body frame:
+                const mrpt::math::TVector3D centripetal = {
+                    wS.y * vS.z - wS.z * vS.y, wS.z * vS.x - wS.x * vS.z,
+                    wS.x * vS.y - wS.y * vS.x};
+                if (std::isfinite(centripetal.x) && std::isfinite(centripetal.y) &&
+                    std::isfinite(centripetal.z))
+                {
+                    acc -= centripetal;
+                }
+            }
+        }
 
         auto& avg = state_.imu_gravity_average[imu.sensorLabel];
         if (!avg.first_stamp)
@@ -2099,6 +2146,7 @@ void StateEstimationSmoother::fuse_pose_locked(
         // Remember this source's own last raw pose (in {odom_i}), the anchor
         // estimated_navstate() extrapolates from to keep the short-term
         // prediction continuous in the front end's own frame.
+        update_prediction_residuals_locked(frame_id_idx, timestamp, poseSanitized.mean);
         state_.last_raw_pose_by_source[frame_id_idx] =
             State::RawSourcePose{timestamp, poseSanitized};
     }
@@ -2371,8 +2419,21 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         // The anchor is the front end's own near-exact pose in {odom_i}, so
         // prediction uncertainty is dominated by the one-step extrapolation, not
         // the absolute {map}-frame keyframe covariance.
-        auto rawPdf =
-            extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred);
+        mrpt::poses::CPose3DPDFGaussian rawPdf;
+        const auto                      itRes = state_.prediction_residuals.find(requestedFrameIdx);
+        if (params_.predict_covariance_from_residuals &&
+            itRes != state_.prediction_residuals.end() &&
+            itRes->second.count >= MIN_PREDICTION_RESIDUALS)
+        {
+            rawPdf = extrapolate_pose_pdf(
+                params_, rawAnchor.pose, ret.twist, twist_cov_from_residuals(itRes->second.varRate),
+                dtPred, false /* no random walk: in the residuals already */);
+        }
+        else
+        {
+            rawPdf =
+                extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred);
+        }
         apply_pose_sigma_floor(params_, rawPdf);
         ret.pose.copyFrom(rawPdf);
         navstate_dump_row(timestamp, dtPred, ret);
@@ -4202,6 +4263,13 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
     {
         snap->lastRawPoseBySource[id] = Snapshot::RawSourcePose{raw.stamp, raw.pose};
     }
+    for (const auto& [id, res] : state_.prediction_residuals)
+    {
+        if (res.count >= MIN_PREDICTION_RESIDUALS)
+        {
+            snap->predictionVarRate[id] = res.varRate;
+        }
+    }
 
     snap->geoReference = state_.geo_reference;
 
@@ -4270,6 +4338,49 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
     ns.twist_inv_cov = twCov.inverse();
 
     return ns;
+}
+
+void StateEstimationSmoother::update_prediction_residuals_locked(
+    const odometry_frameid_t src, const mrpt::Clock::time_point& t,
+    const mrpt::poses::CPose3D& pose)
+{
+    if (!params_.predict_covariance_from_residuals || !state_.filtered_predict_twist.has_value())
+    {
+        return;
+    }
+    const auto itRaw = state_.last_raw_pose_by_source.find(src);
+    if (itRaw == state_.last_raw_pose_by_source.end())
+    {
+        return;
+    }
+    const double dt = mrpt::system::timeDifference(itRaw->second.stamp, t);
+    if (dt <= 1e-3 || dt > params_.max_time_to_use_velocity_model)
+    {
+        return;
+    }
+
+    // What the frame-local prediction would have said for this reading:
+    const auto predicted =
+        itRaw->second.pose.mean + body_twist_delta(params_, *state_.filtered_predict_twist, dt);
+    const auto err = pose - predicted;
+    const auto rot = mrpt::poses::Lie::SO<3>::log(err.getRotationMatrix());
+
+    const std::array<double, 6> r = {err.x(), err.y(), err.z(), rot[0], rot[1], rot[2]};
+
+    auto&        s     = state_.prediction_residuals[src];
+    const double tau   = std::max(1e-3, params_.predict_residual_time_const);
+    const double alpha = s.count == 0 ? 1.0 : 1.0 - std::exp(-dt / tau);
+    for (size_t i = 0; i < r.size(); i++)
+    {
+        double q = mrpt::square(r[i] / dt);
+        // One gross error (a failed registration) must not dominate the mean:
+        if (s.count >= MIN_PREDICTION_RESIDUALS)
+        {
+            q = std::min(q, 25.0 * s.varRate[i]);
+        }
+        s.varRate[i] += alpha * (q - s.varRate[i]);
+    }
+    s.count++;
 }
 
 void StateEstimationSmoother::update_predict_twist_filter_locked(

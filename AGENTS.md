@@ -71,7 +71,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (30) | `tests/test-*.cpp` |
+| Unit tests (36) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -98,6 +98,8 @@ Sensor inputs:
   `1e-4` variance floor).
 - `fuse_imu()`: attitude, gravity (`MeasuredGravityFactor`) and a Huber-robust
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
+  Before averaging, the accelerometer is corrected by the centripetal term
+  gyro x newest estimated velocity (`imu_gravity_compensate_centripetal`).
   Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
   With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
   bias state `B(k)` (double, one per keyframe with attitude,
@@ -114,6 +116,8 @@ Sensor inputs:
   floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
   (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
   `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
+  The per-keyframe gravity and angular-velocity factors stay on with it
+  (double counting): dropping them cost 2x on one handheld sequence.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.
@@ -164,6 +168,21 @@ Other behavior:
 - Predict-twist low-pass (`predict_twist_filter_enabled`,
   `predict_twist_filter_time_const`): the extrapolation velocity is a dt-aware
   EMA of the newest keyframe's twist.
+- Prediction covariance in an odometry source's frame
+  (`predict_covariance_from_residuals`, default on): twist covariance from the
+  running mean (`predict_residual_time_const`) of that source's squared
+  one-step prediction errors (`State::prediction_residuals`, copied into the
+  `Snapshot`), no random-walk term on top; the graph's twist marginal until 10
+  errors are in. With loose kinematics that marginal made the ICP prior ~7x
+  wider than the actual prediction error.
+- Linear kinematics (`sigma_random_walk_acceleration_linear` 5 m/s²,
+  `sigma_integrator_position` 1 m, YAML and C++): a prior on accelerations,
+  centripetal included. Tighter values bend an accurate odometry-frame pose
+  source on every turn, and the heading error accumulates since the source
+  only constrains increments (`test-odometry-pose-source-fidelity`).
+- iSAM2 relinearization: per variable type, `isam2_relinearize_threshold`
+  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B` (relinearizing
+  those often makes the IMU-only start fragile, `test-imu-gyro-solver-stability`).
 - The angular constant-velocity factor sigma is
   `sigma_random_walk_acceleration_angular * dt` combined in quadrature with
   `sqrt(2) * imu_angular_velocity_sigma` (`angular_const_vel_sigma()`).
