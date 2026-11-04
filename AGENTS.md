@@ -50,6 +50,10 @@ Constant-velocity kinematic estimator with velocity extrapolation.
   `fuse_pending_odometry_up_to()`), so results depend on measurement
   timestamps, not on delivery order.
 - Velocity is low-pass filtered (`velocity_filter_enabled`, default true).
+- `fuse_pose_deferred()`: the reading is fused by the next call that reads or
+  changes the estimate (`apply_deferred_pose()` at the top of every public
+  method except `fuse_imu()`), which waits for the covariance outside
+  `state_mtx_`.
 - `initial_twist` (+ `initial_twist_sigma_lin`/`_ang`) seeds the twist on
   `initialize()`/`reset()`; a source's first pose does not clear it.
   `loadFrom()` rejects non-positive sigmas when `initial_twist` is non-zero.

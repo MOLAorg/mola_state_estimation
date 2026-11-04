@@ -30,8 +30,11 @@
 #include <mrpt/topography/conversions.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <future>
 #include <iostream>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1905,6 +1908,102 @@ params:
     std::cout << "OK\n";
 }
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+// --------------------------------------------------------------------------
+// fuse_pose_deferred(): identical estimates to fuse_pose(), with the
+// covariances arriving late from another thread, and the caller never waits.
+// --------------------------------------------------------------------------
+void test_fuse_pose_deferred()
+{
+    std::cout << "[Test] fuse_pose_deferred... ";
+
+    const char*                                          yaml_text = R"###(
+params:
+    max_time_to_use_velocity_model: 2.0
+    sigma_random_walk_acceleration_linear: 1.0
+    sigma_random_walk_acceleration_angular: 1.0
+    sigma_relative_pose_linear: 0.5
+    sigma_relative_pose_angular: 0.1
+    velocity_filter_enabled: true
+)###";
+    mola::state_estimation_simple::StateEstimationSimple direct;
+    mola::state_estimation_simple::StateEstimationSimple deferred;
+    direct.initialize(mrpt::containers::yaml::FromText(yaml_text));
+    deferred.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+    constexpr size_t N       = 40;
+    const double     dt      = 0.1;
+    auto             mean_at = [&](size_t i)
+    {
+        const double t = dt * static_cast<double>(i);
+        return mrpt::poses::CPose3D(t + (i == 25 ? 0.2 : 0.0), 0.1 * t, 0, 0.05 * t, 0, 0);
+    };
+    auto cov_at = [](size_t i)
+    {
+        mrpt::math::CMatrixDouble66 c;
+        c.setDiagonal(i == 25 ? 1.0 : 1e-4 * (1.0 + 0.1 * static_cast<double>(i % 4)));
+        return c;
+    };
+    auto imu_at = [](double t)
+    {
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::TIMUDataIndex::IMU_WX, 0.0);
+        imu.set(mrpt::obs::TIMUDataIndex::IMU_WY, 0.0);
+        imu.set(mrpt::obs::TIMUDataIndex::IMU_WZ, 0.05);
+        return imu;
+    };
+
+    double maxCallMs = 0;
+    for (size_t i = 0; i < N; i++)
+    {
+        const double t     = dt * static_cast<double>(i);
+        const auto   stamp = mrpt::Clock::fromDouble(t);
+        direct.fuse_pose(stamp, mrpt::poses::CPose3DPDFGaussian(mean_at(i), cov_at(i)), "map");
+
+        // The covariance is produced 30 ms later by another thread:
+        std::promise<mrpt::math::CMatrixDouble66> promise;
+        const auto                                t0 = std::chrono::steady_clock::now();
+        deferred.fuse_pose_deferred(stamp, mean_at(i), promise.get_future().share(), "map");
+        // Buffered inputs never wait for it either:
+        direct.fuse_imu(imu_at(t + 0.05));
+        deferred.fuse_imu(imu_at(t + 0.05));
+        maxCallMs = std::max(
+            maxCallMs,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count());
+        std::thread producer(
+            [&promise, &cov_at, i]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                promise.set_value(cov_at(i));
+            });
+
+        // The query fuses the deferred reading first, waiting if needed:
+        const auto query = stamp + std::chrono::milliseconds(80);
+        const auto qa    = direct.estimated_navstate(query, "map");
+        const auto qb    = deferred.estimated_navstate(query, "map");
+        producer.join();
+        ASSERT_EQUAL_(qa.has_value(), qb.has_value());
+        if (qa)
+        {
+            ASSERT_(qa->pose.mean == qb->pose.mean);
+            for (int r = 0; r < 6; r++)
+            {
+                for (int c = 0; c < 6; c++)
+                {
+                    ASSERT_EQUAL_(qa->pose.cov_inv(r, c), qb->pose.cov_inv(r, c));
+                }
+            }
+            ASSERT_EQUAL_(qa->twist.vx, qb->twist.vx);
+            ASSERT_EQUAL_(qa->twist.wz, qb->twist.wz);
+        }
+    }
+    ASSERT_LT_(maxCallMs, 20.0);
+    std::cout << "OK (slowest non-waiting call " << maxCallMs << " ms)\n";
+}
+#endif
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
@@ -1929,6 +2028,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_imu_propagation();
         test_imu_propagation_accel_bias();
         test_imu_propagation_after_3d_odometry();
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+        test_fuse_pose_deferred();
+#endif
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();
         test_gnss_gated_out();
