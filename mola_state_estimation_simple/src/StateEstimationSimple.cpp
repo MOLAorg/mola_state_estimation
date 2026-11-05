@@ -91,6 +91,7 @@ void StateEstimationSimple::spinOnce()
 
 void StateEstimationSimple::reset()
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
 
     // Buffered-but-unfused IMU readings survive the reset. They are sensor data
@@ -361,6 +362,7 @@ void StateEstimationSimple::update_vel_filter(
 void StateEstimationSimple::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
     fuse_odometry_locked(odom, odomName);
 }
@@ -432,6 +434,7 @@ void StateEstimationSimple::fuse_odometry_locked(
 void StateEstimationSimple::fuse_odometry_3d_pose(
     const mrpt::obs::CObservationRobotPose& obs, const std::string& odomName)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
     fuse_odometry_3d_pose_locked(obs, odomName);
 }
@@ -861,6 +864,7 @@ void StateEstimationSimple::fuse_all_pending_odometry()
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
 void StateEstimationSimple::set_geo_reference(const mola::Georeferencing& georef)
 {
+    apply_deferred_pose();
     auto lck       = std::scoped_lock(state_mtx_);
     geo_reference_ = georef;
 }
@@ -874,7 +878,13 @@ std::optional<mola::Georeferencing> StateEstimationSimple::get_geo_reference() c
 
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
+    fuse_gnss_locked(gps);
+}
+
+void StateEstimationSimple::fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps)
+{
     // Same reason as in the pose paths: apply the odometry readings this
     // instant covers before using last_pose, so a GNSS correction never
     // lands on a pose whose odometry updates are still queued.
@@ -1044,8 +1054,62 @@ void StateEstimationSimple::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     const std::string& frame_id)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
+    fuse_pose_locked(timestamp, pose, frame_id);
+}
 
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+void StateEstimationSimple::fuse_pose_deferred(
+    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
+    const std::shared_future<mrpt::math::CMatrixDouble66>& cov, const std::string& frame_id)
+{
+    ASSERT_(cov.valid());
+    for (;;)
+    {
+        apply_deferred_pose();  // an earlier one goes first
+        auto lck = std::scoped_lock(state_mtx_);
+        if (deferred_pose_)
+        {
+            continue;  // another thread stored one meanwhile
+        }
+        deferred_pose_ = DeferredPose{timestamp, mean, cov, frame_id};
+        return;
+    }
+}
+#endif
+
+void StateEstimationSimple::apply_deferred_pose()
+{
+    for (;;)
+    {
+        std::shared_future<mrpt::math::CMatrixDouble66> cov;
+        {
+            auto lck = std::scoped_lock(state_mtx_);
+            if (!deferred_pose_)
+            {
+                return;
+            }
+            if (deferred_pose_->cov.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            {
+                const DeferredPose d = std::move(*deferred_pose_);
+                deferred_pose_.reset();
+                fuse_pose_locked(
+                    d.timestamp, mrpt::poses::CPose3DPDFGaussian(d.mean, d.cov.get()), d.frame_id);
+                return;
+            }
+            cov = deferred_pose_->cov;
+        }
+        // Without the lock: inputs that are only buffered (IMU) never wait.
+        // The pending reading may change meanwhile, so check it again.
+        cov.wait();
+    }
+}
+
+void StateEstimationSimple::fuse_pose_locked(
+    const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
+    const std::string& frame_id)
+{
     // The IMU readings up to this measurement's own time belong before it in
     // the filter; newer ones stay buffered (see fuse_imu()):
     // Apply the odometry readings this instant covers first, so the result
@@ -1197,6 +1261,7 @@ void StateEstimationSimple::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
 
     // Apply the odometry readings this instant covers first, so the result
@@ -1222,6 +1287,7 @@ void StateEstimationSimple::fuse_twist(
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_TRANSFORM_FRAME)
 bool StateEstimationSimple::transform_frame(const mrpt::poses::CPose3D& b)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
 
     // Everything expressed in the map frame: the fused pose and the per-source
@@ -1271,6 +1337,7 @@ bool StateEstimationSimple::transform_frame(const mrpt::poses::CPose3D& b)
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
 
     // Bring the filter up to the queried time, using only the IMU readings that
@@ -1450,6 +1517,12 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
 void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
 {
+    // Of the inputs below, only GNSS is fused on arrival (the rest is
+    // buffered): fuse a deferred pose before it, without holding the lock.
+    if (std::dynamic_pointer_cast<const mrpt::obs::CObservationGPS>(o))
+    {
+        apply_deferred_pose();
+    }
     auto lck = std::scoped_lock(state_mtx_);
 
     const ProfilerEntry tleg(profiler_, "onNewObservation");
@@ -1536,7 +1609,7 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel,
                 state_.do_process_gnss_labels_re.get_regex(params.do_process_gnss_labels_re)))
         {
-            this->fuse_gnss(*obsGPS);
+            fuse_gnss_locked(*obsGPS);
         }
         else
         {
@@ -1556,6 +1629,7 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
 
 std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist()
 {
+    apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
 
     // No time of interest is given here, so everything received is fused:
