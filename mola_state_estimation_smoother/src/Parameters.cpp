@@ -52,6 +52,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
+    MCP_LOAD_OPT(cfg, predict_covariance_from_residuals);
+    MCP_LOAD_OPT(cfg, predict_residual_time_const);
     // Wheel odometry is always fused as relative increments. The key is still
     // accepted when set to true, so existing configuration files keep working.
     if (cfg.has("odometry_relative_factors"))
@@ -113,6 +115,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     ASSERT_GT_(imu_attitude_yaw_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
+    MCP_LOAD_OPT(cfg, imu_gravity_compensate_centripetal);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
     MCP_LOAD_OPT(cfg, imu_bias_tracking);
     MCP_LOAD_OPT(cfg, imu_bias_labels_re);
@@ -124,6 +127,37 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     {
         const mrpt::containers::yaml sub = cfg["imu_bias_tracker"];
         imu_bias_tracker                 = sub;
+    }
+    if (cfg.has("imu_preintegration"))
+    {
+        const mrpt::containers::yaml c  = cfg["imu_preintegration"];
+        auto&                        ip = imu_preintegration;
+        ip.enabled                      = c.getOrDefault("enabled", ip.enabled);
+        ip.sensor_label_re              = c.getOrDefault("sensor_label_re", ip.sensor_label_re);
+        ip.gyro_noise_density  = c.getOrDefault("gyro_noise_density", ip.gyro_noise_density);
+        ip.accel_noise_density = c.getOrDefault("accel_noise_density", ip.accel_noise_density);
+        ip.gyro_bias_random_walk =
+            c.getOrDefault("gyro_bias_random_walk", ip.gyro_bias_random_walk);
+        ip.accel_bias_random_walk =
+            c.getOrDefault("accel_bias_random_walk", ip.accel_bias_random_walk);
+        ip.integration_sigma = c.getOrDefault("integration_sigma", ip.integration_sigma);
+        ip.gravity           = c.getOrDefault("gravity", ip.gravity);
+        ip.initial_gyro_bias_sigma =
+            c.getOrDefault("initial_gyro_bias_sigma", ip.initial_gyro_bias_sigma);
+        ip.initial_accel_bias_sigma =
+            c.getOrDefault("initial_accel_bias_sigma", ip.initial_accel_bias_sigma);
+        ip.linear_kinematics_sigma_scale =
+            c.getOrDefault("linear_kinematics_sigma_scale", ip.linear_kinematics_sigma_scale);
+        ip.max_reading_gap    = c.getOrDefault("max_reading_gap", ip.max_reading_gap);
+        ip.min_sigma_rotation = c.getOrDefault("min_sigma_rotation", ip.min_sigma_rotation);
+        ip.min_sigma_position = c.getOrDefault("min_sigma_position", ip.min_sigma_position);
+        ip.min_sigma_velocity = c.getOrDefault("min_sigma_velocity", ip.min_sigma_velocity);
+        ip.min_link_duration  = c.getOrDefault("min_link_duration", ip.min_link_duration);
+        ASSERT_GT_(ip.gyro_noise_density, 0.0);
+        ASSERT_GT_(ip.accel_noise_density, 0.0);
+        ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
+        ASSERT_GT_(ip.accel_bias_random_walk, 0.0);
+        ASSERT_GE_(ip.linear_kinematics_sigma_scale, 1.0);
     }
 
     // Geo-referencing
@@ -160,6 +194,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // Nonlinear optimization
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, additional_isam2_update_steps);
+    MCP_LOAD_OPT(cfg, isam2_relinearize_threshold);
 
     // name Sensor input names
     // -----------------------------------------------------
@@ -172,6 +207,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_meter);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_rad);
     MCP_LOAD_OPT(cfg, pose_robust_huber_threshold);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_from_source_covariance);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");

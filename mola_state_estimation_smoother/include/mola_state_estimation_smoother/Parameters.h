@@ -315,7 +315,11 @@ class Parameters
      */
     double imu_min_sample_period = 0.0;  // [s]
 
-    double sigma_random_walk_acceleration_linear = 0.5;  // [m/s²]
+    /** Linear random-walk sigma for the constant-velocity factor between keyframes.
+     *  It is a prior on the vehicle's acceleration, centripetal included: it must
+     *  not be tighter than the platform's real accelerations, or the optimizer
+     *  cuts every turn short and bends an accurate pose source with it. */
+    double sigma_random_walk_acceleration_linear = 5.0;  // [m/s²]
     /** Angular random-walk sigma for the constant-velocity factor between keyframes.
      *  Kept loose on purpose: a tight value makes that factor override the per-keyframe
      *  gyro prior, averaging genuine fast rotations away (the optimized W then keeps only
@@ -338,8 +342,21 @@ class Parameters
      * (predict_twist_filter_enabled). Larger = smoother prior but more lag
      * behind genuine acceleration. */
     double predict_twist_filter_time_const = 0.3;
-    double sigma_integrator_position       = 0.10;  // [m]
-    double sigma_integrator_orientation    = 0.10;  // [rad]
+
+    /** If true, the covariance of a prediction in an odometry source's own
+     * frame (the motion prior a front end such as a LiDAR odometry receives)
+     * grows with that source's measured one-step prediction error, instead of
+     * with the twist marginal of the graph: the latter mostly reflects how
+     * loosely the kinematic factors tie velocities to poses, not how well the
+     * motion is predicted. */
+    bool predict_covariance_from_residuals = true;
+
+    /** [s] Time constant of the running mean of those prediction errors. */
+    double predict_residual_time_const = 10.0;
+    /** Per-link sigma of the trapezoidal position integration. Loose, so that
+     * velocities follow the poses and not the other way around. */
+    double sigma_integrator_position    = 1.0;  // [m]
+    double sigma_integrator_orientation = 0.10;  // [rad]
 
     /** @name Floor on the uncertainty reported by estimated_navstate()
      *  @{ */
@@ -449,6 +466,14 @@ class Parameters
      */
     double imu_gravity_min_sample_period = 1.0;
 
+    /** If true, the centripetal acceleration of a turning vehicle (the gyro
+     * angular velocity times the newest estimated linear velocity) is removed
+     * from each accelerometer reading before it is averaged into a gravity
+     * observation: unlike vibration, it does not average out over a turn, and
+     * would read as a tilt towards the outside of it. Only applied to readings
+     * in m/s^2, not to accelerometers normalized to g. */
+    bool imu_gravity_compensate_centripetal = true;
+
     /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
      * corresponding keyframe's body-frame angular-velocity variable, sensor-to-vehicle
      * rotated. Without this, angular velocity is only constrained by the constant-velocity
@@ -497,6 +522,58 @@ class Parameters
 
     /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
     mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();
+
+    /** IMU preintegration between consecutive keyframes: every kinematic link
+     * whose interval is covered by raw readings gets an on-manifold
+     * preintegration factor (gtsam::ImuFactor on the raw accelerometer and
+     * gyroscope readings), and every keyframe gets a gyroscope and
+     * accelerometer bias variable, chained by a random walk. The reference
+     * frame is assumed gravity-aligned (z up). Default off. */
+    struct ImuPreintegration
+    {
+        bool        enabled         = false;
+        std::string sensor_label_re = ".*";  //!< IMUs used (regex of labels)
+
+        double gyro_noise_density     = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
+        double accel_noise_density    = 1.6e-3;  //!< [m/s^2/sqrt(Hz)]
+        double gyro_bias_random_walk  = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
+        double accel_bias_random_walk = 3e-4;  //!< [m/s^3/sqrt(Hz)]
+        double integration_sigma      = 1e-4;  //!< position integration noise
+        double gravity                = 9.80665;  //!< [m/s^2]
+
+        double initial_gyro_bias_sigma  = 0.02;  //!< [rad/s]
+        double initial_accel_bias_sigma = 0.2;  //!< [m/s^2]
+
+        /** The constant-velocity linear factors of a link (velocity and position
+         * integration) contradict any acceleration the IMU measures: their
+         * sigmas are multiplied by this while preintegration is on. They stay,
+         * weak, so a link without IMU data is still determined. */
+        double linear_kinematics_sigma_scale = 10.0;
+
+        /// Largest gap between consecutive readings integrated across [s].
+        double max_reading_gap = 0.1;
+
+        /** Floor of the preintegrated uncertainty, added to it: unmodeled errors
+         * (timing, extrinsics, vibration), and numerical conditioning, since
+         * keyframes can be milliseconds apart. Rotation [rad], position [m],
+         * velocity [m/s]. */
+        double min_sigma_rotation = 2e-4;
+        double min_sigma_position = 1e-3;
+        double min_sigma_velocity = 5e-3;
+
+        /// Links shorter than this get no preintegration factor [s].
+        double min_link_duration = 2e-3;
+    };
+    ImuPreintegration imu_preintegration;
+
+    /** If true, the increments that fuse_pose() asserts for an odometry frame
+     * use the covariance the source publishes with each reading, as the
+     * covariance of the motion since its previous reading, instead of
+     * relative_pose_increment_sigma_*. Right for a registration against a
+     * local map built from the recent trajectory, whose covariance is relative
+     * to it; wrong for a dead-reckoned source, whose covariance grows without
+     * bound. Default off. */
+    bool relative_pose_increment_from_source_covariance = false;
 
     /** @} */
 
@@ -550,6 +627,13 @@ class Parameters
     /** Each new sensor will become a call to isam2.update(), plus this number of additional
      * refining steps. In theory, more steps lead to more accurate results. */
     uint32_t additional_isam2_update_steps = 3;
+
+    /** iSAM2 relinearization threshold for poses, in tangent-space units (m
+     * and rad): a pose is relinearized only once its estimate moved this much
+     * from its linearization point. Coarser values leave the solution away from
+     * the optimum by more than an accurate pose source's own error. Velocities
+     * and IMU biases use a fixed 0.1. */
+    double isam2_relinearize_threshold = 0.01;
 
     /** @} */
 

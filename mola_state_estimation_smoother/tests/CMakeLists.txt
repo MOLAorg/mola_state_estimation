@@ -21,6 +21,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-odometry-pose-source-fidelity
+  SOURCES test-odometry-pose-source-fidelity.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-static-gnss-imu-orientation
   SOURCES test-static-gnss-imu-orientation.cpp
   LINK_LIBRARIES
@@ -142,6 +149,13 @@ mola_add_test(
 mola_add_test(
   TARGET  test-async-navstate
   SOURCES test-async-navstate.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
+  TARGET  test-deferred-pose-covariance
+  SOURCES test-deferred-pose-covariance.cpp
   LINK_LIBRARIES
     mola::mola_state_estimation_smoother
 )

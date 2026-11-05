@@ -57,6 +57,7 @@
 #include <mrpt/system/CTimeLogger.h>
 
 // std:
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -191,6 +192,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_pose(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
         const std::string& frame_id) override;
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
+    /** As fuse_pose(), with a covariance that becomes ready later. With
+     *  `async_backend`, the backend thread waits for it (before taking the
+     *  state lock), so the caller never does; otherwise it is awaited here.
+     */
+    void fuse_pose_deferred(
+        const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
+        const std::shared_future<mrpt::math::CMatrixDouble66>& cov,
+        const std::string&                                     frame_id) override;
+#endif
 
     /** Integrates new wheels-based odometry observations into the estimator.
      *  This is a convenience method that internally ends up calling
@@ -371,6 +383,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             mrpt::poses::CPose3DPDFGaussian pose;  //!< in {odom_i}
         };
         std::map<odometry_frameid_t, RawSourcePose> last_raw_pose_by_source;
+
+        /// Per odometry source: running mean of the squared one-step prediction
+        /// error per unit time squared, in twist order (vx vy vz wx wy wz).
+        struct PredictionResiduals
+        {
+            std::array<double, 6> varRate{};
+            size_t                count = 0;
+        };
+        std::map<odometry_frameid_t, PredictionResiduals> prediction_residuals;
 
         /// Per-source bookkeeping for the fuse_pose() odometry frames, which
         /// are always fused as relative increments: the
@@ -571,7 +592,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::condition_variable                                               queueCv_;
     std::deque<std::pair<mrpt::Clock::time_point, std::function<void()>>> ingestQueue_;
     std::atomic<bool>                                                     backendStop_{false};
-    bool                                                                  backendRunning_ = false;
+    /// Covariances of queued fuse_pose_deferred() calls, guarded by
+    /// queueMutex_: the backend waits for them before taking stateMutex_.
+    std::vector<std::shared_future<mrpt::math::CMatrixDouble66>> deferredCovs_;
+    bool                                                         backendRunning_ = false;
 
     /// Bumped by reset_locked() so a batch already detached by backend_loop()
     /// (pre-reset) is discarded instead of repopulating the fresh graph with
@@ -698,6 +722,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  replace it. Cheap if the link has not reached the solver yet; otherwise its
      *  factors are queued for removal at the next update().
      */
+    /// IMU preintegration: keeps the raw readings of the IMU in use.
+    void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
+
+    /// IMU preintegration: adds the factor of every link whose interval the
+    /// raw readings now cover.
+    void attach_imu_factors_locked();
+
     void remove_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
 
     /// Gets the latest state of a pose wrt the reference frame ("map")
@@ -706,6 +737,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Updates the low-pass-filtered predict twist with the newest keyframe's
     /// optimized twist (dt-aware exponential moving average). No-op unless
     /// `predict_twist_filter_enabled`. See `State::filtered_predict_twist`.
+    /// Compares a new reading of an odometry source against what was predicted
+    /// for it, for predict_covariance_from_residuals. Call before storing it as
+    /// the source's last raw pose.
+    void update_prediction_residuals_locked(
+        odometry_frameid_t src, const mrpt::Clock::time_point& t, const mrpt::poses::CPose3D& pose);
+
     void update_predict_twist_filter_locked(
         const mrpt::math::TTwist3D& rawTwist, const mrpt::Clock::time_point& stamp);
 

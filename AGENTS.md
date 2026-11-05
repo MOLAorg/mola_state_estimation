@@ -71,7 +71,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (30) | `tests/test-*.cpp` |
+| Unit tests (36) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -82,6 +82,8 @@ Structure:
   assume it is held.
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
+  With `imu_preintegration.enabled`, also IMU biases `Z(k)`
+  (`imuBias::ConstantBias`), chained by a random walk on every link.
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame`; consecutive keyframes are linked
   by kinematic factors (`ConstantVelocity` or `Tricycle` model).
@@ -96,6 +98,8 @@ Sensor inputs:
   `1e-4` variance floor).
 - `fuse_imu()`: attitude, gravity (`MeasuredGravityFactor`) and a Huber-robust
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
+  Before averaging, the accelerometer is corrected by the centripetal term
+  gyro x newest estimated velocity (`imu_gravity_compensate_centripetal`).
   Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
   With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
   bias state `B(k)` (double, one per keyframe with attitude,
@@ -105,6 +109,20 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
+- IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
+  are buffered before decimation; each kinematic link gets a
+  `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with body-frame velocities)
+  once the readings cover it (`attach_imu_factors_locked()`), with a covariance
+  floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
+  (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
+  `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
+  The per-keyframe gravity and angular-velocity factors stay on with it.
+- `relative_pose_increment_from_source_covariance` (default off): odometry-frame
+  increments take each reading's own covariance instead of
+  `relative_pose_increment_sigma_*`.
+- `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
+  covariance is a future; with `async_backend` the backend waits for it before
+  taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.
 - `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
@@ -149,6 +167,19 @@ Other behavior:
 - Predict-twist low-pass (`predict_twist_filter_enabled`,
   `predict_twist_filter_time_const`): the extrapolation velocity is a dt-aware
   EMA of the newest keyframe's twist.
+- Prediction covariance in an odometry source's frame
+  (`predict_covariance_from_residuals`, default on): twist covariance from the
+  running mean (`predict_residual_time_const`) of that source's squared
+  one-step prediction errors (`State::prediction_residuals`, copied into the
+  `Snapshot`), no random-walk term on top; the graph's twist marginal until 10
+  errors are in.
+- Linear kinematics (`sigma_random_walk_acceleration_linear` 5 m/s²,
+  `sigma_integrator_position` 1 m, YAML and C++): a prior on accelerations,
+  centripetal included. An accurate odometry-frame pose source must come out
+  unchanged (`test-odometry-pose-source-fidelity`).
+- iSAM2 relinearization: per variable type, `isam2_relinearize_threshold`
+  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B`
+  (`test-imu-gyro-solver-stability`).
 - The angular constant-velocity factor sigma is
   `sigma_random_walk_acceleration_angular * dt` combined in quadrature with
   `sqrt(2) * imu_angular_velocity_sigma` (`angular_const_vel_sigma()`).

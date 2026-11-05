@@ -101,7 +101,8 @@ inline mrpt::poses::CPose3D body_twist_delta(
  */
 inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     const Parameters& params, const mrpt::poses::CPose3DPDFGaussian& anchorPose,
-    const mrpt::math::TTwist3D& twist, const mrpt::math::CMatrixDouble66& twistCov, double dt)
+    const mrpt::math::TTwist3D& twist, const mrpt::math::CMatrixDouble66& twistCov, double dt,
+    bool addRandomWalk = true)
 {
     mrpt::poses::CPose3DPDFGaussian deltaPdf;
     deltaPdf.mean = body_twist_delta(params, twist, dt);
@@ -110,7 +111,7 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     incrCov *= mrpt::square(dt);
 
     const double halfDt2 = 0.5 * dt * dt;
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 3 && addRandomWalk; i++)
     {
         incrCov(i, i) += mrpt::square(params.sigma_random_walk_acceleration_linear * halfDt2);
         incrCov(3 + i, 3 + i) +=
@@ -130,6 +131,29 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     }
 
     return anchorPose + deltaPdf;
+}
+
+/// Prediction errors an odometry source must have accumulated before they set
+/// the covariance of predictions in its frame.
+constexpr size_t MIN_PREDICTION_RESIDUALS = 10;
+
+/// Floor of the running prediction-error rate [(m/s)^2 or (rad/s)^2] under the
+/// cap on new errors, so a rate that starts at exactly zero can still grow.
+constexpr double MIN_PREDICTION_VAR_RATE = 1e-6;
+
+/** Twist covariance (diagonal, twist order) of a prediction in an odometry
+ *  source's own frame, from the running mean of its squared prediction errors
+ *  per unit time squared. Already includes the effect of accelerations, so the
+ *  random-walk term of extrapolate_pose_pdf() must not be added on top. */
+inline mrpt::math::CMatrixDouble66 twist_cov_from_residuals(const std::array<double, 6>& varRate)
+{
+    mrpt::math::CMatrixDouble66 cov;
+    cov.setZero();
+    for (int i = 0; i < 6; i++)
+    {
+        cov(i, i) = varRate[static_cast<size_t>(i)];
+    }
+    return cov;
 }
 
 /** Adds the flat, dt-independent floor of sigma_relative_pose_{linear,angular}
