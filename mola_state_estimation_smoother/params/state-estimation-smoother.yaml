@@ -107,6 +107,7 @@ params:
   # than a few centimeters, we may be more permissive in the temporal distance between the GNSS
   # datum and the associated existing keyframe. This parameter is the extended, alternative value
   # to use instead of "min_time_difference_to_create_new_frame". [seconds]
+  # The fix goes to the closest keyframe, moved to the fix time with its twist.
   gnss_nearby_keyframe_stamp_tolerance: 1.0
 
   # When adding IMU observations, this is the temporal distance between the IMU reading
@@ -372,6 +373,15 @@ params:
   # assumed to be given from either these initial parameters or, if not set, from an external
   # source (e.g. a geo-referenced .mm map loaded in mola_lidar_odometry).
   estimate_geo_reference: "${MOLA_ESTIMATE_GEO_REF|false}"
+
+  # Lower bound [m] on each ENU sigma of a GNSS fix. RTK receivers report ~1 cm,
+  # less than time-stamping, lever arm and odometry errors: below this floor an
+  # overconfident fix bends the trajectory. 0 = use the receiver covariance as is.
+  gnss_min_sigma: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA|0.10}
+
+  # If set, the final geo-reference (datum + T_enu_to_map) is written to this YAML
+  # file (mp2p_icp georeferencing format) when the estimator is destroyed.
+  save_final_georef_to_file: "${MOLA_SE_SAVE_GEOREF_FILE|}"
 
   # If estimate_geo_reference is false and this is set, the geo-referencing will be taken
   # from this value and never attempted to be optimized or changed.

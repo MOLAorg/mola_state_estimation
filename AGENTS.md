@@ -136,7 +136,11 @@ Sensor inputs:
 - `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
   covariance is a future; with `async_backend` the backend waits for it before
   taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.
-- `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
+- `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`), each ENU sigma
+  floored at `gnss_min_sigma`. The fix goes to the closest keyframe within
+  `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
+  `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
+  keyframe's `V`/`W`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -233,6 +237,11 @@ Georeferencing and relocalization:
   pinned azimuth (standing still longer than the window), they biased it for good.
   The fix completing the baseline replaces the anchor with a prior at the azimuth
   measured by the GNSS vs. {map} antenna displacement.
+- `get_geo_reference()`: the fixed one, or the datum (first fix) plus the LATEST
+  `T_enu_to_map` once its azimuth is unpinned, converged or not. It also serves
+  the `enu` frame in `estimated_navstate()` (current T, causal) and
+  `estimated_trajectory()` (latest T for all poses). `save_final_georef_to_file`
+  (`MOLA_SE_SAVE_GEOREF_FILE`) writes it on destruction, as mp2p_icp YAML.
 - `set_geo_reference()` / `fixed_geo_reference`: fixes `T_enu_to_map` and
   resets the estimator. Zero variances are floored to 1e-6 (singular otherwise).
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once

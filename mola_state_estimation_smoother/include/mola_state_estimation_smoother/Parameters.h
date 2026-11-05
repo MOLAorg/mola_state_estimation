@@ -175,6 +175,8 @@ class Parameters
      * than a few centimeters, we may be more permissive in the temporal distance between the GNSS
      * datum and the associated existing keyframe. This parameter is the extended, alternative value
      * to use instead of "min_time_difference_to_create_new_frame". [seconds]
+     * The fix is attached to the closest keyframe, and the antenna is moved to the
+     * fix time with that keyframe's twist, so this offset does not bias the fix.
      */
     double gnss_nearby_keyframe_stamp_tolerance = 1.0;  // [s]
 
@@ -630,6 +632,21 @@ class Parameters
      *  Gaussian).
      */
     double gnss_huber_threshold = 1.5;  // [sigmas]
+
+    /** Lower bound [m] on the standard deviation of every GNSS fix, along each
+     *  ENU axis: a receiver covariance below it is inflated to it. RTK fixes
+     *  often report ~1 cm, smaller than what the rest of the graph can explain
+     *  (time-stamping, lever arm, odometry noise), and an overconfident fix bends
+     *  the trajectory instead of nudging it. 0 disables it.
+     */
+    double gnss_min_sigma = 0.0;  // [m]
+
+    /** If not empty, the final geo-reference (geodetic datum + T_enu_to_map,
+     *  fixed or estimated) is written to this YAML file when the estimator is
+     *  destroyed, in the same format as mp2p_icp georeferencing files. Nothing
+     *  is written if no geo-reference is known by then.
+     */
+    std::string save_final_georef_to_file;
 
     /** @} */
 
