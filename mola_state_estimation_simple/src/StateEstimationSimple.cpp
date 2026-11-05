@@ -880,6 +880,11 @@ void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     apply_deferred_pose();
     auto lck = std::scoped_lock(state_mtx_);
+    fuse_gnss_locked(gps);
+}
+
+void StateEstimationSimple::fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps)
+{
     // Same reason as in the pose paths: apply the odometry readings this
     // instant covers before using last_pose, so a GNSS correction never
     // lands on a pose whose odometry updates are still queued.
@@ -1059,34 +1064,46 @@ void StateEstimationSimple::fuse_pose_deferred(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
     const std::shared_future<mrpt::math::CMatrixDouble66>& cov, const std::string& frame_id)
 {
-    apply_deferred_pose();  // an earlier one goes first
-    auto lck       = std::scoped_lock(state_mtx_);
-    deferred_pose_ = DeferredPose{timestamp, mean, cov, frame_id};
+    ASSERT_(cov.valid());
+    for (;;)
+    {
+        apply_deferred_pose();  // an earlier one goes first
+        auto lck = std::scoped_lock(state_mtx_);
+        if (deferred_pose_)
+        {
+            continue;  // another thread stored one meanwhile
+        }
+        deferred_pose_ = DeferredPose{timestamp, mean, cov, frame_id};
+        return;
+    }
 }
 #endif
 
 void StateEstimationSimple::apply_deferred_pose()
 {
-    std::shared_future<mrpt::math::CMatrixDouble66> cov;
+    for (;;)
     {
-        auto lck = std::scoped_lock(state_mtx_);
-        if (!deferred_pose_)
+        std::shared_future<mrpt::math::CMatrixDouble66> cov;
         {
-            return;
+            auto lck = std::scoped_lock(state_mtx_);
+            if (!deferred_pose_)
+            {
+                return;
+            }
+            if (deferred_pose_->cov.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            {
+                const DeferredPose d = std::move(*deferred_pose_);
+                deferred_pose_.reset();
+                fuse_pose_locked(
+                    d.timestamp, mrpt::poses::CPose3DPDFGaussian(d.mean, d.cov.get()), d.frame_id);
+                return;
+            }
+            cov = deferred_pose_->cov;
         }
-        cov = deferred_pose_->cov;
+        // Without the lock: inputs that are only buffered (IMU) never wait.
+        // The pending reading may change meanwhile, so check it again.
+        cov.wait();
     }
-    // Without the lock: inputs that are only buffered (IMU) never wait.
-    cov.wait();
-
-    auto lck = std::scoped_lock(state_mtx_);
-    if (!deferred_pose_)
-    {
-        return;  // fused meanwhile by another thread
-    }
-    const DeferredPose d = std::move(*deferred_pose_);
-    deferred_pose_.reset();
-    fuse_pose_locked(d.timestamp, mrpt::poses::CPose3DPDFGaussian(d.mean, d.cov.get()), d.frame_id);
 }
 
 void StateEstimationSimple::fuse_pose_locked(
@@ -1592,7 +1609,7 @@ void StateEstimationSimple::onNewObservation(const CObservation::ConstPtr& o)
                 o->sensorLabel,
                 state_.do_process_gnss_labels_re.get_regex(params.do_process_gnss_labels_re)))
         {
-            this->fuse_gnss(*obsGPS);
+            fuse_gnss_locked(*obsGPS);
         }
         else
         {

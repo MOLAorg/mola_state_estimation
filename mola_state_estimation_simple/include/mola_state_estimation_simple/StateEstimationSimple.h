@@ -115,9 +115,10 @@ class StateEstimationSimple : public mola::NavStateFilter
     /** As fuse_pose(), with a covariance that becomes ready later. It is read
      *  lazily: the next call that reads or changes the estimate (typically the
      *  next estimated_navstate()) fuses the reading first, waiting for its
-     *  covariance only if it is still not ready, so the caller of this method
-     *  never waits. The result is that of calling fuse_pose() here.
-     *  fuse_imu() and buffered inputs never wait for it.
+     *  covariance only if it is still not ready. Readings are fused in call
+     *  order: this method waits only if an earlier deferred reading's
+     *  covariance is still not ready. The result is that of calling
+     *  fuse_pose() here. fuse_imu() and buffered inputs never wait for it.
      */
     void fuse_pose_deferred(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3D& mean,
@@ -408,6 +409,9 @@ class StateEstimationSimple : public mola::NavStateFilter
      *  method that reads or changes the estimate, except the ones that only
      *  buffer their input (fuse_imu()). */
     void apply_deferred_pose();
+
+    /// Body of fuse_gnss(). Must be called with state_mtx_ already held.
+    void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
 
     /// Body of fuse_pose(). Must be called with state_mtx_ already held.
     void fuse_pose_locked(

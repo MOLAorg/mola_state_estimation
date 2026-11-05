@@ -30,6 +30,7 @@
 #include <mrpt/topography/conversions.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <future>
@@ -1961,10 +1962,18 @@ params:
         const auto   stamp = mrpt::Clock::fromDouble(t);
         direct.fuse_pose(stamp, mrpt::poses::CPose3DPDFGaussian(mean_at(i), cov_at(i)), "map");
 
-        // The covariance is produced 30 ms later by another thread:
+        // The covariance is produced 30 ms later by another thread, started
+        // first so a call that waits fails the timing check instead of hanging:
         std::promise<mrpt::math::CMatrixDouble66> promise;
-        const auto                                t0 = std::chrono::steady_clock::now();
-        deferred.fuse_pose_deferred(stamp, mean_at(i), promise.get_future().share(), "map");
+        const auto                                cov = promise.get_future().share();
+        std::thread                               producer(
+            [&promise, &cov_at, i]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                promise.set_value(cov_at(i));
+            });
+        const auto t0 = std::chrono::steady_clock::now();
+        deferred.fuse_pose_deferred(stamp, mean_at(i), cov, "map");
         // Buffered inputs never wait for it either:
         direct.fuse_imu(imu_at(t + 0.05));
         deferred.fuse_imu(imu_at(t + 0.05));
@@ -1972,12 +1981,6 @@ params:
             maxCallMs,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                 .count());
-        std::thread producer(
-            [&promise, &cov_at, i]()
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(30));
-                promise.set_value(cov_at(i));
-            });
 
         // The query fuses the deferred reading first, waiting if needed:
         const auto query = stamp + std::chrono::milliseconds(80);
@@ -2001,6 +2004,71 @@ params:
     }
     ASSERT_LT_(maxCallMs, 20.0);
     std::cout << "OK (slowest non-waiting call " << maxCallMs << " ms)\n";
+}
+
+// A second fuse_pose_deferred() while the first covariance is still pending
+// waits for it, so no reading is lost and the order is kept.
+void test_fuse_pose_deferred_consecutive()
+{
+    std::cout << "[Test] fuse_pose_deferred, consecutive readings... ";
+
+    const char*                                          yaml_text = R"###(
+params:
+    max_time_to_use_velocity_model: 2.0
+    sigma_relative_pose_linear: 0.5
+    sigma_relative_pose_angular: 0.1
+    velocity_filter_enabled: true
+)###";
+    mola::state_estimation_simple::StateEstimationSimple direct;
+    mola::state_estimation_simple::StateEstimationSimple deferred;
+    direct.initialize(mrpt::containers::yaml::FromText(yaml_text));
+    deferred.initialize(mrpt::containers::yaml::FromText(yaml_text));
+
+    auto mean_at = [](size_t i)
+    {
+        const double t = 0.1 * static_cast<double>(i);
+        return mrpt::poses::CPose3D(t, 0.1 * t, 0, 0.05 * t, 0, 0);
+    };
+    mrpt::math::CMatrixDouble66 cov;
+    cov.setDiagonal(1e-4);
+
+    constexpr size_t N = 20;
+    for (size_t i = 0; i < N; i += 2)
+    {
+        const auto s0 = mrpt::Clock::fromDouble(0.1 * static_cast<double>(i));
+        const auto s1 = mrpt::Clock::fromDouble(0.1 * static_cast<double>(i + 1));
+        direct.fuse_pose(s0, mrpt::poses::CPose3DPDFGaussian(mean_at(i), cov), "map");
+        direct.fuse_pose(s1, mrpt::poses::CPose3DPDFGaussian(mean_at(i + 1), cov), "map");
+
+        std::promise<mrpt::math::CMatrixDouble66> p0;
+        std::promise<mrpt::math::CMatrixDouble66> p1;
+        p1.set_value(cov);
+        std::atomic_bool firstReady{false};
+        std::thread      producer(
+            [&p0, &cov, &firstReady]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                firstReady = true;
+                p0.set_value(cov);
+            });
+        deferred.fuse_pose_deferred(s0, mean_at(i), p0.get_future().share(), "map");
+        deferred.fuse_pose_deferred(s1, mean_at(i + 1), p1.get_future().share(), "map");
+        const bool waited = firstReady.load();
+        producer.join();
+        ASSERT_(waited);
+
+        const auto query = s1 + std::chrono::milliseconds(50);
+        const auto qa    = direct.estimated_navstate(query, "map");
+        const auto qb    = deferred.estimated_navstate(query, "map");
+        ASSERT_EQUAL_(qa.has_value(), qb.has_value());
+        if (qa)
+        {
+            ASSERT_(qa->pose.mean == qb->pose.mean);
+            ASSERT_EQUAL_(qa->twist.vx, qb->twist.vx);
+            ASSERT_EQUAL_(qa->twist.wz, qb->twist.wz);
+        }
+    }
+    std::cout << "OK\n";
 }
 #endif
 
@@ -2030,6 +2098,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_imu_propagation_after_3d_odometry();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)
         test_fuse_pose_deferred();
+        test_fuse_pose_deferred_consecutive();
 #endif
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
         test_gnss_rtk_pulls_anchor();

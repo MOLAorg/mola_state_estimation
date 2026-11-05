@@ -53,7 +53,10 @@ Constant-velocity kinematic estimator with velocity extrapolation.
 - `fuse_pose_deferred()`: the reading is fused by the next call that reads or
   changes the estimate (`apply_deferred_pose()` at the top of every public
   method except `fuse_imu()`), which waits for the covariance outside
-  `state_mtx_`.
+  `state_mtx_` and fuses only a reading whose covariance is ready. Readings are
+  fused in call order: a second `fuse_pose_deferred()` waits for an earlier
+  pending covariance. Internal paths that already hold the lock use the
+  `*_locked()` bodies (e.g. GNSS in `onNewObservation()`).
 - `initial_twist` (+ `initial_twist_sigma_lin`/`_ang`) seeds the twist on
   `initialize()`/`reset()`; a source's first pose does not clear it.
   `loadFrom()` rejects non-positive sigmas when `initial_twist` is non-zero.
