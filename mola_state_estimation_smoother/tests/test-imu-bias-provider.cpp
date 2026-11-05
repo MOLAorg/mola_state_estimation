@@ -96,6 +96,9 @@ params:
     imu_bias_labels_re: "lidar_imu"
     imu_bias_tracker:
       max_hint_latency: 1.0
+    # The tracker, not the graph's own estimate (gyro_bias), is under test:
+    gyro_bias:
+      enabled: false
     imu_bias_tracking: )###") +
            (tracking ? "true" : "false") + "\n";
 }

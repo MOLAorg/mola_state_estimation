@@ -725,6 +725,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// IMU preintegration: keeps the raw readings of the IMU in use.
     void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
 
+    /// Parameters::gyro_bias is in effect (it is not, with preintegration).
+    [[nodiscard]] bool gyro_bias_in_graph() const
+    {
+        return params_.gyro_bias.enabled && !params_.imu_preintegration.enabled;
+    }
+
+#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
+    /// The graph's latest gyroscope bias, for imu_bias_impl() (imuBiasMutex_).
+    std::optional<mola::ImuBias> graphGyroBias_;
+    bool                         graphGyroBiasUpdated_ = false;  //!< Not advertised yet
+#endif
+
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.
     void attach_imu_factors_locked();

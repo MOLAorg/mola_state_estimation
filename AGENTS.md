@@ -78,7 +78,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (36) | `tests/test-*.cpp` |
+| Unit tests (37) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -90,7 +90,8 @@ Structure:
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
   With `imu_preintegration.enabled`, also IMU biases `Z(k)`
-  (`imuBias::ConstantBias`), chained by a random walk on every link.
+  (`imuBias::ConstantBias`), chained by a random walk on every link. Otherwise,
+  with `gyro_bias.enabled`, a sensor-frame gyroscope bias `G(k)` (Vector3).
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame`; consecutive keyframes are linked
   by kinematic factors (`ConstantVelocity` or `Tricycle` model).
@@ -124,6 +125,12 @@ Sensor inputs:
   (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
   `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
   The per-keyframe gravity and angular-velocity factors stay on with it.
+- Gyroscope bias (`gyro_bias`, default on, only without `imu_preintegration`): once
+  the raw IMU is seen, `G(k)` per keyframe, a zero-mean prior on the first, a random
+  walk per link, and a `FactorGyroPreintegrationPose` per link from the same raw
+  buffer; the `W(k)` factor becomes `W = R_vs (w - G)`. Observable while moving,
+  from the pose source alone. `imu_bias()` offers it, and the tracker's correction
+  of fused readings is then skipped.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.
@@ -284,6 +291,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |
 | `Pose3RotationYawBiasFactor` | `ExpressionFactorN` | Rotation-only, with a scalar azimuth bias variable |
+| `FactorGyroPreintegrationPose` | `NoiseModelFactorN` | gtsam::AHRSFactor on Pose3 keys, with a Vector3 gyro bias |
 
 `imu_helpers.h`: accelerometer/quaternion sanity checks and the ENU azimuth
 correction shared by the estimators and georeferencing.

@@ -523,6 +523,25 @@ class Parameters
     /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
     mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();
 
+    /** Gyroscope bias estimated in the graph, without IMU preintegration: one
+     * bias state G(k) (sensor frame, rad/s) per keyframe, chained by a random
+     * walk, observed by a gyroscope-only rotation preintegration factor between
+     * consecutive keyframe poses (every raw reading of the link, first-order
+     * bias Jacobian, as gtsam::AHRSFactor). Any pose source (e.g. LiDAR
+     * odometry) then corrects it at each new pose, with the vehicle moving. The
+     * per-keyframe angular-velocity factor takes the bias-corrected reading.
+     * The IMU is the first one matching imu_preintegration.sensor_label_re.
+     * Unused while imu_preintegration is enabled (its own bias covers it). */
+    struct GyroBias
+    {
+        bool   enabled            = true;
+        double prior_sigma        = 0.02;  //!< zero-mean initial bias sigma [rad/s]
+        double random_walk        = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
+        double noise_density      = 2.4e-4;  //!< gyro white noise [rad/s/sqrt(Hz)]
+        double min_sigma_rotation = 2e-3;  //!< per-link floor of the rotation factor [rad]
+    };
+    GyroBias gyro_bias;
+
     /** IMU preintegration between consecutive keyframes: every kinematic link
      * whose interval is covered by raw readings gets an on-manifold
      * preintegration factor (gtsam::ImuFactor on the raw accelerometer and

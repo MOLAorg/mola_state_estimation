@@ -85,6 +85,7 @@ struct Config
 {
     double yaw_bias_sigma_deg         = 0;
     double attitude_min_sample_period = 0;
+    bool   gyro_bias                  = true;
 };
 
 struct Sim
@@ -105,6 +106,7 @@ struct Sim
         auto cfg = mrpt::containers::yaml::FromText(navStateParams);
         cfg["params"]["imu_attitude_yaw_bias_sigma_deg"] = c.yaw_bias_sigma_deg;
         cfg["params"]["imu_attitude_min_sample_period"]  = c.attitude_min_sample_period;
+        cfg["params"]["gyro_bias"]["enabled"]            = c.gyro_bias;
         est.initialize(cfg);
 
         const mrpt::topography::TGeodeticCoords ref(LAT, LON, ALT);
@@ -280,10 +282,11 @@ void test_bias_state()
 
 void test_attitude_decimation()
 {
-    // Without the bias state, the fused sigma tells how many readings were used.
-    Sim all({0, 0});
+    // Without the bias state, the fused sigma tells how many readings were used
+    // (and without the gyroscope link factors, which also hold the heading).
+    Sim all({0, 0, false});
     all.run(20.0, false);
-    Sim decimated({0, 1.0});
+    Sim decimated({0, 1.0, false});
     decimated.run(20.0, false);
 
     const auto hAll = all.heading();

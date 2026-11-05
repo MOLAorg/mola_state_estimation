@@ -128,6 +128,19 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         const mrpt::containers::yaml sub = cfg["imu_bias_tracker"];
         imu_bias_tracker                 = sub;
     }
+    if (cfg.has("gyro_bias"))
+    {
+        const mrpt::containers::yaml c  = cfg["gyro_bias"];
+        auto&                        gb = gyro_bias;
+        gb.enabled                      = c.getOrDefault("enabled", gb.enabled);
+        gb.prior_sigma                  = c.getOrDefault("prior_sigma", gb.prior_sigma);
+        gb.random_walk                  = c.getOrDefault("random_walk", gb.random_walk);
+        gb.noise_density                = c.getOrDefault("noise_density", gb.noise_density);
+        gb.min_sigma_rotation = c.getOrDefault("min_sigma_rotation", gb.min_sigma_rotation);
+        ASSERT_GT_(gb.prior_sigma, 0.0);
+        ASSERT_GT_(gb.random_walk, 0.0);
+        ASSERT_GT_(gb.noise_density, 0.0);
+    }
     if (cfg.has("imu_preintegration"))
     {
         const mrpt::containers::yaml c  = cfg["imu_preintegration"];

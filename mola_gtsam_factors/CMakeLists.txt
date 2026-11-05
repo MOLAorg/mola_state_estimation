@@ -47,6 +47,7 @@ mola_add_library(
     include/mola_gtsam_factors/FactorConstLocalVelocity.h
     include/mola_gtsam_factors/FactorGnssEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnu.h
+    include/mola_gtsam_factors/FactorGyroPreintegrationPose.h
     include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
     include/mola_gtsam_factors/FactorTricycleKinematic.h
     include/mola_gtsam_factors/gtsam_detect_version.h
@@ -60,6 +61,7 @@ mola_add_library(
     src/FactorConstLocalVelocity.cpp
     src/FactorGnssEnu.cpp
     src/FactorGnssMapEnu.cpp
+    src/FactorGyroPreintegrationPose.cpp
     src/FactorTrapezoidalIntegrator.cpp
     src/FactorTricycleKinematic.cpp
     src/imu_helpers.cpp

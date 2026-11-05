@@ -47,7 +47,8 @@ constexpr double WARMUP_DURATION = 3.0;  // [s]
 auto& rng = mrpt::random::getRandomGenerator();
 
 // Shipped smoother defaults, with a synchronous backend so the test is
-// deterministic, plus the gravity factor settings under test.
+// deterministic, plus the gravity factor settings under test. The gyroscope
+// link factors (gyro_bias) are off: they would also hold the attitude.
 std::string make_config(double gravitySigmaDeg, double gravityPeriod)
 {
     return R"###(
@@ -69,6 +70,8 @@ params:
     imu_angular_velocity_sigma: 0.1
     estimate_geo_reference: false
     async_backend: false
+    gyro_bias:
+      enabled: false
     imu_normalized_gravity_alignment_sigma: )###" +
            std::to_string(gravitySigmaDeg) +
            "\n    imu_gravity_min_sample_period: " + std::to_string(gravityPeriod) + "\n";
