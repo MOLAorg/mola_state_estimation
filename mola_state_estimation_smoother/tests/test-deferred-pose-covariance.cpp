@@ -115,21 +115,15 @@ void test_async_never_waits()
     mola::state_estimation_smoother::StateEstimationSmoother est;
     est.initialize(mrpt::containers::yaml::FromText(params_yaml(true)));
 
-    std::vector<std::promise<mrpt::math::CMatrixDouble66>> promises(NUM_POSES);
-    double                                                 maxCallMs = 0;
-    for (size_t i = 0; i < NUM_POSES; i++)
+    std::vector<std::promise<mrpt::math::CMatrixDouble66>>       promises(NUM_POSES);
+    std::vector<std::shared_future<mrpt::math::CMatrixDouble66>> futures;
+    for (auto& p : promises)
     {
-        const auto t0 = std::chrono::steady_clock::now();
-        est.fuse_pose_deferred(
-            stamp_at(i), mean_at(i), promises[i].get_future().share(), ODOM_FRAME);
-        (void)est.estimated_navstate(stamp_at(i), ODOM_FRAME);
-        const double ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
-                .count();
-        maxCallMs = std::max(maxCallMs, ms);
+        futures.push_back(p.get_future().share());
     }
 
-    // The producer resolves them all, 0.3 s later:
+    // The producer resolves them all, 0.3 s later. Started first, so a call
+    // that waits shows up as a slow call instead of a hang:
     std::thread producer(
         [&]()
         {
@@ -139,6 +133,18 @@ void test_async_never_waits()
                 promises[i].set_value(cov_at(i));
             }
         });
+
+    double maxCallMs = 0;
+    for (size_t i = 0; i < NUM_POSES; i++)
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        est.fuse_pose_deferred(stamp_at(i), mean_at(i), futures[i], ODOM_FRAME);
+        (void)est.estimated_navstate(stamp_at(i), ODOM_FRAME);
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        maxCallMs = std::max(maxCallMs, ms);
+    }
 
     double mapX = std::nan("");
     for (int iter = 0; iter < 800; iter++)  // up to ~4 s
@@ -158,6 +164,7 @@ void test_async_never_waits()
     std::cout << "async: slowest call while covariances were pending " << maxCallMs << " ms; map x "
               << mapX << " (expected " << EXPECTED_X << ")\n";
     ASSERT_LT_(maxCallMs, 100.0);
+    ASSERTMSG_(std::isfinite(mapX), "no map-frame estimate");
     ASSERT_LT_(std::abs(mapX - EXPECTED_X), 0.05);
 }
 

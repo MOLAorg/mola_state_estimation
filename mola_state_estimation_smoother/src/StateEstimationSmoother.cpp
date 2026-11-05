@@ -146,6 +146,10 @@ constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 /// value giving ~95% efficiency under Gaussian noise.
 constexpr double GYRO_HUBER_K = 1.345;
 
+// Accelerometer norm above which a reading is taken to be in m/s^2. Readings
+// normalized to g stay well below it, so terms in m/s^2 must not touch them.
+constexpr double ACC_NORM_MIN_FOR_SI_UNITS = 3.0;
+
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
     p.z(0);
@@ -546,6 +550,20 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
             "imu_bias_tracking ignored: built against mola_kernel or mola_imu_preintegration "
             "versions without ImuBiasSource / ImuBiasTracker.");
 #endif
+    }
+
+    if (params_.imu_preintegration.enabled)
+    {
+        try
+        {
+            (void)std::regex(params_.imu_preintegration.sensor_label_re);
+        }
+        catch (const std::regex_error& e)
+        {
+            THROW_EXCEPTION_FMT(
+                "Invalid imu_preintegration.sensor_label_re '%s': %s",
+                params_.imu_preintegration.sensor_label_re.c_str(), e.what());
+        }
     }
 
 #if !defined(MOLA_SMOOTHER_HAS_IMU_AVERAGER)
@@ -1395,7 +1413,7 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
 
         if (params_.imu_gravity_compensate_centripetal && imu.has(mrpt::obs::IMU_WX) &&
             imu.has(mrpt::obs::IMU_WY) && imu.has(mrpt::obs::IMU_WZ) &&
-            !state_.stamp2frame_index.empty())
+            acc.norm() > ACC_NORM_MIN_FOR_SI_UNITS && !state_.stamp2frame_index.empty())
         {
             const auto newestKf = state_.stamp2frame_index.getDirectMap().rbegin()->second;
             if (const auto it = state_.last_estimated_states.find(newestKf);
@@ -1926,8 +1944,21 @@ void StateEstimationSmoother::fuse_pose_deferred(
     }
     enqueue_async(
         timestamp,
-        [this, timestamp, mean, cov, frame_id] {
-            fuse_pose_locked(timestamp, mrpt::poses::CPose3DPDFGaussian(mean, cov.get()), frame_id);
+        [this, timestamp, mean, cov, frame_id]
+        {
+            // A failed producer only drops its own reading, not the whole batch:
+            mrpt::math::CMatrixDouble66 c;
+            try
+            {
+                c = cov.get();
+            }
+            catch (const std::exception& e)
+            {
+                MRPT_LOG_WARN_STREAM(
+                    "fuse_pose_deferred(): covariance unavailable, reading dropped: " << e.what());
+                return;
+            }
+            fuse_pose_locked(timestamp, mrpt::poses::CPose3DPDFGaussian(mean, c), frame_id);
         });
 }
 #endif
@@ -3389,7 +3420,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             {
                 continue;
             }
-            const double ts = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(kfIdx));
+            const double ts = key_stamp_seconds(state_.stamp2frame_index.inverse(kfIdx));
             if (ts >= g.lastBiasStamp)
             {
                 g.lastBias      = optValues.at<gtsam::imuBias::ConstantBias>(Z(kfIdx));
@@ -4072,7 +4103,7 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     {
         return;
     }
-    const double t = mrpt::Clock::toDouble(imu.timestamp);
+    const double t = key_stamp_seconds(imu.timestamp);
     if (!g.rawImu.empty() && t <= g.rawImu.back().t)
     {
         return;  // repeated or out of order
@@ -4118,8 +4149,8 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         }
         frame_index_t i  = a;
         frame_index_t j  = b;
-        double        ti = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(a));
-        double        tj = mrpt::Clock::toDouble(state_.stamp2frame_index.inverse(b));
+        double        ti = key_stamp_seconds(state_.stamp2frame_index.inverse(a));
+        double        tj = key_stamp_seconds(state_.stamp2frame_index.inverse(b));
         if (tj < ti)
         {
             std::swap(i, j);
@@ -4376,7 +4407,7 @@ void StateEstimationSmoother::update_prediction_residuals_locked(
         // One gross error (a failed registration) must not dominate the mean:
         if (s.count >= MIN_PREDICTION_RESIDUALS)
         {
-            q = std::min(q, 25.0 * s.varRate[i]);
+            q = std::min(q, 25.0 * std::max(s.varRate[i], MIN_PREDICTION_VAR_RATE));
         }
         s.varRate[i] += alpha * (q - s.varRate[i]);
     }

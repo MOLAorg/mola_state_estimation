@@ -470,7 +470,8 @@ class Parameters
      * angular velocity times the newest estimated linear velocity) is removed
      * from each accelerometer reading before it is averaged into a gravity
      * observation: unlike vibration, it does not average out over a turn, and
-     * would read as a tilt towards the outside of it. */
+     * would read as a tilt towards the outside of it. Only applied to readings
+     * in m/s^2, not to accelerometers normalized to g. */
     bool imu_gravity_compensate_centripetal = true;
 
     /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
