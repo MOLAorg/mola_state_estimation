@@ -314,6 +314,12 @@ params:
   # turn, and would read as a tilt towards its outside.
   imu_gravity_compensate_centripetal: ${MOLA_IMU_GRAVITY_COMPENSATE_CENTRIPETAL|true}
 
+  # Stationary sigma [deg] and correlation time [s] of a tilt bias of the
+  # gravity readings (mounting error, accelerometer bias), shared by
+  # consecutive readings. 0 disables it.
+  imu_gravity_tilt_bias_sigma_deg: ${MOLA_IMU_GRAVITY_TILT_BIAS_SIGMA|0.0}
+  imu_gravity_tilt_bias_time_constant: ${MOLA_IMU_GRAVITY_TILT_BIAS_TAU|600.0}
+
   # When an IMU provides angular velocity (gyroscope), add a direct prior on the
   # corresponding keyframe's body-frame angular-velocity variable [rad/s], instead of
   # leaving it constrained only by the constant-velocity kinematic factor between

@@ -662,6 +662,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);
     /// Creates the yaw bias variable of keyframe `kf`, if it does not exist yet
     void add_imu_yaw_bias_variable_locked(frame_index_t kf);
+    void add_gravity_tilt_bias_variable_locked(frame_index_t kf);
     void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
     void fuse_twist_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,

@@ -60,6 +60,7 @@
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
+#include <mola_gtsam_factors/MeasuredGravityTiltBiasFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
@@ -303,6 +304,7 @@ const auto symbol_T_enu_to_map         = F(0);
 const auto symbol_T_map_to_odom_i_base = F(0);  // odom[i] = thisSymbol + i (with i>=1)
 
 using gtsam::symbol_shorthand::B;  // IMU attitude yaw bias [rad]   (double)
+using gtsam::symbol_shorthand::G;  // Gravity reading tilt bias [rad]    (Vector2)
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
@@ -400,6 +402,12 @@ struct StateEstimationSmoother::GtsamImpl
     /// its last sigma update
     std::optional<std::pair<double, double>> yawBiasEstimate;
     double                                   yawBiasSigmaStamp = 0;
+
+    /// Tail of the chain of gravity tilt bias variables G(k), its key stamp, and
+    /// its latest solved value [rad]
+    std::optional<frame_index_t>  lastTiltBiasKf;
+    double                        lastTiltBiasStamp = 0;
+    std::optional<gtsam::Vector2> tiltBiasEstimate;
 
     /// Whether the reported orientation is pinned by a gauge anchor, not observed
     [[nodiscard]] bool rollPitchPinned() const { return orientationAnchor && !rollPitchObserved; }
@@ -642,6 +650,7 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
         thresholds[chr(W(0))]            = gtsam::Vector3::Constant(coarseThr);
         thresholds[chr(Z(0))]            = gtsam::Vector6::Constant(coarseThr);
         thresholds[chr(B(0))]            = gtsam::Vector1::Constant(coarseThr);
+        thresholds[chr(G(0))]            = gtsam::Vector2::Constant(poseThr);
         isam2Params.relinearizeThreshold = thresholds;
     }
     isam2Params.relinearizeSkip = 1;
@@ -1570,9 +1579,20 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
             auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
                 3, mrpt::DEG2RAD(params_.imu_normalized_gravity_alignment_sigma));
 
-            state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
-                symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
-                accNoise);
+            if (params_.imu_gravity_tilt_bias_sigma_deg > 0)
+            {
+                add_gravity_tilt_bias_variable_locked(this_kf_id);
+                state_.gtsam->newFactors
+                    .emplace_shared<mola::factors::MeasuredGravityTiltBiasFactor>(
+                        symbol_T_enu_to_map, T(this_kf_id), G(this_kf_id), sensorOnVehicle,
+                        measuredGravityNormalized, accNoise);
+            }
+            else
+            {
+                state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
+                    symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
+                    accNoise);
+            }
 
             // Gravity observes roll and pitch:
             if (params_.fixed_geo_reference.has_value())
@@ -1665,6 +1685,60 @@ void StateEstimationSmoother::add_imu_yaw_bias_variable_locked(const frame_index
     g.newKeyStamps[key] = stamp;
     g.lastYawBiasKf     = kf;
     g.lastYawBiasStamp  = stamp;
+}
+
+// One gravity tilt bias variable per keyframe with a gravity reading, linked as
+// a first-order Gauss-Markov process, like the IMU yaw bias above.
+void StateEstimationSmoother::add_gravity_tilt_bias_variable_locked(const frame_index_t kf)
+{
+    auto&            g   = *state_.gtsam;
+    const gtsam::Key key = G(kf);
+    if (g.newValues.exists(key) || g.smoother->getLinearizationPoint().exists(key))
+    {
+        return;  // another reading on the same keyframe
+    }
+
+    const double stamp  = key_stamp_seconds(state_.stamp2frame_index.inverse(kf));
+    const double sigmaB = mrpt::DEG2RAD(params_.imu_gravity_tilt_bias_sigma_deg);
+
+    gtsam::Vector2 initialValue = gtsam::Vector2::Zero();
+
+    // A factor on a marginalized variable would bring it back as a free one:
+    if (g.lastTiltBiasKf && state_.last_estimated_states.count(*g.lastTiltBiasKf) != 0)
+    {
+        const double dt  = std::abs(stamp - g.lastTiltBiasStamp);
+        const double phi = std::exp(-dt / params_.imu_gravity_tilt_bias_time_constant);
+        // Floor: two keyframes may be (almost) simultaneous.
+        constexpr double minSigma = 1e-6;
+        const double     sigmaW   = std::max(sigmaB * std::sqrt(1.0 - phi * phi), minSigma);
+
+        if (g.tiltBiasEstimate)
+        {
+            initialValue = phi * *g.tiltBiasEstimate;
+        }
+
+        const gtsam::Expression<gtsam::Vector2> bPrev(G(*g.lastTiltBiasKf));
+        const gtsam::Expression<gtsam::Vector2> bNew(key);
+        g.newFactors.emplace_shared<gtsam::ExpressionFactor<gtsam::Vector2>>(
+            gtsam::noiseModel::Isotropic::Sigma(2, sigmaW), gtsam::Vector2::Zero(),
+            bNew - phi * bPrev);
+    }
+    else
+    {
+        // A chain restarted after its tail left the window keeps what was learnt:
+        g.newFactors.addPrior(
+            key, g.tiltBiasEstimate ? *g.tiltBiasEstimate : gtsam::Vector2::Zero().eval(),
+            gtsam::noiseModel::Isotropic::Sigma(2, sigmaB));
+        if (g.tiltBiasEstimate)
+        {
+            initialValue = *g.tiltBiasEstimate;
+        }
+    }
+
+    g.newValues.insert(key, initialValue);
+    g.newKeyStamps[key] = stamp;
+    g.lastTiltBiasKf    = kf;
+    g.lastTiltBiasStamp = stamp;
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
@@ -3364,6 +3438,8 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 ++nImuAttitude;
             else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
                 ++nImuGravity;
+            else if (dynamic_cast<const mola::factors::MeasuredGravityTiltBiasFactor*>(p))
+                ++nImuGravity;
             else if (dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p))
                 ++nGnss;
             else if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(p))
@@ -3485,6 +3561,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_ = g.yawBiasEstimate;
+    }
+
+    if (const auto& kf = state_.gtsam->lastTiltBiasKf; kf && optValues.exists(G(*kf)))
+    {
+        const auto b                   = optValues.at<gtsam::Vector2>(G(*kf));
+        state_.gtsam->tiltBiasEstimate = b;
+        MRPT_LOG_THROTTLE_INFO_FMT(
+            60.0, "Gravity tilt bias: %.2f %.2f deg", mrpt::RAD2DEG(b.x()), mrpt::RAD2DEG(b.y()));
     }
 
     state_.gtsam->mapObservedSolved         = state_.gtsam->mapObserved;

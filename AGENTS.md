@@ -107,6 +107,11 @@ Sensor inputs:
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
   Before averaging, the accelerometer is corrected by the centripetal term
   gyro x newest estimated velocity (`imu_gravity_compensate_centripetal`).
+  With `imu_gravity_tilt_bias_sigma_deg > 0`, gravity readings share a tilt
+  bias state `G(k)` (`Vector2`, rotation about the sensor x and y axes,
+  `MeasuredGravityTiltBiasFactor`), a Gauss-Markov chain like the yaw bias
+  (`imu_gravity_tilt_bias_time_constant`); a restarted chain keeps the last
+  estimate as its prior mean.
   Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
   With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
   bias state `B(k)` (double, one per keyframe with attitude,
@@ -281,6 +286,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `FactorGnssEnu` | `ExpressionFactorN` | GNSS position in ENU |
 | `FactorGnssMapEnu` | `ExpressionFactorN` | GNSS with explicit `T_enu_to_map` |
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
+| `MeasuredGravityTiltBiasFactor` | `ExpressionFactorN` | Same, with a tilt bias `Vector2` of the sensor (x, y) |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |
 | `Pose3RotationYawBiasFactor` | `ExpressionFactorN` | Rotation-only, with a scalar azimuth bias variable |

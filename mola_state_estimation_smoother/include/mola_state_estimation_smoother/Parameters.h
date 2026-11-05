@@ -474,6 +474,17 @@ class Parameters
      * in m/s^2, not to accelerometers normalized to g. */
     bool imu_gravity_compensate_centripetal = true;
 
+    /** Stationary sigma [deg] of a tilt bias of the gravity readings: a small
+     * rotation about the sensor x and y axes (mounting error, accelerometer
+     * bias) shared by consecutive readings, a first-order Gauss-Markov state.
+     * Without it, a sensor that consistently reads off the vertical imposes
+     * that error on the vehicle attitude, differently for every heading. 0
+     * disables it (readings fused as independent). */
+    double imu_gravity_tilt_bias_sigma_deg = 0.0;
+
+    /// Correlation time [s] of that tilt bias.
+    double imu_gravity_tilt_bias_time_constant = 600.0;
+
     /** When an IMU provides angular velocity (gyroscope), add a direct prior on the
      * corresponding keyframe's body-frame angular-velocity variable, sensor-to-vehicle
      * rotated. Without this, angular velocity is only constrained by the constant-velocity

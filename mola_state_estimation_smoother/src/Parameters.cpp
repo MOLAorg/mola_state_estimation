@@ -116,6 +116,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
     MCP_LOAD_OPT(cfg, imu_gravity_compensate_centripetal);
+    MCP_LOAD_OPT(cfg, imu_gravity_tilt_bias_sigma_deg);
+    MCP_LOAD_OPT(cfg, imu_gravity_tilt_bias_time_constant);
+    ASSERT_GT_(imu_gravity_tilt_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, imu_angular_velocity_sigma);
     MCP_LOAD_OPT(cfg, imu_bias_tracking);
     MCP_LOAD_OPT(cfg, imu_bias_labels_re);
