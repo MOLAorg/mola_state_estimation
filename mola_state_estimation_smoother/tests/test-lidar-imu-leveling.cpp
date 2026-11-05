@@ -65,6 +65,8 @@ params:
 
 void run_test()
 {
+    rng.randomize(1);  // deterministic
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
 
@@ -112,8 +114,9 @@ void run_test()
         // Pure gravity + noise. No linear acceleration (constant velocity).
         // If the robot were actually tilted 20 deg, the IMU would read gravity components in X/Y.
         // Since the robot IS flat, IMU reads ~0 in X/Y.
+        // Plus the specific force of the turn (0.5 m/s at 0.1 rad/s), towards its center:
         obsImu.set(mrpt::obs::IMU_X_ACC, rng.drawGaussian1D(0.0, 0.1));
-        obsImu.set(mrpt::obs::IMU_Y_ACC, rng.drawGaussian1D(0.0, 0.1));
+        obsImu.set(mrpt::obs::IMU_Y_ACC, 0.5 * 0.1 + rng.drawGaussian1D(0.0, 0.1));
         obsImu.set(mrpt::obs::IMU_Z_ACC, 9.81 + rng.drawGaussian1D(0.0, 0.1));
 
         // Send to estimator

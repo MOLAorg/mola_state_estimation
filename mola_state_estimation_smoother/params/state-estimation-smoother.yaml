@@ -314,6 +314,12 @@ params:
   # turn, and would read as a tilt towards its outside.
   imu_gravity_compensate_centripetal: ${MOLA_IMU_GRAVITY_COMPENSATE_CENTRIPETAL|true}
 
+  # With an odometry-frame pose source (e.g. LiDAR odometry), form gravity
+  # readings at its keyframes: the accelerometer mean of the last period minus
+  # the mean acceleration of the source's own trajectory. A walking, braking or
+  # turning body otherwise reads its acceleration as a tilt.
+  imu_gravity_from_pose_source: ${MOLA_IMU_GRAVITY_FROM_POSE_SOURCE|true}
+
   # Stationary sigma [deg] and correlation time [s] of a tilt bias of the
   # gravity readings (mounting error, accelerometer bias), shared by
   # consecutive readings. 0 disables it.
@@ -361,6 +367,9 @@ params:
     accel_bias_random_walk: ${MOLA_IMU_ACC_BIAS_RW|3e-4}  # [m/s^3/sqrt(Hz)]
     # Constant-velocity linear factors are kept, this much weaker, on every link:
     linear_kinematics_sigma_scale: ${MOLA_SMOOTHER_IMU_PREINT_KIN_SCALE|10.0}
+    # Correct an IMU away from the vehicle origin for angular acceleration x
+    # lever arm, which the preintegration's sensor-pose correction leaves out:
+    compensate_tangential_lever_arm: ${MOLA_SMOOTHER_IMU_PREINT_TANGENTIAL|true}
 
   # --------------------------------------------------------------------------
   # Geo-referencing

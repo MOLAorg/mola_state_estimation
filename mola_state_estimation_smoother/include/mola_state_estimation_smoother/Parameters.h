@@ -474,6 +474,16 @@ class Parameters
      * in m/s^2, not to accelerometers normalized to g. */
     bool imu_gravity_compensate_centripetal = true;
 
+    /** If true, and an odometry-frame pose source exists, gravity readings are
+     * formed when that source delivers a pose (at most once per
+     * imu_gravity_min_sample_period): the accelerometer readings of the last
+     * period are rotated into the source's frame with its own attitudes, and
+     * the acceleration of its own trajectory over that period is removed. A
+     * body that walks, brakes or turns otherwise reads its own acceleration as
+     * a tilt, which does not average out over a second. The centripetal
+     * correction above is then not used (it is part of that acceleration). */
+    bool imu_gravity_from_pose_source = true;
+
     /** Stationary sigma [deg] of a tilt bias of the gravity readings: a small
      * rotation about the sensor x and y axes (mounting error, accelerometer
      * bias) shared by consecutive readings, a first-order Gauss-Markov state.
@@ -574,6 +584,12 @@ class Parameters
 
         /// Links shorter than this get no preintegration factor [s].
         double min_link_duration = 2e-3;
+
+        /** If true, the accelerometer of an IMU away from the vehicle origin is
+         * corrected for the tangential acceleration of its lever arm (angular
+         * acceleration x lever arm, from consecutive gyro readings), which the
+         * preintegration's sensor-pose correction leaves out. */
+        bool compensate_tangential_lever_arm = true;
     };
     ImuPreintegration imu_preintegration;
 

@@ -112,6 +112,12 @@ Sensor inputs:
   `MeasuredGravityTiltBiasFactor`), a Gauss-Markov chain like the yaw bias
   (`imu_gravity_tilt_bias_time_constant`); a restarted chain keeps the last
   estimate as its prior mean.
+  With `imu_gravity_from_pose_source` (default on) and an odometry-frame pose
+  source, gravity readings are instead formed in `fuse_pose_locked()`, at most
+  once per `imu_gravity_min_sample_period`: the mean accelerometer of the last
+  period minus the mean acceleration of the source's own trajectory
+  (`State::raw_pose_history`, finite differences), at the source's keyframe.
+  The centripetal correction is not used then.
   Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
   With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
   bias state `B(k)` (double, one per keyframe with attitude,
@@ -129,6 +135,9 @@ Sensor inputs:
   (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
   `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
   The per-keyframe gravity and angular-velocity factors stay on with it.
+  `compensate_tangential_lever_arm` (default on): the accelerometer of an IMU
+  away from the vehicle origin is corrected by angular acceleration (consecutive
+  gyro readings) x lever arm, which GTSAM's sensor-pose correction leaves out.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.

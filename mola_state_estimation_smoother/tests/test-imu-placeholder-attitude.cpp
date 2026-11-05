@@ -98,8 +98,9 @@ double run(const double imuAttitudeSigmaDeg)
         mrpt::obs::CObservationIMU obsImu;
         obsImu.timestamp   = time;
         obsImu.sensorLabel = "imu";
+        // Specific force of the turn below: 0.5 m/s at 0.1 rad/s, towards its center.
         obsImu.set(mrpt::obs::IMU_X_ACC, 0.0);
-        obsImu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+        obsImu.set(mrpt::obs::IMU_Y_ACC, 0.5 * 0.1);
         obsImu.set(mrpt::obs::IMU_Z_ACC, 9.81);
         obsImu.set(mrpt::obs::IMU_ORI_QUAT_W, q.r());
         obsImu.set(mrpt::obs::IMU_ORI_QUAT_X, q.x());

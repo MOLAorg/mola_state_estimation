@@ -1414,7 +1414,26 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // Gravity: the average of the accelerometer over imu_gravity_min_sample_period, if
     // that period just completed:
     std::optional<gtsam::Vector3> measuredGravity;
-    if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
+    const bool                    gravityFromSource =
+        params_.imu_gravity_from_pose_source && !state_.raw_pose_history.empty();
+    if (gravityFromSource && imu.has(mrpt::obs::IMU_X_ACC) &&
+        params_.imu_normalized_gravity_alignment_sigma > 0)
+    {
+        // Formed later, at the pose source's keyframes (see
+        // add_gravity_from_pose_source_locked()):
+        auto& buf = state_.gravity_acc_buffer[imu.sensorLabel];
+        buf.push_back(
+            {mrpt::Clock::toDouble(imu.timestamp),
+             {imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
+              imu.get(mrpt::obs::IMU_Z_ACC)},
+             imu.sensorPose});
+        const double keepSince = buf.back().t - 3.0 * params_.imu_gravity_min_sample_period - 1.0;
+        while (!buf.empty() && buf.front().t < keepSince)
+        {
+            buf.pop_front();
+        }
+    }
+    else if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
     {
         mrpt::math::TVector3D acc = {
             imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
@@ -1573,32 +1592,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
         // Some IMU drivers publishes normalized acc:
         if (mola::factors::imu_accel_looks_like_gravity(*measuredGravity))
         {
-            const gtsam::Vector3 measuredGravityNormalized = measuredGravity->normalized();
-
-            // Create noise model for gravity alignment:
-            auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
-                3, mrpt::DEG2RAD(params_.imu_normalized_gravity_alignment_sigma));
-
-            if (params_.imu_gravity_tilt_bias_sigma_deg > 0)
-            {
-                add_gravity_tilt_bias_variable_locked(this_kf_id);
-                state_.gtsam->newFactors
-                    .emplace_shared<mola::factors::MeasuredGravityTiltBiasFactor>(
-                        symbol_T_enu_to_map, T(this_kf_id), G(this_kf_id), sensorOnVehicle,
-                        measuredGravityNormalized, accNoise);
-            }
-            else
-            {
-                state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
-                    symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, measuredGravityNormalized,
-                    accNoise);
-            }
-
-            // Gravity observes roll and pitch:
-            if (params_.fixed_geo_reference.has_value())
-            {
-                mark_orientation_observed_locked(true, false);
-            }
+            const gtsam::Vector3 up = measuredGravity->normalized();
+            add_gravity_factor_locked(this_kf_id, imu.sensorPose, {up.x(), up.y(), up.z()});
         }
     }
 
@@ -1739,6 +1734,162 @@ void StateEstimationSmoother::add_gravity_tilt_bias_variable_locked(const frame_
     g.newKeyStamps[key] = stamp;
     g.lastTiltBiasKf    = kf;
     g.lastTiltBiasStamp = stamp;
+}
+
+void StateEstimationSmoother::add_gravity_factor_locked(
+    const frame_index_t kf, const mrpt::poses::CPose3D& sensorOnVehicle,
+    const mrpt::math::TVector3D& measuredUp)
+{
+    const auto           sensorPose = mrpt::gtsam_wrappers::toPose3(sensorOnVehicle);
+    const gtsam::Vector3 up(measuredUp.x, measuredUp.y, measuredUp.z);
+
+    auto accNoise = gtsam::noiseModel::Isotropic::Sigma(
+        3, mrpt::DEG2RAD(params_.imu_normalized_gravity_alignment_sigma));
+
+    if (params_.imu_gravity_tilt_bias_sigma_deg > 0)
+    {
+        add_gravity_tilt_bias_variable_locked(kf);
+        state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityTiltBiasFactor>(
+            symbol_T_enu_to_map, T(kf), G(kf), sensorPose, up, accNoise);
+    }
+    else
+    {
+        state_.gtsam->newFactors.emplace_shared<mola::factors::MeasuredGravityFactor>(
+            symbol_T_enu_to_map, T(kf), sensorPose, up, accNoise);
+    }
+
+    // Gravity observes roll and pitch:
+    if (params_.fixed_geo_reference.has_value())
+    {
+        mark_orientation_observed_locked(true, false);
+    }
+}
+
+namespace
+{
+// Linear interpolation of a pose history (stamp-sorted): position, and
+// rotation by slerp. Returns false outside of it.
+bool interpolate_history(
+    const std::deque<std::pair<double, mrpt::poses::CPose3D>>& h, double t,
+    mrpt::poses::CPose3D& out)
+{
+    if (h.size() < 2 || t < h.front().first || t > h.back().first)
+    {
+        return false;
+    }
+    const auto it = std::lower_bound(
+        h.begin(), h.end(), t, [](const auto& e, double v) { return e.first < v; });
+    if (it == h.begin())
+    {
+        out = it->second;
+        return true;
+    }
+    const auto&  b = *it;
+    const auto&  a = *std::prev(it);
+    const double s = (b.first > a.first) ? (t - a.first) / (b.first - a.first) : 0.0;
+
+    const Eigen::Quaterniond qa(a.second.getRotationMatrix().asEigen());
+    const Eigen::Quaterniond qb(b.second.getRotationMatrix().asEigen());
+    const Eigen::Matrix3d    Rm = qa.slerp(s, qb).toRotationMatrix();
+
+    mrpt::math::CMatrixDouble33 Rmrpt;
+    Rmrpt.asEigen() = Rm;
+    const auto pa   = a.second.translation();
+    const auto pb   = b.second.translation();
+    out             = mrpt::poses::CPose3D::FromRotationAndTranslation(Rmrpt, pa + (pb - pa) * s);
+    return true;
+}
+}  // namespace
+
+void StateEstimationSmoother::add_gravity_from_pose_source_locked(
+    const odometry_frameid_t src, const frame_index_t kf, const mrpt::Clock::time_point& stamp)
+{
+    if (params_.imu_normalized_gravity_alignment_sigma <= 0)
+    {
+        return;
+    }
+    // As for the per-reading path: not while an estimated geo-reference is pinned.
+    if (params_.estimate_geo_reference && state_.gtsam->enuYawAnchor)
+    {
+        return;
+    }
+
+    const double t      = mrpt::Clock::toDouble(stamp);
+    const double period = std::max(params_.imu_gravity_min_sample_period, 0.2);
+    auto&        last   = state_.last_source_gravity_stamp[src];
+    if (last > 0 && t - last < period - 1e-6)
+    {
+        return;
+    }
+
+    const auto& hist = state_.raw_pose_history[src];
+    // Velocities by finite differences over this interval, at both ends:
+    constexpr double dv = 0.2;
+    const double     t0 = t - period;
+    if (hist.empty() || hist.front().first > t0 - 1e-3)
+    {
+        return;
+    }
+
+    mrpt::poses::CPose3D p0;
+    mrpt::poses::CPose3D p0b;
+    mrpt::poses::CPose3D p1a;
+    mrpt::poses::CPose3D p1;
+    if (!interpolate_history(hist, t0, p0) || !interpolate_history(hist, t0 + dv, p0b) ||
+        !interpolate_history(hist, t - dv, p1a) || !interpolate_history(hist, t, p1))
+    {
+        return;
+    }
+    // Mean acceleration of the source's trajectory over the period, in its own
+    // frame (only the attitude at t is used to bring it into the sensor frame):
+    const auto v0 = (p0b.translation() - p0.translation()) * (1.0 / dv);
+    const auto v1 = (p1.translation() - p1a.translation()) * (1.0 / dv);
+    const auto a  = (v1 - v0) * (1.0 / (period - dv));
+
+    bool added = false;
+    for (auto& [label, buf] : state_.gravity_acc_buffer)
+    {
+        // Mean specific force over the period, in the sensor frame (as the
+        // per-reading path does):
+        mrpt::math::TVector3D sum   = {0, 0, 0};
+        size_t                count = 0;
+        double                tMin  = t;
+        double                tMax  = t0;
+        mrpt::poses::CPose3D  sensorPose;
+        for (const auto& r : buf)
+        {
+            if (r.t < t0 || r.t > t)
+            {
+                continue;
+            }
+            sum += r.acc;
+            count++;
+            tMin       = std::min(tMin, r.t);
+            tMax       = std::max(tMax, r.t);
+            sensorPose = r.sensorPose;
+        }
+        // Most of the period must be covered:
+        if (count < 3 || tMax - tMin < 0.6 * period)
+        {
+            continue;
+        }
+        const auto f = sum * (1.0 / static_cast<double>(count));
+
+        // Specific force = acceleration - gravity, so this is "up" times g:
+        const auto           upS = f - (p1 + sensorPose).inverseRotateVector(a);
+        const gtsam::Vector3 upVec(upS.x, upS.y, upS.z);
+        if (!mola::factors::imu_accel_looks_like_gravity(upVec))
+        {
+            continue;
+        }
+        const gtsam::Vector3 n = upVec.normalized();
+        add_gravity_factor_locked(kf, sensorPose, {n.x(), n.y(), n.z()});
+        added = true;
+    }
+    if (added)
+    {
+        last = t;
+    }
 }
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
@@ -2254,6 +2405,19 @@ void StateEstimationSmoother::fuse_pose_locked(
         update_prediction_residuals_locked(frame_id_idx, timestamp, poseSanitized.mean);
         state_.last_raw_pose_by_source[frame_id_idx] =
             State::RawSourcePose{timestamp, poseSanitized};
+
+        if (params_.imu_gravity_from_pose_source)
+        {
+            auto& h = state_.raw_pose_history[frame_id_idx];
+            h.emplace_back(mrpt::Clock::toDouble(timestamp), poseSanitized.mean);
+            const double keepSince =
+                h.back().first - 3.0 * params_.imu_gravity_min_sample_period - 1.0;
+            while (!h.empty() && h.front().first < keepSince)
+            {
+                h.pop_front();
+            }
+            add_gravity_from_pose_source_locked(frame_id_idx, this_kf_id, timestamp);
+        }
     }
 }
 
@@ -4262,7 +4426,18 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         }
 
         gtsam::PreintegratedImuMeasurements pim(g.pimParams, g.lastBias);
-        double                              tc = ti;
+
+        // The sensor-pose correction of the preintegration removes the
+        // centrifugal term of the lever arm, not the tangential one (angular
+        // acceleration x lever arm), which handheld rotations make the larger.
+        gtsam::Vector3 leverS = gtsam::Vector3::Zero();  // in the sensor frame
+        if (ip.compensate_tangential_lever_arm && g.pimParams->body_P_sensor)
+        {
+            const auto& bPs = *g.pimParams->body_P_sensor;
+            leverS          = bPs.rotation().unrotate(bPs.translation());
+        }
+
+        double tc = ti;
         for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
         {
             const auto   next  = std::next(k);
@@ -4274,7 +4449,13 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             }
             if (tNext > tc)
             {
-                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+                gtsam::Vector3 acc = k->acc;
+                if (!leverS.isZero() && next != g.rawImu.end() && next->t > k->t)
+                {
+                    const gtsam::Vector3 alpha = (next->gyr - k->gyr) / (next->t - k->t);
+                    acc -= alpha.cross(leverS);
+                }
+                pim.integrateMeasurement(acc, k->gyr, tNext - tc);
             }
             tc = tNext;
         }

@@ -485,6 +485,20 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         };
         std::map<std::string, GravityAverage> imu_gravity_average;
 
+        /// For imu_gravity_from_pose_source: recent (decimated) accelerometer
+        /// readings per IMU, recent raw poses per odometry source, and the
+        /// stamp of the last gravity reading formed for each source.
+        struct TimedAcc
+        {
+            double                t = 0;
+            mrpt::math::TVector3D acc;
+            mrpt::poses::CPose3D  sensorPose;  //!< on the vehicle
+        };
+        std::map<std::string, std::deque<TimedAcc>> gravity_acc_buffer;
+        std::map<odometry_frameid_t, std::deque<std::pair<double, mrpt::poses::CPose3D>>>
+                                             raw_pose_history;
+        std::map<odometry_frameid_t, double> last_source_gravity_stamp;
+
         /** Refer to Parameters for possible sources of this.
          * Anyways: this will always hold either the estimated or the fixed (externally set)
          * georeferencing parameters.
@@ -663,6 +677,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Creates the yaw bias variable of keyframe `kf`, if it does not exist yet
     void add_imu_yaw_bias_variable_locked(frame_index_t kf);
     void add_gravity_tilt_bias_variable_locked(frame_index_t kf);
+
+    /// imu_gravity_from_pose_source: forms and fuses gravity readings at a new
+    /// keyframe of an odometry-frame pose source.
+    void add_gravity_from_pose_source_locked(
+        odometry_frameid_t src, frame_index_t kf, const mrpt::Clock::time_point& t);
+
+    /// Adds one gravity factor (with the tilt bias, if enabled) at keyframe kf.
+    void add_gravity_factor_locked(
+        frame_index_t kf, const mrpt::poses::CPose3D& sensorOnVehicle,
+        const mrpt::math::TVector3D& measuredUp);
     void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
     void fuse_twist_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,

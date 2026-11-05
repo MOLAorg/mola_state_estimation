@@ -116,6 +116,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, imu_normalized_gravity_alignment_sigma);
     MCP_LOAD_OPT(cfg, imu_gravity_min_sample_period);
     MCP_LOAD_OPT(cfg, imu_gravity_compensate_centripetal);
+    MCP_LOAD_OPT(cfg, imu_gravity_from_pose_source);
     MCP_LOAD_OPT(cfg, imu_gravity_tilt_bias_sigma_deg);
     MCP_LOAD_OPT(cfg, imu_gravity_tilt_bias_time_constant);
     ASSERT_GT_(imu_gravity_tilt_bias_time_constant, 0.0);
@@ -155,7 +156,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ip.min_sigma_rotation = c.getOrDefault("min_sigma_rotation", ip.min_sigma_rotation);
         ip.min_sigma_position = c.getOrDefault("min_sigma_position", ip.min_sigma_position);
         ip.min_sigma_velocity = c.getOrDefault("min_sigma_velocity", ip.min_sigma_velocity);
-        ip.min_link_duration  = c.getOrDefault("min_link_duration", ip.min_link_duration);
+        ip.compensate_tangential_lever_arm =
+            c.getOrDefault("compensate_tangential_lever_arm", ip.compensate_tangential_lever_arm);
+        ip.min_link_duration = c.getOrDefault("min_link_duration", ip.min_link_duration);
         ASSERT_GT_(ip.gyro_noise_density, 0.0);
         ASSERT_GT_(ip.accel_noise_density, 0.0);
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);

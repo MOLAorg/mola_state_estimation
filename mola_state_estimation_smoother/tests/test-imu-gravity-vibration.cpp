@@ -48,7 +48,7 @@ auto& rng = mrpt::random::getRandomGenerator();
 
 // Shipped smoother defaults, with a synchronous backend so the test is
 // deterministic, plus the gravity factor settings under test.
-std::string make_config(double gravitySigmaDeg, double gravityPeriod)
+std::string make_config(double gravitySigmaDeg, double gravityPeriod, bool fromPoseSource)
 {
     return R"###(
 params:
@@ -71,16 +71,18 @@ params:
     async_backend: false
     imu_normalized_gravity_alignment_sigma: )###" +
            std::to_string(gravitySigmaDeg) +
-           "\n    imu_gravity_min_sample_period: " + std::to_string(gravityPeriod) + "\n";
+           "\n    imu_gravity_min_sample_period: " + std::to_string(gravityPeriod) +
+           "\n    imu_gravity_from_pose_source: " + (fromPoseSource ? "true" : "false") + "\n";
 }
 
 // Returns the worst roll/pitch [deg] of the predicted pose after the warm-up.
-double run_session(double gravitySigmaDeg, double gravityPeriod)
+double run_session(double gravitySigmaDeg, double gravityPeriod, bool fromPoseSource)
 {
     rng.randomize(1234);
 
     mola::state_estimation_smoother::StateEstimationSmoother est;
-    est.initialize(mrpt::containers::yaml::FromText(make_config(gravitySigmaDeg, gravityPeriod)));
+    est.initialize(mrpt::containers::yaml::FromText(
+        make_config(gravitySigmaDeg, gravityPeriod, fromPoseSource)));
 
     double       maxTilt    = 0;
     const size_t imuPerScan = static_cast<size_t>(std::lround(LIDAR_PERIOD / IMU_PERIOD));
@@ -142,14 +144,17 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     try
     {
         // Settings before averaging existed: one tight gravity factor per decimated reading.
-        const double legacyTilt = run_session(0.4, 0.0);
-        const double newTilt    = run_session(2.0, 1.0);
+        const double legacyTilt = run_session(0.4, 0.0, false);
+        const double newTilt    = run_session(2.0, 1.0, false);
+        // Readings formed at the pose source's keyframes:
+        const double sourceTilt = run_session(2.0, 1.0, true);
 
         std::cout << "Max predicted tilt: legacy " << legacyTilt << " deg, averaged " << newTilt
-                  << " deg\n";
+                  << " deg, from the pose source " << sourceTilt << " deg\n";
 
         ASSERT_LT_(newTilt, MAX_TILT_ERR);
         ASSERT_LT_(newTilt, legacyTilt);
+        ASSERT_LT_(sourceTilt, MAX_TILT_ERR);
 
         std::cout << "✅ SUCCESS\n";
         return 0;
