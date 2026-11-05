@@ -19,3 +19,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_gtsam_factors
 )
+
+mola_add_test(
+  TARGET  test_gnss_map_enu_const_vel_factor
+  SOURCES test_gnss_map_enu_const_vel_factor.cpp
+  LINK_LIBRARIES
+    mola::mola_gtsam_factors
+)

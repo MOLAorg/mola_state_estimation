@@ -232,7 +232,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
     void set_geo_reference(const mola::Georeferencing& georef) override;
+
+    /** Implements NavStateFilter::get_geo_reference(): the fixed geo-reference,
+     *  or, when `estimate_geo_reference` is enabled, the datum (first GNSS fix)
+     *  with the latest estimate of T_enu_to_map, once its azimuth is observable.
+     *  std::nullopt otherwise.
+     */
+    [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference() const override;
 #endif
+
+    /** Writes the current geo-reference (see get_geo_reference()) to a YAML
+     *  file, in the mp2p_icp georeferencing format. Returns false if there is
+     *  none yet or the file cannot be written. Done automatically on destruction
+     *  if the `save_final_georef_to_file` parameter is set.
+     */
+    bool save_geo_reference_to_file(const std::string& yamlFile) const;
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
@@ -669,7 +683,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
         const std::optional<double>&   overrideCloseEnough = std::nullopt);
-    void process_pending_gtsam_updates_locked();
+    void                                              process_pending_gtsam_updates_locked();
+    [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference_locked() const;
+
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map_locked()
         const;
 
