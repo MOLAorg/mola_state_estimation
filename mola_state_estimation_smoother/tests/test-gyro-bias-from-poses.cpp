@@ -14,7 +14,7 @@
 
 /**
  * @file   test-gyro-bias-from-poses.cpp
- * @brief  gyro_bias: a constant gyroscope bias is recovered from a pose source
+ * @brief  imu_preintegration gyro mode: a constant gyroscope bias is recovered from a pose source
  *         while the vehicle keeps turning (no standstill), and the fused
  *         trajectory follows the pose source.
  * @author Jose Luis Blanco Claraco
@@ -44,6 +44,8 @@ params:
     relative_pose_increment_sigma_ang: 0.005
     async_backend: false
     imu_normalized_gravity_alignment_sigma: 0
+    imu_preintegration:
+      mode: gyro
 )###";
 
 auto& rng = mrpt::random::getRandomGenerator();

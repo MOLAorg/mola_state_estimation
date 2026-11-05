@@ -304,11 +304,11 @@ const auto symbol_T_enu_to_map         = F(0);
 const auto symbol_T_map_to_odom_i_base = F(0);  // odom[i] = thisSymbol + i (with i>=1)
 
 using gtsam::symbol_shorthand::B;  // IMU attitude yaw bias [rad]   (double)
-using gtsam::symbol_shorthand::G;  // Gyroscope bias, sensor frame (Vector3), with gyro_bias
+using gtsam::symbol_shorthand::G;  // Gyroscope bias, sensor frame (Vector3), gyro mode
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
-using gtsam::symbol_shorthand::Z;  // IMU biases (imuBias::ConstantBias), with imu_preintegration
+using gtsam::symbol_shorthand::Z;  // IMU biases (imuBias::ConstantBias), full mode
 //  TODO: IMU bias
 
 constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
@@ -461,32 +461,35 @@ struct StateEstimationSmoother::GtsamImpl
     }
 
 #if !GTSAM_USES_BOOST
-    // ---- IMU preintegration (Parameters::imu_preintegration) ----
+    // ---- IMU link factors (Parameters::imu_preintegration) ----
     struct RawImu
     {
         double         t = 0;
         gtsam::Vector3 acc;
         gtsam::Vector3 gyr;
     };
-    std::deque<RawImu>                           rawImu;  //!< oldest first
-    std::string                                  rawImuLabel;  //!< the IMU in use
-    std::optional<std::regex>                    rawImuLabelRe;
-    std::shared_ptr<gtsam::PreintegrationParams> pimParams;
-    std::set<frame_pair_t>                       imuLinksAwaiting;
-    gtsam::imuBias::ConstantBias                 lastBias;
-    double                                       lastBiasStamp = 0;
-    // ---- gyroscope bias in the graph (Parameters::gyro_bias) ----
-    std::shared_ptr<gtsam::PreintegratedAhrsMeasurements::Params> ahrsParams;
-    gtsam::Vector3 lastGyroBias       = gtsam::Vector3::Zero();
-    double         lastGyroBiasStamp  = 0;
-    bool           gyroBiasPriorAdded = false;
-    bool           gyroBiasObserved   = false;  //!< Some link factor constrains it
+    std::deque<RawImu>                                            rawImu;  //!< oldest first
+    std::string                                                   rawImuLabel;  //!< the IMU in use
+    std::optional<std::regex>                                     rawImuLabelRe;
+    std::shared_ptr<gtsam::PreintegrationParams>                  pimParams;  //!< full mode
+    std::shared_ptr<gtsam::PreintegratedAhrsMeasurements::Params> ahrsParams;  //!< gyro mode
+    std::set<frame_pair_t>                                        imuLinksAwaiting;
+    /// Latest bias estimate (gyro mode: only its gyroscope part is estimated)
+    gtsam::imuBias::ConstantBias lastBias;
+    double                       lastBiasStamp = 0;
+    bool                         biasObserved  = false;  //!< Some link factor constrains it
 
-    /// Whether keyframe `id` has a gyroscope bias variable
-    [[nodiscard]] bool hasGyroBias(const frame_index_t id) const
+    /// The bias variable of a keyframe: Z (full mode) or G (gyro mode)
+    static gtsam::Key biasKey(const bool fullMode, const frame_index_t id)
     {
-        return newValues.exists(G(id)) ||
-               (smoother.has_value() && smoother->getLinearizationPoint().exists(G(id)));
+        return fullMode ? Z(id) : G(id);
+    }
+
+    /// Whether the key is in the graph (pending, or inside the smoother)
+    [[nodiscard]] bool hasKey(const gtsam::Key k) const
+    {
+        return newValues.exists(k) ||
+               (smoother.has_value() && smoother->getLinearizationPoint().exists(k));
     }
 #endif
 
@@ -567,7 +570,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 #endif
     }
 
-    if (params_.imu_preintegration.enabled)
+    if (imu_link_factors())
     {
         try
         {
@@ -1363,8 +1366,8 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
 {
 #if !GTSAM_USES_BOOST
-    // Preintegration needs every raw reading, before any decimation below.
-    if (params_.imu_preintegration.enabled || gyro_bias_in_graph())
+    // The link factors need every raw reading, before any decimation below.
+    if (imu_link_factors())
     {
         buffer_raw_imu_locked(rawImu);
     }
@@ -1630,8 +1633,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
                 gtsam::noiseModel::mEstimator::Huber::Create(GYRO_HUBER_K),
                 gtsam::noiseModel::Isotropic::Sigma(3, params_.imu_angular_velocity_sigma));
 
-            if (gyro_bias_in_graph() && imu.sensorLabel == state_.gtsam->rawImuLabel &&
-                state_.gtsam->hasGyroBias(this_kf_id))
+            if (imu_gyro_mode() && imu.sensorLabel == state_.gtsam->rawImuLabel &&
+                state_.gtsam->hasKey(G(this_kf_id)))
             {
                 // W = R_vs * (w - b), with b the sensor-frame bias of this keyframe:
                 const gtsam::Expression<gtsam::Vector3> w_(W(this_kf_id));
@@ -2773,9 +2776,8 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // The IMU measures the accelerations this model denies: with
     // preintegration its linear part is only kept, weak, so that links without
     // IMU data stay determined.
-    const double linScale      = params_.imu_preintegration.enabled
-                                     ? params_.imu_preintegration.linear_kinematics_sigma_scale
-                                     : 1.0;
+    const double linScale =
+        imu_full_mode() ? params_.imu_preintegration.linear_kinematics_sigma_scale : 1.0;
     const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear * linScale;
     const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
@@ -3282,7 +3284,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
 #if !GTSAM_USES_BOOST
-    if (params_.imu_preintegration.enabled || gyro_bias_in_graph())
+    if (imu_link_factors())
     {
         attach_imu_factors_locked();
     }
@@ -3439,69 +3441,34 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
 #if !GTSAM_USES_BOOST
-    // The latest gyroscope bias: the linearization point of new links, and what
-    // imu_bias_impl() offers.
-    if (gyro_bias_in_graph())
+    // The latest bias estimate: the linearization point of new links and, in
+    // gyro mode, what imu_bias_impl() offers.
+    if (imu_link_factors())
     {
-        auto&                   g = *state_.gtsam;
+        auto&                   g    = *state_.gtsam;
+        const bool              full = imu_full_mode();
         mrpt::Clock::time_point newest;
         for (const auto& [kfIdx, kf] : state_.last_estimated_states)
         {
-            const auto   stamp = state_.stamp2frame_index.inverse(kfIdx);
-            const double ts    = key_stamp_seconds(stamp);
-            if (optValues.exists(G(kfIdx)) && ts >= g.lastGyroBiasStamp)
-            {
-                g.lastGyroBias      = optValues.at<gtsam::Vector3>(G(kfIdx));
-                g.lastGyroBiasStamp = ts;
-                newest              = stamp;
-            }
-        }
-#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
-        if (!g.rawImuLabel.empty())
-        {
-            mola::ImuBias b;
-            b.sensor_label = g.rawImuLabel;
-            b.timestamp    = newest;
-            b.gyro         = {g.lastGyroBias.x(), g.lastGyroBias.y(), g.lastGyroBias.z()};
-            // The prior, as a conservative bound (the marginal is not computed):
-            b.gyro_cov.setIdentity();
-            b.gyro_cov *= mrpt::square(params_.gyro_bias.prior_sigma);
-            b.acc_cov.setIdentity();
-            b.gyro_random_walk = params_.gyro_bias.random_walk;
-            if (g.gyroBiasObserved)
-            {
-                b.last_update = newest;
-            }
-            auto lck              = mrpt::lockHelper(imuBiasMutex_);
-            graphGyroBias_        = b;
-            graphGyroBiasUpdated_ = true;
-        }
-#endif
-        if (g.gyroBiasObserved)
-        {
-            MRPT_LOG_THROTTLE_INFO_FMT(
-                10.0, "Gyroscope bias (graph): [%.4f %.4f %.4f] deg/s",
-                mrpt::RAD2DEG(g.lastGyroBias.x()), mrpt::RAD2DEG(g.lastGyroBias.y()),
-                mrpt::RAD2DEG(g.lastGyroBias.z()));
-        }
-    }
-
-    // The latest bias estimate is the linearization point of new links.
-    if (params_.imu_preintegration.enabled)
-    {
-        auto& g = *state_.gtsam;
-        for (const auto& [kfIdx, kf] : state_.last_estimated_states)
-        {
-            if (!optValues.exists(Z(kfIdx)))
+            const auto key = GtsamImpl::biasKey(full, kfIdx);
+            if (!optValues.exists(key))
             {
                 continue;
             }
-            const double ts = key_stamp_seconds(state_.stamp2frame_index.inverse(kfIdx));
+            const auto   stamp = state_.stamp2frame_index.inverse(kfIdx);
+            const double ts    = key_stamp_seconds(stamp);
             if (ts >= g.lastBiasStamp)
             {
-                g.lastBias      = optValues.at<gtsam::imuBias::ConstantBias>(Z(kfIdx));
+                g.lastBias      = full ? optValues.at<gtsam::imuBias::ConstantBias>(key)
+                                       : gtsam::imuBias::ConstantBias(
+                                             gtsam::Vector3::Zero(), optValues.at<gtsam::Vector3>(key));
                 g.lastBiasStamp = ts;
+                newest          = stamp;
             }
+        }
+        if (!full)
+        {
+            publish_graph_gyro_bias_locked(newest);
         }
     }
 #endif
@@ -3974,41 +3941,8 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newValues.insert(W(id), angVelocity);
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
-#if !GTSAM_USES_BOOST
-    // G: gyroscope bias, likewise (Parameters::gyro_bias), once the IMU has been
-    // seen. The first one gets the prior, later ones extend its chain:
-    auto&      g            = *state_.gtsam;
-    const bool neighborHasG = closest_idx_opt.has_value() && g.hasGyroBias(*closest_idx_opt);
-    if (gyro_bias_in_graph() && g.ahrsParams && (neighborHasG || !g.gyroBiasPriorAdded))
-    {
-        g.newValues.insert(G(id), g.lastGyroBias);
-        g.newKeyStamps[G(id)] = stamp_s;
-        if (!neighborHasG)
-        {
-            g.newFactors.addPrior(
-                G(id), gtsam::Vector3::Zero().eval(),
-                gtsam::noiseModel::Isotropic::Sigma(3, params_.gyro_bias.prior_sigma));
-            g.gyroBiasPriorAdded = true;
-        }
-    }
-
-    // Z: IMU biases, seeded with the latest estimate. The first keyframe gets
-    // a prior; every later one is chained by the random walk of its links.
-    if (params_.imu_preintegration.enabled)
-    {
-        state_.gtsam->newValues.insert(Z(id), state_.gtsam->lastBias);
-        state_.gtsam->newKeyStamps[Z(id)] = stamp_s;
-        if (!closest_idx_opt.has_value())
-        {
-            const auto&    ip = params_.imu_preintegration;
-            gtsam::Vector6 sig;
-            sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
-                gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
-            state_.gtsam->newFactors.addPrior(
-                Z(id), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
-        }
-    }
-#endif
+    // IMU bias (Parameters::imu_preintegration), likewise:
+    add_imu_bias_variable_locked(id, stamp_s, closest_idx_opt);
 
     // Add planar constraints:
     if (params_.enforce_planar_motion)
@@ -4078,36 +4012,7 @@ void StateEstimationSmoother::add_kinematic_factor_between(
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
 
-#if !GTSAM_USES_BOOST
-    if (params_.imu_preintegration.enabled)
-    {
-        // The bias random walk goes with the link from its creation, so no bias
-        // variable is ever left unconstrained; the preintegration factor itself
-        // is attached once the raw readings cover the link's interval.
-        const auto&    ip  = params_.imu_preintegration;
-        const double   adt = std::max(std::abs(dt), 1e-3);
-        gtsam::Vector6 sig;
-        sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
-            gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
-        auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(from, to)];
-        sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
-            Z(from), Z(to), gtsam::imuBias::ConstantBias(),
-            gtsam::noiseModel::Diagonal::Sigmas(sig));
-        state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
-    }
-    else if (
-        gyro_bias_in_graph() && state_.gtsam->hasGyroBias(from) && state_.gtsam->hasGyroBias(to))
-    {
-        // As above: the random walk goes with the link, the rotation factor is
-        // attached once the raw readings cover it.
-        const double adt  = std::max(std::abs(dt), 1e-3);
-        auto&        sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(from, to)];
-        sink.emplace_shared<gtsam::BetweenFactor<gtsam::Vector3>>(
-            G(from), G(to), gtsam::Vector3::Zero().eval(),
-            gtsam::noiseModel::Isotropic::Sigma(3, params_.gyro_bias.random_walk * std::sqrt(adt)));
-        state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
-    }
-#endif
+    add_imu_bias_random_walk_locked(from, to, dt);
 }
 
 size_t StateEstimationSmoother::count_const_vel_factors_for_testing() const
@@ -4171,6 +4076,133 @@ std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
     return links;
 }
 
+void StateEstimationSmoother::add_imu_bias_variable_locked(
+    const frame_index_t id, const double stamp_s, const std::optional<frame_index_t>& neighbor)
+{
+#if !GTSAM_USES_BOOST
+    // Once the IMU is seen, seeded with the latest estimate. It continues the
+    // neighbor's chain (through the random walk of their link), or starts a new
+    // one at the prior: the first one, or after a gap.
+    auto& g = *state_.gtsam;
+    if (!imu_link_factors() || g.rawImuLabel.empty())
+    {
+        return;
+    }
+    const auto& ip   = params_.imu_preintegration;
+    const bool  full = imu_full_mode();
+    const auto  key  = GtsamImpl::biasKey(full, id);
+    if (full)
+    {
+        g.newValues.insert(key, g.lastBias);
+    }
+    else
+    {
+        g.newValues.insert(key, g.lastBias.gyroscope());
+    }
+    g.newKeyStamps[key] = stamp_s;
+    if (neighbor.has_value() && g.hasKey(GtsamImpl::biasKey(full, *neighbor)))
+    {
+        return;
+    }
+    if (full)
+    {
+        gtsam::Vector6 sig;
+        sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
+            gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
+        g.newFactors.addPrior(
+            key, gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
+    }
+    else
+    {
+        g.newFactors.addPrior(
+            key, gtsam::Vector3::Zero().eval(),
+            gtsam::noiseModel::Isotropic::Sigma(3, ip.initial_gyro_bias_sigma));
+    }
+#else
+    (void)id;
+    (void)stamp_s;
+    (void)neighbor;
+#endif
+}
+
+void StateEstimationSmoother::add_imu_bias_random_walk_locked(
+    const frame_index_t from, const frame_index_t to, const double dt)
+{
+#if !GTSAM_USES_BOOST
+    // The random walk goes with the link from its creation, so no bias variable
+    // is left unconstrained; the link's IMU factor is attached once the raw
+    // readings cover its interval (attach_imu_factors_locked()).
+    auto&      g    = *state_.gtsam;
+    const bool full = imu_full_mode();
+    if (!imu_link_factors() || !g.hasKey(GtsamImpl::biasKey(full, from)) ||
+        !g.hasKey(GtsamImpl::biasKey(full, to)))
+    {
+        return;
+    }
+    const auto&  ip   = params_.imu_preintegration;
+    const double adt  = std::max(std::abs(dt), 1e-3);
+    const auto   link = GtsamImpl::link_key(from, to);
+    auto&        sink = g.pendingKinematic[link];
+    if (full)
+    {
+        gtsam::Vector6 sig;
+        sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
+            gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
+        sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
+            Z(from), Z(to), gtsam::imuBias::ConstantBias(),
+            gtsam::noiseModel::Diagonal::Sigmas(sig));
+    }
+    else
+    {
+        sink.emplace_shared<gtsam::BetweenFactor<gtsam::Vector3>>(
+            G(from), G(to), gtsam::Vector3::Zero().eval(),
+            gtsam::noiseModel::Isotropic::Sigma(3, ip.gyro_bias_random_walk * std::sqrt(adt)));
+    }
+    g.imuLinksAwaiting.insert(link);
+#else
+    (void)from;
+    (void)to;
+    (void)dt;
+#endif
+}
+
+void StateEstimationSmoother::publish_graph_gyro_bias_locked(
+    [[maybe_unused]] const mrpt::Clock::time_point& stamp)
+{
+#if !GTSAM_USES_BOOST
+    const auto&          g  = *state_.gtsam;
+    const auto&          ip = params_.imu_preintegration;
+    const gtsam::Vector3 gb = g.lastBias.gyroscope();
+#if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
+    if (!g.rawImuLabel.empty())
+    {
+        mola::ImuBias b;
+        b.sensor_label = g.rawImuLabel;
+        b.timestamp    = stamp;
+        b.gyro         = {gb.x(), gb.y(), gb.z()};
+        // The prior, as a conservative bound (the marginal is not computed):
+        b.gyro_cov.setIdentity();
+        b.gyro_cov *= mrpt::square(ip.initial_gyro_bias_sigma);
+        b.acc_cov.setIdentity();
+        b.gyro_random_walk = ip.gyro_bias_random_walk;
+        if (g.biasObserved)
+        {
+            b.last_update = stamp;
+        }
+        auto lck              = mrpt::lockHelper(imuBiasMutex_);
+        graphGyroBias_        = b;
+        graphGyroBiasUpdated_ = true;
+    }
+#endif
+    if (g.biasObserved)
+    {
+        MRPT_LOG_THROTTLE_INFO_FMT(
+            10.0, "Gyroscope bias (graph): [%.4f %.4f %.4f] deg/s", mrpt::RAD2DEG(gb.x()),
+            mrpt::RAD2DEG(gb.y()), mrpt::RAD2DEG(gb.z()));
+    }
+#endif
+}
+
 void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)
 {
 #if !GTSAM_USES_BOOST
@@ -4193,22 +4225,28 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     // One IMU: the first one seen that matches.
     if (g.rawImuLabel.empty())
     {
-        g.rawImuLabel = imu.sensorLabel;
-        auto p        = gtsam::PreintegrationParams::MakeSharedU(ip.gravity);
-        p->setGyroscopeCovariance(mrpt::square(ip.gyro_noise_density) * gtsam::I_3x3);
-        p->setAccelerometerCovariance(mrpt::square(ip.accel_noise_density) * gtsam::I_3x3);
-        p->setIntegrationCovariance(mrpt::square(ip.integration_sigma) * gtsam::I_3x3);
-        p->setBodyPSensor(mrpt::gtsam_wrappers::toPose3(imu.sensorPose));
-        g.pimParams = p;
-
-        auto a = std::make_shared<gtsam::PreintegratedAhrsMeasurements::Params>();
-        a->setGyroscopeCovariance(mrpt::square(params_.gyro_bias.noise_density) * gtsam::I_3x3);
-        a->body_P_sensor = p->body_P_sensor;
-        g.ahrsParams     = a;
+        g.rawImuLabel            = imu.sensorLabel;
+        const auto body_P_sensor = mrpt::gtsam_wrappers::toPose3(imu.sensorPose);
+        if (imu_full_mode())
+        {
+            auto p = gtsam::PreintegrationParams::MakeSharedU(ip.gravity);
+            p->setGyroscopeCovariance(mrpt::square(ip.gyro_noise_density) * gtsam::I_3x3);
+            p->setAccelerometerCovariance(mrpt::square(ip.accel_noise_density) * gtsam::I_3x3);
+            p->setIntegrationCovariance(mrpt::square(ip.integration_sigma) * gtsam::I_3x3);
+            p->setBodyPSensor(body_P_sensor);
+            g.pimParams = p;
+        }
+        else
+        {
+            auto a = std::make_shared<gtsam::PreintegratedAhrsMeasurements::Params>();
+            a->setGyroscopeCovariance(mrpt::square(ip.gyro_noise_density) * gtsam::I_3x3);
+            a->body_P_sensor = body_P_sensor;
+            g.ahrsParams     = a;
+        }
         MRPT_LOG_INFO_STREAM(
-            (gyro_bias_in_graph() ? "[gyro_bias] Gyroscope bias of IMU '"
-                                  : "[imu_preintegration] Preintegrating IMU '")
-            << imu.sensorLabel << "', pose on vehicle: " << imu.sensorPose);
+            "[imu_preintegration] " << (imu_full_mode() ? "Full" : "Gyroscope-only")
+                                    << " preintegration of IMU '" << imu.sensorLabel
+                                    << "', pose on vehicle: " << imu.sensorPose);
     }
     if (imu.sensorLabel != g.rawImuLabel)
     {
@@ -4240,11 +4278,12 @@ void StateEstimationSmoother::attach_imu_factors_locked()
 {
 #if !GTSAM_USES_BOOST
     auto& g = *state_.gtsam;
-    if (!g.pimParams || g.rawImu.empty())
+    if (g.rawImuLabel.empty() || g.rawImu.empty())
     {
         return;
     }
     const auto&  ip        = params_.imu_preintegration;
+    const bool   full      = imu_full_mode();
     const double newestImu = g.rawImu.back().t;
 
     for (auto it = g.imuLinksAwaiting.begin(); it != g.imuLinksAwaiting.end();)
@@ -4288,11 +4327,18 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             --first;
         }
 
-        // With only the gyroscope bias in the graph, a rotation-only factor:
-        const bool                           gyroOnly = !params_.imu_preintegration.enabled;
-        gtsam::PreintegratedImuMeasurements  pim(g.pimParams, g.lastBias);
-        gtsam::PreintegratedAhrsMeasurements ahrs(g.ahrsParams, g.lastGyroBias);
-        double                               tc = ti;
+        // Full mode: accelerometer and gyroscope; gyro mode: rotation only.
+        std::optional<gtsam::PreintegratedImuMeasurements>  pim;
+        std::optional<gtsam::PreintegratedAhrsMeasurements> ahrs;
+        if (full)
+        {
+            pim.emplace(g.pimParams, g.lastBias);
+        }
+        else
+        {
+            ahrs.emplace(g.ahrsParams, g.lastBias.gyroscope());
+        }
+        double tc = ti;
         for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
         {
             const auto   next  = std::next(k);
@@ -4302,33 +4348,36 @@ void StateEstimationSmoother::attach_imu_factors_locked()
                 ok = false;
                 break;
             }
-            if (tNext > tc && gyroOnly)
+            if (tNext > tc && full)
             {
-                ahrs.integrateMeasurement(k->gyr, tNext - tc);
+                pim->integrateMeasurement(k->acc, k->gyr, tNext - tc);
             }
             else if (tNext > tc)
             {
-                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+                ahrs->integrateMeasurement(k->gyr, tNext - tc);
             }
             tc = tNext;
         }
 
-        const double integrated = gyroOnly ? ahrs.deltaTij() : pim.deltaTij();
-        if (ok && gyroOnly && tj - ti >= ip.min_link_duration &&
-            std::abs(integrated - (tj - ti)) < 1e-6)
+        const double integrated = full ? pim->deltaTij() : ahrs->deltaTij();
+        if (ok && tj - ti >= ip.min_link_duration && std::abs(integrated - (tj - ti)) < 1e-6)
         {
-            g.pendingKinematic[*it].emplace_shared<mola::factors::FactorGyroPreintegrationPose>(
-                T(i), T(j), G(i), ahrs, params_.gyro_bias.min_sigma_rotation);
-            g.gyroBiasObserved = true;
-        }
-        else if (ok && tj - ti >= ip.min_link_duration && std::abs(integrated - (tj - ti)) < 1e-6)
-        {
-            gtsam::Matrix9 floor    = gtsam::Matrix9::Zero();
-            floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;
-            floor.block<3, 3>(3, 3) = mrpt::square(ip.min_sigma_position) * gtsam::I_3x3;
-            floor.block<3, 3>(6, 6) = mrpt::square(ip.min_sigma_velocity) * gtsam::I_3x3;
-            g.pendingKinematic[*it].emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
-                T(i), V(i), T(j), V(j), Z(i), pim, floor);
+            if (full)
+            {
+                gtsam::Matrix9 floor    = gtsam::Matrix9::Zero();
+                floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;
+                floor.block<3, 3>(3, 3) = mrpt::square(ip.min_sigma_position) * gtsam::I_3x3;
+                floor.block<3, 3>(6, 6) = mrpt::square(ip.min_sigma_velocity) * gtsam::I_3x3;
+                g.pendingKinematic[*it]
+                    .emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
+                        T(i), V(i), T(j), V(j), Z(i), *pim, floor);
+            }
+            else
+            {
+                g.pendingKinematic[*it].emplace_shared<mola::factors::FactorGyroPreintegrationPose>(
+                    T(i), T(j), G(i), *ahrs, ip.gyro_mode_min_sigma_rotation);
+            }
+            g.biasObserved = true;
         }
         it = g.imuLinksAwaiting.erase(it);
     }
@@ -4826,7 +4875,7 @@ void StateEstimationSmoother::publishEstimatedGeoreferencing()
 std::vector<std::string> StateEstimationSmoother::imu_bias_sensor_labels() const
 {
     auto lck = mrpt::lockHelper(imuBiasMutex_);
-    if (gyro_bias_in_graph())
+    if (imu_gyro_mode())
     {
         if (graphGyroBias_)
         {
@@ -4863,7 +4912,7 @@ mola::ImuBias StateEstimationSmoother::to_imu_bias(
 std::optional<mola::ImuBias> StateEstimationSmoother::imu_bias_impl(
     const std::string& sensorLabel, const std::optional<mrpt::Clock::time_point>& t) const
 {
-    if (gyro_bias_in_graph())
+    if (imu_gyro_mode())
     {
         auto lck = mrpt::lockHelper(imuBiasMutex_);
         if (graphGyroBias_ && graphGyroBias_->sensor_label == sensorLabel)
@@ -4908,7 +4957,7 @@ void StateEstimationSmoother::advertise_imu_biases()
     std::optional<ImuBias> graphBias;
     {
         auto lck = mrpt::lockHelper(imuBiasMutex_);
-        if (gyro_bias_in_graph())
+        if (imu_gyro_mode())
         {
             // The graph's estimate replaces the tracker's (logged where it is solved):
             if (graphGyroBiasUpdated_ && graphGyroBias_ && graphGyroBias_->last_update)
@@ -5026,7 +5075,7 @@ void StateEstimationSmoother::imu_bias_correct(mrpt::obs::CObservationIMU& imu) 
     using namespace mrpt::obs;
     // With the bias in the graph, its inputs stay raw (no double correction):
     if (!params_.imu_bias_tracking || !params_.imu_bias_correct_angular_velocity ||
-        gyro_bias_in_graph() || !imu.has(IMU_WX) || !imu.has(IMU_WY) || !imu.has(IMU_WZ))
+        imu_gyro_mode() || !imu.has(IMU_WX) || !imu.has(IMU_WY) || !imu.has(IMU_WZ))
     {
         return;
     }

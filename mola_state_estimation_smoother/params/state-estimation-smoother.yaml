@@ -243,7 +243,7 @@ params:
   #
   # The pinned pose has identity rotation, so {map} is then as tilted as the robot's first
   # pose (e.g. a base_link that is not level, or an IMU-defined base_link mounted upside
-  # down). Gravity-dependent factors (imu_preintegration) need a gravity-aligned {map}:
+  # down). Gravity-dependent factors (imu_preintegration, full mode) need a gravity-aligned {map}:
   # with a front end that levels its own odometry frame with gravity, leave this empty so
   # {map} is that frame instead.
   #
@@ -341,29 +341,30 @@ params:
     # [s] how long readings wait for odometry hints: hint period plus odometry latency
     max_hint_latency: 1.0
 
-  # Gyroscope bias estimated in the graph, from every pose of a pose source (e.g.
-  # LiDAR odometry), with the vehicle moving: one bias state per keyframe, a
-  # random walk between them, and a gyroscope-only rotation preintegration factor
-  # between consecutive keyframe poses. The per-keyframe angular-velocity factor
-  # then takes the bias-corrected reading. Not used with imu_preintegration.
-  gyro_bias:
-    enabled: ${MOLA_SMOOTHER_GYRO_BIAS|true}
-    prior_sigma: ${MOLA_SMOOTHER_GYRO_BIAS_PRIOR_SIGMA|0.02}  # [rad/s], zero mean
-    random_walk: ${MOLA_SMOOTHER_GYRO_BIAS_RW|2e-5}  # [rad/s^2/sqrt(Hz)]
-    noise_density: ${MOLA_IMU_GYRO_NOISE_DENSITY|2.4e-4}  # [rad/s/sqrt(Hz)]
-    min_sigma_rotation: ${MOLA_SMOOTHER_GYRO_BIAS_MIN_SIGMA_ROT|2e-3}  # [rad] per link
-
-  # IMU preintegration between consecutive keyframes (gtsam::ImuFactor on the raw
-  # readings), with gyroscope and accelerometer biases as states. The reference
-  # frame must be gravity-aligned (z up): see link_first_pose_to_reference_origin_sigma,
-  # which defines {map} as the first robot pose, tilted if the robot is not level
-  # there. Noise densities are per sqrt(Hz).
+  # IMU factors on the kinematic links between keyframes, from the raw readings of
+  # one IMU, with an IMU bias variable per keyframe chained by a random walk. One
+  # mode at a time:
+  #  - none: no link factors.
+  #  - gyro (experimental): gyroscope-only rotation preintegration between keyframe
+  #    poses, with a gyroscope bias per keyframe, observed from any pose source while
+  #    moving. The per-keyframe angular-velocity factor takes the bias-corrected
+  #    reading, and the bias is offered to other modules (mola::ImuBiasSource).
+  #    A link factor tighter than the pose source's increments drives the fused
+  #    attitude, so residual gyro errors accumulate in it.
+  #  - full: accelerometer and gyroscope preintegration (gtsam::ImuFactor), with
+  #    both biases. The reference frame must be gravity-aligned (z up): see
+  #    link_first_pose_to_reference_origin_sigma, which defines {map} as the first
+  #    robot pose, tilted if the robot is not level there.
+  # Noise densities are per sqrt(Hz).
   imu_preintegration:
-    enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|false}
+    mode: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|none}  # none | gyro | full
     sensor_label_re: "${MOLA_SMOOTHER_IMU_PREINT_LABELS|.*}"
     gyro_noise_density: ${MOLA_IMU_GYRO_NOISE_DENSITY|2.4e-4}  # [rad/s/sqrt(Hz)]
-    accel_noise_density: ${MOLA_IMU_ACC_NOISE_DENSITY|1.6e-3}  # [m/s^2/sqrt(Hz)]
     gyro_bias_random_walk: ${MOLA_IMU_GYRO_BIAS_RW|2e-5}  # [rad/s^2/sqrt(Hz)]
+    # Gyro mode: per-link floor of the rotation factor [rad]:
+    gyro_mode_min_sigma_rotation: ${MOLA_SMOOTHER_GYRO_MIN_SIGMA_ROT|2e-3}
+    # Full mode only:
+    accel_noise_density: ${MOLA_IMU_ACC_NOISE_DENSITY|1.6e-3}  # [m/s^2/sqrt(Hz)]
     accel_bias_random_walk: ${MOLA_IMU_ACC_BIAS_RW|3e-4}  # [m/s^3/sqrt(Hz)]
     # Constant-velocity linear factors are kept, this much weaker, on every link:
     linear_kinematics_sigma_scale: ${MOLA_SMOOTHER_IMU_PREINT_KIN_SCALE|10.0}

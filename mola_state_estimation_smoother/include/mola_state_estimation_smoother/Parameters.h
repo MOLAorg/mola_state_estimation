@@ -41,6 +41,18 @@ enum class KinematicModel : uint8_t
     Tricycle,
 };
 
+/// IMU factors on the kinematic links (Parameters::ImuPreintegration).
+enum class ImuPreintegrationMode : uint8_t
+{
+    None = 0,
+    Gyro,
+    Full,
+};
+
+/** Parses "none", "gyro" or "full" (case-insensitive). The former boolean
+ * values are accepted ("true" is full) and set `deprecated`. Throws otherwise. */
+ImuPreintegrationMode parse_imu_preintegration_mode(std::string s, bool& deprecated);
+
 /** Parameters needed by StateEstimationSmoother.
  *
  * \ingroup mola_navstate_fuse__grp
@@ -523,54 +535,55 @@ class Parameters
     /// mola::imu::ImuBiasTracker::Parameters (empty: its defaults).
     mrpt::containers::yaml imu_bias_tracker = mrpt::containers::yaml::Map();
 
-    /** Gyroscope bias estimated in the graph, without IMU preintegration: one
-     * bias state G(k) (sensor frame, rad/s) per keyframe, chained by a random
-     * walk, observed by a gyroscope-only rotation preintegration factor between
-     * consecutive keyframe poses (every raw reading of the link, first-order
-     * bias Jacobian, as gtsam::AHRSFactor). Any pose source (e.g. LiDAR
-     * odometry) then corrects it at each new pose, with the vehicle moving. The
-     * per-keyframe angular-velocity factor takes the bias-corrected reading.
-     * The IMU is the first one matching imu_preintegration.sensor_label_re.
-     * Unused while imu_preintegration is enabled (its own bias covers it). */
-    struct GyroBias
-    {
-        bool   enabled            = true;
-        double prior_sigma        = 0.02;  //!< zero-mean initial bias sigma [rad/s]
-        double random_walk        = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
-        double noise_density      = 2.4e-4;  //!< gyro white noise [rad/s/sqrt(Hz)]
-        double min_sigma_rotation = 2e-3;  //!< per-link floor of the rotation factor [rad]
-    };
-    GyroBias gyro_bias;
-
-    /** IMU preintegration between consecutive keyframes: every kinematic link
-     * whose interval is covered by raw readings gets an on-manifold
-     * preintegration factor (gtsam::ImuFactor on the raw accelerometer and
-     * gyroscope readings), and every keyframe gets a gyroscope and
-     * accelerometer bias variable, chained by a random walk. The reference
-     * frame is assumed gravity-aligned (z up). Default off. */
+    /** IMU factors on every kinematic link whose interval the raw readings of
+     * one IMU (the first matching sensor_label_re) cover, and an IMU bias
+     * variable per keyframe, chained by a random walk. One mode at a time:
+     *  - None: no link factors.
+     *  - Gyro (experimental): gyroscope-only rotation preintegration between
+     *    the keyframe poses (FactorGyroPreintegrationPose, as gtsam::AHRSFactor),
+     *    with a sensor-frame gyroscope bias G(k). Any pose source (e.g. LiDAR
+     *    odometry) observes the bias while the vehicle moves; the per-keyframe
+     *    angular velocity factor takes the bias-corrected reading, and the bias
+     *    is offered as a mola::ImuBiasSource. Next to a pose source fused as
+     *    increments, a link factor tighter than those increments drives the
+     *    fused attitude, and residual gyro errors then accumulate in it.
+     *  - Full: accelerometer and gyroscope preintegration
+     *    (FactorImuPreintegrationBodyVel, as gtsam::ImuFactor), with both
+     *    biases Z(k). The reference frame is assumed gravity-aligned (z up).
+     */
     struct ImuPreintegration
     {
-        bool        enabled         = false;
-        std::string sensor_label_re = ".*";  //!< IMUs used (regex of labels)
+        ImuPreintegrationMode mode            = ImuPreintegrationMode::None;
+        std::string           sensor_label_re = ".*";  //!< IMUs used (regex of labels)
 
-        double gyro_noise_density     = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
-        double accel_noise_density    = 1.6e-3;  //!< [m/s^2/sqrt(Hz)]
-        double gyro_bias_random_walk  = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
-        double accel_bias_random_walk = 3e-4;  //!< [m/s^3/sqrt(Hz)]
-        double integration_sigma      = 1e-4;  //!< position integration noise
-        double gravity                = 9.80665;  //!< [m/s^2]
+        double gyro_noise_density      = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
+        double gyro_bias_random_walk   = 2e-5;  //!< [rad/s^2/sqrt(Hz)]
+        double initial_gyro_bias_sigma = 0.02;  //!< zero-mean prior [rad/s]
 
-        double initial_gyro_bias_sigma  = 0.02;  //!< [rad/s]
+        /// Largest gap between consecutive readings integrated across [s].
+        double max_reading_gap = 0.1;
+
+        /// Links shorter than this get no link factor [s].
+        double min_link_duration = 2e-3;
+
+        /** Gyro mode: floor of the per-link rotation uncertainty, added to the
+         * preintegrated one [rad]. Wider than the full mode's min_sigma_rotation:
+         * here the rotation is all the link factor constrains. */
+        double gyro_mode_min_sigma_rotation = 2e-3;
+
+        /** @name Full mode only
+         * @{ */
+        double accel_noise_density      = 1.6e-3;  //!< [m/s^2/sqrt(Hz)]
+        double accel_bias_random_walk   = 3e-4;  //!< [m/s^3/sqrt(Hz)]
+        double integration_sigma        = 1e-4;  //!< position integration noise
+        double gravity                  = 9.80665;  //!< [m/s^2]
         double initial_accel_bias_sigma = 0.2;  //!< [m/s^2]
 
         /** The constant-velocity linear factors of a link (velocity and position
          * integration) contradict any acceleration the IMU measures: their
-         * sigmas are multiplied by this while preintegration is on. They stay,
-         * weak, so a link without IMU data is still determined. */
+         * sigmas are multiplied by this. They stay, weak, so a link without IMU
+         * data is still determined. */
         double linear_kinematics_sigma_scale = 10.0;
-
-        /// Largest gap between consecutive readings integrated across [s].
-        double max_reading_gap = 0.1;
 
         /** Floor of the preintegrated uncertainty, added to it: unmodeled errors
          * (timing, extrinsics, vibration), and numerical conditioning, since
@@ -579,9 +592,7 @@ class Parameters
         double min_sigma_rotation = 2e-4;
         double min_sigma_position = 1e-3;
         double min_sigma_velocity = 5e-3;
-
-        /// Links shorter than this get no preintegration factor [s].
-        double min_link_duration = 2e-3;
+        /** @} */
     };
     ImuPreintegration imu_preintegration;
 

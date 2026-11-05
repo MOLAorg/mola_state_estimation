@@ -78,7 +78,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (37) | `tests/test-*.cpp` |
+| Unit tests (38) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -89,9 +89,9 @@ Structure:
   assume it is held.
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
-  With `imu_preintegration.enabled`, also IMU biases `Z(k)`
-  (`imuBias::ConstantBias`), chained by a random walk on every link. Otherwise,
-  with `gyro_bias.enabled`, a sensor-frame gyroscope bias `G(k)` (Vector3).
+  With IMU link factors (`imu_preintegration.mode`), an IMU bias per keyframe,
+  chained by a random walk on every link: `Z(k)` (`imuBias::ConstantBias`, full)
+  or a sensor-frame gyroscope bias `G(k)` (Vector3, gyro).
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame`; consecutive keyframes are linked
   by kinematic factors (`ConstantVelocity` or `Tricycle` model).
@@ -117,20 +117,23 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
-- IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
-  are buffered before decimation; each kinematic link gets a
-  `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with body-frame velocities)
-  once the readings cover it (`attach_imu_factors_locked()`), with a covariance
-  floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
-  (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
+- IMU link factors (`imu_preintegration.mode`: `none` (default), `gyro` (experimental) or `full`;
+  one at a time by construction, the deprecated `enabled: true` maps to `full`).
+  Raw readings of one IMU are buffered before decimation; once the IMU is seen,
+  every keyframe gets a bias variable (prior where its neighbor has none) and every
+  link its random walk (`add_imu_bias_variable_locked()`,
+  `add_imu_bias_random_walk_locked()`); the link's factor is attached once the
+  readings cover it (`attach_imu_factors_locked()`). Gyro mode:
+  `FactorGyroPreintegrationPose` (rotation only, floor
+  `gyro_mode_min_sigma_rotation`); the `W(k)` factor becomes `W = R_vs (w - G)`;
+  `imu_bias()` offers `G`, and the tracker's correction of fused readings is then
+  skipped. Full mode: `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with
+  body-frame velocities, floors `min_sigma_*`), weaker constant-velocity linear
+  factors (`linear_kinematics_sigma_scale`), and a gravity-aligned `{map}` (leave
   `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
-  The per-keyframe gravity and angular-velocity factors stay on with it.
-- Gyroscope bias (`gyro_bias`, default on, only without `imu_preintegration`): once
-  the raw IMU is seen, `G(k)` per keyframe, a zero-mean prior on the first, a random
-  walk per link, and a `FactorGyroPreintegrationPose` per link from the same raw
-  buffer; the `W(k)` factor becomes `W = R_vs (w - G)`. Observable while moving,
-  from the pose source alone. `imu_bias()` offers it, and the tracker's correction
-  of fused readings is then skipped.
+  Gyro parameters (noise density, bias random walk and initial sigma, label regex,
+  gaps, link duration) are shared; the rest of the block is full mode only. The
+  per-keyframe gravity and angular-velocity factors stay on in both modes.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.

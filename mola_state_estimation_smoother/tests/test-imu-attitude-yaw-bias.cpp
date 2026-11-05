@@ -85,7 +85,7 @@ struct Config
 {
     double yaw_bias_sigma_deg         = 0;
     double attitude_min_sample_period = 0;
-    bool   gyro_bias                  = true;
+    bool   gyro_link_factors          = true;  //!< imu_preintegration gyro mode
 };
 
 struct Sim
@@ -106,7 +106,8 @@ struct Sim
         auto cfg = mrpt::containers::yaml::FromText(navStateParams);
         cfg["params"]["imu_attitude_yaw_bias_sigma_deg"] = c.yaw_bias_sigma_deg;
         cfg["params"]["imu_attitude_min_sample_period"]  = c.attitude_min_sample_period;
-        cfg["params"]["gyro_bias"]["enabled"]            = c.gyro_bias;
+        cfg["params"]["imu_preintegration"]["mode"] =
+            std::string(c.gyro_link_factors ? "gyro" : "none");
         est.initialize(cfg);
 
         const mrpt::topography::TGeodeticCoords ref(LAT, LON, ALT);

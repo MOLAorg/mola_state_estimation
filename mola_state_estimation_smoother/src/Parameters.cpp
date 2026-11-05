@@ -20,9 +20,39 @@
  */
 
 #include <mola_state_estimation_smoother/Parameters.h>
+#include <mrpt/core/exceptions.h>
+
+#include <algorithm>
+#include <cctype>
+#include <iostream>
 
 namespace mola::state_estimation_smoother
 {
+
+ImuPreintegrationMode parse_imu_preintegration_mode(std::string s, bool& deprecated)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (s == "none")
+    {
+        return ImuPreintegrationMode::None;
+    }
+    if (s == "gyro")
+    {
+        return ImuPreintegrationMode::Gyro;
+    }
+    if (s == "full")
+    {
+        return ImuPreintegrationMode::Full;
+    }
+    // The former boolean flag, e.g. from an environment variable:
+    if (s == "true" || s == "false")
+    {
+        deprecated = true;
+        return s == "true" ? ImuPreintegrationMode::Full : ImuPreintegrationMode::None;
+    }
+    THROW_EXCEPTION_FMT(
+        "Invalid imu_preintegration.mode '%s': expected none, gyro or full", s.c_str());
+}
 
 void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 {
@@ -128,25 +158,29 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         const mrpt::containers::yaml sub = cfg["imu_bias_tracker"];
         imu_bias_tracker                 = sub;
     }
-    if (cfg.has("gyro_bias"))
-    {
-        const mrpt::containers::yaml c  = cfg["gyro_bias"];
-        auto&                        gb = gyro_bias;
-        gb.enabled                      = c.getOrDefault("enabled", gb.enabled);
-        gb.prior_sigma                  = c.getOrDefault("prior_sigma", gb.prior_sigma);
-        gb.random_walk                  = c.getOrDefault("random_walk", gb.random_walk);
-        gb.noise_density                = c.getOrDefault("noise_density", gb.noise_density);
-        gb.min_sigma_rotation = c.getOrDefault("min_sigma_rotation", gb.min_sigma_rotation);
-        ASSERT_GT_(gb.prior_sigma, 0.0);
-        ASSERT_GT_(gb.random_walk, 0.0);
-        ASSERT_GT_(gb.noise_density, 0.0);
-    }
     if (cfg.has("imu_preintegration"))
     {
-        const mrpt::containers::yaml c  = cfg["imu_preintegration"];
-        auto&                        ip = imu_preintegration;
-        ip.enabled                      = c.getOrDefault("enabled", ip.enabled);
-        ip.sensor_label_re              = c.getOrDefault("sensor_label_re", ip.sensor_label_re);
+        const mrpt::containers::yaml c          = cfg["imu_preintegration"];
+        auto&                        ip         = imu_preintegration;
+        bool                         deprecated = false;
+        if (c.has("enabled"))
+        {
+            // Deprecated form: a boolean, true being the full mode.
+            ip.mode =
+                c["enabled"].as<bool>() ? ImuPreintegrationMode::Full : ImuPreintegrationMode::None;
+            deprecated = true;
+        }
+        if (c.has("mode"))
+        {
+            ip.mode = parse_imu_preintegration_mode(c["mode"].as<std::string>(), deprecated);
+        }
+        if (deprecated)
+        {
+            std::cerr << "[StateEstimationSmoother] Warning: imu_preintegration.enabled (or a "
+                         "boolean mode) is deprecated: use imu_preintegration.mode: "
+                         "none|gyro|full ('true' is full).\n";
+        }
+        ip.sensor_label_re     = c.getOrDefault("sensor_label_re", ip.sensor_label_re);
         ip.gyro_noise_density  = c.getOrDefault("gyro_noise_density", ip.gyro_noise_density);
         ip.accel_noise_density = c.getOrDefault("accel_noise_density", ip.accel_noise_density);
         ip.gyro_bias_random_walk =
@@ -166,7 +200,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ip.min_sigma_position = c.getOrDefault("min_sigma_position", ip.min_sigma_position);
         ip.min_sigma_velocity = c.getOrDefault("min_sigma_velocity", ip.min_sigma_velocity);
         ip.min_link_duration  = c.getOrDefault("min_link_duration", ip.min_link_duration);
+        ip.gyro_mode_min_sigma_rotation =
+            c.getOrDefault("gyro_mode_min_sigma_rotation", ip.gyro_mode_min_sigma_rotation);
         ASSERT_GT_(ip.gyro_noise_density, 0.0);
+        ASSERT_GT_(ip.initial_gyro_bias_sigma, 0.0);
         ASSERT_GT_(ip.accel_noise_density, 0.0);
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
         ASSERT_GT_(ip.accel_bias_random_walk, 0.0);

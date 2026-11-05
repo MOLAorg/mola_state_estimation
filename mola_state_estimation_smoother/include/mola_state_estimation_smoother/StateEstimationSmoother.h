@@ -722,14 +722,32 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  replace it. Cheap if the link has not reached the solver yet; otherwise its
      *  factors are queued for removal at the next update().
      */
-    /// IMU preintegration: keeps the raw readings of the IMU in use.
+    /// IMU link factors: keeps the raw readings of the IMU in use.
     void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
 
-    /// Parameters::gyro_bias is in effect (it is not, with preintegration).
-    [[nodiscard]] bool gyro_bias_in_graph() const
+    /// IMU link factors (Parameters::ImuPreintegration::mode), one mode at a time:
+    [[nodiscard]] bool imu_link_factors() const
     {
-        return params_.gyro_bias.enabled && !params_.imu_preintegration.enabled;
+        return params_.imu_preintegration.mode != ImuPreintegrationMode::None;
     }
+    [[nodiscard]] bool imu_gyro_mode() const
+    {
+        return params_.imu_preintegration.mode == ImuPreintegrationMode::Gyro;
+    }
+    [[nodiscard]] bool imu_full_mode() const
+    {
+        return params_.imu_preintegration.mode == ImuPreintegrationMode::Full;
+    }
+
+    /// IMU link factors: the bias variable of a new keyframe, once the IMU is seen.
+    void add_imu_bias_variable_locked(
+        frame_index_t id, double stamp_s, const std::optional<frame_index_t>& neighbor);
+
+    /// IMU link factors: the bias random walk of a new link, and its IMU factor queued.
+    void add_imu_bias_random_walk_locked(frame_index_t from, frame_index_t to, double dt);
+
+    /// Gyro mode: offers (imu_bias_impl()) and logs the latest gyroscope bias.
+    void publish_graph_gyro_bias_locked(const mrpt::Clock::time_point& stamp);
 
 #if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
     /// The graph's latest gyroscope bias, for imu_bias_impl() (imuBiasMutex_).
