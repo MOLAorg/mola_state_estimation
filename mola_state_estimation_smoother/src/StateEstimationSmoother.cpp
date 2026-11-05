@@ -1840,8 +1840,7 @@ void StateEstimationSmoother::add_gravity_from_pose_source_locked(
     {
         return;
     }
-    // Mean acceleration of the source's trajectory over the period, in its own
-    // frame (only the attitude at t is used to bring it into the sensor frame):
+    // Mean acceleration of the source's trajectory over the period, in its frame:
     const auto v0 = (p0b.translation() - p0.translation()) * (1.0 / dv);
     const auto v1 = (p1.translation() - p1a.translation()) * (1.0 / dv);
     const auto a  = (v1 - v0) * (1.0 / (period - dv));
@@ -1849,8 +1848,9 @@ void StateEstimationSmoother::add_gravity_from_pose_source_locked(
     bool added = false;
     for (auto& [label, buf] : state_.gravity_acc_buffer)
     {
-        // Mean specific force over the period, in the sensor frame (as the
-        // per-reading path does):
+        // Mean specific force in the source's frame, each reading rotated with
+        // the source's attitude at its stamp: a mean in the sensor frame mixes
+        // directions the sensor took during the period.
         mrpt::math::TVector3D sum   = {0, 0, 0};
         size_t                count = 0;
         double                tMin  = t;
@@ -1862,7 +1862,12 @@ void StateEstimationSmoother::add_gravity_from_pose_source_locked(
             {
                 continue;
             }
-            sum += r.acc;
+            mrpt::poses::CPose3D pv;
+            if (!interpolate_history(hist, r.t, pv))
+            {
+                continue;
+            }
+            sum += (pv + r.sensorPose).rotateVector(r.acc);
             count++;
             tMin       = std::min(tMin, r.t);
             tMax       = std::max(tMax, r.t);
@@ -1876,7 +1881,7 @@ void StateEstimationSmoother::add_gravity_from_pose_source_locked(
         const auto f = sum * (1.0 / static_cast<double>(count));
 
         // Specific force = acceleration - gravity, so this is "up" times g:
-        const auto           upS = f - (p1 + sensorPose).inverseRotateVector(a);
+        const auto           upS = (p1 + sensorPose).inverseRotateVector(f - a);
         const gtsam::Vector3 upVec(upS.x, upS.y, upS.z);
         if (!mola::factors::imu_accel_looks_like_gravity(upVec))
         {
