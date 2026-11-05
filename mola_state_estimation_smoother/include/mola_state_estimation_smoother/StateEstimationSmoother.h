@@ -70,6 +70,11 @@
 #include <thread>
 #include <utility>
 
+namespace mola::state_estimation_simple
+{
+class StateEstimationSimple;
+}
+
 namespace mola::state_estimation_smoother
 {
 // Defined in src/, kept out of the public API (used only via pointer here):
@@ -580,6 +585,18 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
     std::unique_ptr<FastPredictor> fastPredictor_;
+
+    /// motion_prior_from_simple: the estimator serving predictions in the frame
+    /// of the first odometry-frame pose source (motionPriorFrame_), fed with the
+    /// same readings as the graph. Has its own lock.
+    std::shared_ptr<mola::state_estimation_simple::StateEstimationSimple> motionPrior_;
+    std::optional<std::string>                                            motionPriorFrame_;
+    mrpt::math::CMatrixDouble66 motionPriorLastCov_;  //!< set in initialize()
+    mutable std::mutex          motionPriorMtx_;
+
+    /// Returns true if poses in this frame feed the motion prior (the first
+    /// odometry-frame pose source seen does).
+    bool motion_prior_takes_frame(const std::string& frame_id);
 
     /// Builds an immutable Snapshot of the current solution (newest keyframe
     /// anchor + frame transforms + georef). Assumes stateMutex_ is held.

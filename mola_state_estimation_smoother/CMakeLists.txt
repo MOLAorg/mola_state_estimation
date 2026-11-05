@@ -44,6 +44,7 @@ find_package(GTSAM_UNSTABLE REQUIRED)
 find_package(mola_kernel REQUIRED)
 find_package(mola_imu_preintegration REQUIRED)
 find_package(mola_gtsam_factors REQUIRED)
+find_package(mola_state_estimation_simple REQUIRED)
 
 # -----------------------
 # define lib:
@@ -66,6 +67,7 @@ mola_add_library(
     mola::mola_kernel
     mola::mola_imu_preintegration
     mola::mola_gtsam_factors
+    mola::mola_state_estimation_simple
   PRIVATE_LINK_LIBRARIES
     gtsam
     gtsam_unstable
@@ -74,6 +76,7 @@ mola_add_library(
     mola_imu_preintegration
     mola_gtsam_factors
     mola_kernel
+    mola_state_estimation_simple
 )
 target_include_directories(${PROJECT_NAME} PRIVATE ".")
 

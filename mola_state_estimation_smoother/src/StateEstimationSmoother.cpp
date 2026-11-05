@@ -63,6 +63,7 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
+#include <mola_state_estimation_simple/StateEstimationSimple.h>
 
 #include <deque>
 #include <regex>
@@ -527,6 +528,34 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     // Load params:
     params_.loadFrom(cfg["params"]);
 
+    {
+        std::lock_guard<std::mutex> lk(motionPriorMtx_);
+        motionPrior_.reset();
+        motionPriorFrame_.reset();
+        motionPriorLastCov_.setIdentity();
+        motionPriorLastCov_ *= 1e-4;
+        if (params_.motion_prior_from_simple)
+        {
+            // The simple estimator's params; without that block, its defaults
+            // with this estimator's extrapolation horizon:
+            const mrpt::containers::yaml& p = cfg["params"];
+            mrpt::containers::yaml        simpleParams =
+                p.has("motion_prior_simple")
+                           ? mrpt::containers::yaml(p["motion_prior_simple"])
+                           : mrpt::containers::yaml(mrpt::containers::yaml::Map());
+            if (!simpleParams.has("max_time_to_use_velocity_model"))
+            {
+                simpleParams["max_time_to_use_velocity_model"] =
+                    params_.max_time_to_use_velocity_model;
+            }
+            mrpt::containers::yaml simpleCfg = mrpt::containers::yaml::Map();
+            simpleCfg["params"]              = simpleParams;
+            motionPrior_ = std::make_shared<mola::state_estimation_simple::StateEstimationSimple>();
+            motionPrior_->setMinLoggingLevel(this->getMinLoggingLevel());
+            motionPrior_->initialize(simpleCfg);
+        }
+    }
+
     if (params_.imu_bias_tracking)
     {
 #if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
@@ -978,8 +1007,30 @@ void StateEstimationSmoother::advertiseMapToOdom(
 
 void StateEstimationSmoother::reset()
 {
+    {
+        std::lock_guard<std::mutex> lk(motionPriorMtx_);
+        if (motionPrior_)
+        {
+            motionPrior_->reset();
+        }
+        motionPriorFrame_.reset();
+    }
     auto lck = mrpt::lockHelper(stateMutex_);
     reset_locked();
+}
+
+bool StateEstimationSmoother::motion_prior_takes_frame(const std::string& frame_id)
+{
+    std::lock_guard<std::mutex> lk(motionPriorMtx_);
+    if (!motionPrior_ || frame_id == params_.reference_frame_name)
+    {
+        return false;
+    }
+    if (!motionPriorFrame_)
+    {
+        motionPriorFrame_ = frame_id;
+    }
+    return *motionPriorFrame_ == frame_id;
 }
 
 void StateEstimationSmoother::reset_locked()
@@ -1360,12 +1411,16 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // factor-less keyframe.
     const bool hasAttitude =
         rawImu.has(mrpt::obs::IMU_ORI_QUAT_W) && params_.imu_attitude_sigma_deg > 0;
-    const bool hasGravity =
-        rawImu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0;
-    const auto hasAngularVelocity = [this](const mrpt::obs::CObservationIMU& o)
+    // With an odometry-frame pose source (e.g. LiDAR odometry), its attitude is
+    // far better than these per-keyframe readings, which only pull it around:
+    const bool keyframeImuFactors =
+        params_.imu_keyframe_factors_with_pose_source || state_.relative_pose_chains.empty();
+    const bool hasGravity = keyframeImuFactors && rawImu.has(mrpt::obs::IMU_X_ACC) &&
+                            params_.imu_normalized_gravity_alignment_sigma > 0;
+    const auto hasAngularVelocity = [this, keyframeImuFactors](const mrpt::obs::CObservationIMU& o)
     {
-        return o.has(mrpt::obs::IMU_WX) && o.has(mrpt::obs::IMU_WY) && o.has(mrpt::obs::IMU_WZ) &&
-               params_.imu_angular_velocity_sigma > 0;
+        return keyframeImuFactors && o.has(mrpt::obs::IMU_WX) && o.has(mrpt::obs::IMU_WY) &&
+               o.has(mrpt::obs::IMU_WZ) && params_.imu_angular_velocity_sigma > 0;
     };
     if (!hasAttitude && !hasGravity && !hasAngularVelocity(rawImu))
     {
@@ -1405,7 +1460,8 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     // Gravity: the average of the accelerometer over imu_gravity_min_sample_period, if
     // that period just completed:
     std::optional<gtsam::Vector3> measuredGravity;
-    if (imu.has(mrpt::obs::IMU_X_ACC) && params_.imu_normalized_gravity_alignment_sigma > 0)
+    if (keyframeImuFactors && imu.has(mrpt::obs::IMU_X_ACC) &&
+        params_.imu_normalized_gravity_alignment_sigma > 0)
     {
         mrpt::math::TVector3D acc = {
             imu.get(mrpt::obs::IMU_X_ACC), imu.get(mrpt::obs::IMU_Y_ACC),
@@ -1914,6 +1970,12 @@ void StateEstimationSmoother::fuse_pose(
     const std::string& frame_id)
 {
     imu_bias_add_pose(timestamp, pose.mean, frame_id);
+    if (motion_prior_takes_frame(frame_id))
+    {
+        motionPrior_->fuse_pose(timestamp, pose, frame_id);
+        std::lock_guard<std::mutex> lk(motionPriorMtx_);
+        motionPriorLastCov_ = pose.cov;
+    }
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(timestamp);
@@ -1937,6 +1999,18 @@ void StateEstimationSmoother::fuse_pose_deferred(
         return;
     }
     imu_bias_add_pose(timestamp, mean, frame_id);
+    if (motion_prior_takes_frame(frame_id))
+    {
+        // The simple estimator would wait for the covariance, and the front end
+        // must not: its sigma floors make the last known one good enough.
+        std::lock_guard<std::mutex> lk(motionPriorMtx_);
+        if (cov.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            motionPriorLastCov_ = cov.get();
+        }
+        motionPrior_->fuse_pose(
+            timestamp, mrpt::poses::CPose3DPDFGaussian(mean, motionPriorLastCov_), frame_id);
+    }
     fastPredictor_->note_observation_stamp(timestamp);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
@@ -2188,6 +2262,10 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::math::CMatrixDouble66& twistCov)
 {
     imu_bias_add_twist(timestamp, twist);
+    if (motionPrior_)
+    {
+        motionPrior_->fuse_twist(timestamp, twist, twistCov);
+    }
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(timestamp);
@@ -2259,6 +2337,30 @@ void StateEstimationSmoother::fuse_twist_locked(
 std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, const std::string& frame_id)
 {
+    // The motion prior of the odometry source feeding the embedded estimator
+    // (this graph's own extrapolation until that one can answer):
+    std::shared_ptr<mola::state_estimation_simple::StateEstimationSimple> prior;
+    {
+        std::lock_guard<std::mutex> lk(motionPriorMtx_);
+        if (motionPrior_ && motionPriorFrame_ && *motionPriorFrame_ == frame_id)
+        {
+            prior = motionPrior_;
+        }
+    }
+    if (prior)
+    {
+        if (auto ret = prior->estimated_navstate(timestamp, frame_id); ret.has_value())
+        {
+            if (!params_.async_backend)
+            {
+                // The synchronous graph is solved on queries: keep that cadence.
+                auto lck = mrpt::lockHelper(stateMutex_);
+                process_pending_gtsam_updates_locked();
+            }
+            return ret;
+        }
+    }
+
     // Async mode: served sub-ms by the lock-free fast predictor, without running
     // a solve or taking stateMutex_ (the backend thread may be holding it).
     if (params_.async_backend)
@@ -2563,6 +2665,14 @@ void StateEstimationSmoother::onNewObservation(const CObservation::ConstPtr& o)
     const ProfilerEntry tle(profiler_, "onNewObservation");
 
     ASSERT_(o);
+
+    // The motion prior's estimator takes IMU and wheel odometry readings the
+    // way it would standalone (pose readings reach it through fuse_pose()):
+    if (motionPrior_ && (std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o) ||
+                         std::dynamic_pointer_cast<const mrpt::obs::CObservationOdometry>(o)))
+    {
+        motionPrior_->onNewObservation(o);
+    }
 
     // IMU:
     if (auto obsIMU = std::dynamic_pointer_cast<const mrpt::obs::CObservationIMU>(o); obsIMU)
@@ -4178,7 +4288,18 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         }
 
         gtsam::PreintegratedImuMeasurements pim(g.pimParams, g.lastBias);
-        double                              tc = ti;
+
+        // The sensor-pose correction of the preintegration removes the
+        // centrifugal term of the lever arm, not the tangential one (angular
+        // acceleration x lever arm), which handheld rotations make the larger.
+        gtsam::Vector3 leverS = gtsam::Vector3::Zero();  // in the sensor frame
+        if (ip.compensate_tangential_lever_arm && g.pimParams->body_P_sensor)
+        {
+            const auto& bPs = *g.pimParams->body_P_sensor;
+            leverS          = bPs.rotation().unrotate(bPs.translation());
+        }
+
+        double tc = ti;
         for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
         {
             const auto   next  = std::next(k);
@@ -4190,7 +4311,13 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             }
             if (tNext > tc)
             {
-                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+                gtsam::Vector3 acc = k->acc;
+                if (!leverS.isZero() && next != g.rawImu.end() && next->t > k->t)
+                {
+                    const gtsam::Vector3 alpha = (next->gyr - k->gyr) / (next->t - k->t);
+                    acc -= alpha.cross(leverS);
+                }
+                pim.integrateMeasurement(acc, k->gyr, tNext - tc);
             }
             tc = tNext;
         }

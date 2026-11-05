@@ -179,6 +179,33 @@ params:
   predict_twist_filter_enabled: ${MOLA_NAVSTATE_PREDICT_TWIST_FILTER|true}
   predict_twist_filter_time_const: ${MOLA_NAVSTATE_PREDICT_TWIST_TAU|0.3}
 
+  # Predictions in the frame of an odometry-frame pose source (the motion prior
+  # a LiDAR odometry front end asks for before each registration) come from an
+  # embedded simple estimator fed with the same pose, IMU, wheel odometry and
+  # twist readings; this graph still fuses everything for its own estimate. Its
+  # parameters, and their environment variables, mirror the simple estimator's
+  # configuration of mola_lidar_odometry.
+  motion_prior_from_simple: ${MOLA_SMOOTHER_MOTION_PRIOR_FROM_SIMPLE|true}
+  motion_prior_simple:
+    max_time_to_use_velocity_model: ${MOLA_MAX_TIME_TO_USE_VELOCITY_MODEL|0.75} # [s]
+    sigma_random_walk_acceleration_linear: ${MOLA_NAVSTATE_SIMPLE_SIGMA_RANDOM_WALK_LINACC|1.0} # [m/s²]
+    sigma_random_walk_acceleration_angular: ${MOLA_NAVSTATE_SIMPLE_SIGMA_RANDOM_WALK_ANGACC|10.0} # [rad/s²]
+    sigma_relative_pose_linear: ${MOLA_NAVSTATE_SIGMA_POSITION|0.5} # [m]
+    sigma_relative_pose_angular: ${MOLA_NAVSTATE_SIGMA_ANG|0.1} # [rad]
+    sigma_imu_angular_velocity: ${MOLA_NAVSTATE_SIGMA_IMU_ANG_VEL|0.05} # [rad/s]
+    imu_propagation: ${MOLA_NAVSTATE_IMU_PROPAGATION|false}
+    imu_propagation_max_time: ${MOLA_NAVSTATE_IMU_PROPAGATION_MAX_TIME|2.0} # [s]
+    imu_propagation_sigma_acc: ${MOLA_NAVSTATE_IMU_PROPAGATION_SIGMA_ACC|0.5} # [m/s²]
+    imu_propagation_sigma_bias: ${MOLA_NAVSTATE_IMU_PROPAGATION_SIGMA_BIAS|0.1} # [m/s²/sqrt(s)]
+    sigma_wheel_odom_linear_vel: ${MOLA_NAVSTATE_SIGMA_WHEEL_ODOM_LINVEL|0.1} # [m/s]
+    sigma_wheel_odom_angular_vel: ${MOLA_NAVSTATE_SIGMA_WHEEL_ODOM_ANGVEL|0.05} # [rad/s]
+    velocity_filter_enabled: ${MOLA_NAVSTATE_VELOCITY_FILTER|true}
+    initial_twist: [ "${MOLA_INITIAL_VX|0.0}", 0.0, 0.0, 0.0, 0.0, 0.0 ]
+    initial_twist_sigma_lin: ${MOLA_INITIAL_TWIST_SIGMA_LIN|20.0} # [m/s]
+    initial_twist_sigma_ang: ${MOLA_INITIAL_TWIST_SIGMA_ANG|3.0} # [rad/s]
+    enforce_planar_motion: ${MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION|false}
+    do_process_imu_labels_re: "${MOLA_NAVSTATE_IMU_SENSOR_NAME|.*}"
+
   # Covariance of a prediction in an odometry source's own frame (the motion
   # prior a LiDAR odometry front end receives): from that source's measured
   # one-step prediction errors (running mean, time constant in seconds), not
@@ -322,6 +349,13 @@ params:
   # values over-constrain and can make the window singular. See Parameters.h.
   imu_angular_velocity_sigma: "${MOLA_IMU_ANGULAR_VELOCITY_SIGMA|0.10}"
 
+  # The two per-keyframe IMU factors above (gravity, angular velocity) are left
+  # out while an odometry-frame pose source (e.g. LiDAR odometry) is fused, unless
+  # this is true: its attitude is far more accurate, and a biased gyroscope or the
+  # platform's own acceleration would pull the estimate away from it. IMU attitude
+  # readings and preintegration are not affected.
+  imu_keyframe_factors_with_pose_source: ${MOLA_SMOOTHER_IMU_KEYFRAME_FACTORS_WITH_POSE_SOURCE|false}
+
   # IMU bias tracking: gyroscope and accelerometer biases of each IMU, updated at every
   # standstill (detected from its readings, vetoed by motion hints from the odometry
   # inputs), offered to other modules (mola::ImuBiasSource, e.g. LiDAR odometry deskew).
@@ -355,6 +389,9 @@ params:
     accel_bias_random_walk: ${MOLA_IMU_ACC_BIAS_RW|3e-4}  # [m/s^3/sqrt(Hz)]
     # Constant-velocity linear factors are kept, this much weaker, on every link:
     linear_kinematics_sigma_scale: ${MOLA_SMOOTHER_IMU_PREINT_KIN_SCALE|10.0}
+    # Correct an IMU away from the vehicle origin for angular acceleration x
+    # lever arm, which the preintegration's sensor-pose correction leaves out:
+    compensate_tangential_lever_arm: ${MOLA_SMOOTHER_IMU_PREINT_TANGENTIAL|true}
 
   # --------------------------------------------------------------------------
   # Geo-referencing

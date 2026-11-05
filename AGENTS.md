@@ -78,7 +78,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (36) | `tests/test-*.cpp` |
+| Unit tests (37) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -107,6 +107,9 @@ Sensor inputs:
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
   Before averaging, the accelerometer is corrected by the centripetal term
   gyro x newest estimated velocity (`imu_gravity_compensate_centripetal`).
+  Gravity and angular-velocity factors are skipped while an odometry-frame
+  `fuse_pose()` source exists (`state_.relative_pose_chains` non-empty), unless
+  `imu_keyframe_factors_with_pose_source`.
   Attitude at most once per `imu_attitude_min_sample_period` per sensor label.
   With `imu_attitude_yaw_bias_sigma_deg > 0`, attitude readings share an azimuth
   bias state `B(k)` (double, one per keyframe with attitude,
@@ -124,6 +127,9 @@ Sensor inputs:
   (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
   `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
   The per-keyframe gravity and angular-velocity factors stay on with it.
+  `compensate_tangential_lever_arm` (default on): the accelerometer of an IMU
+  away from the vehicle origin is corrected by angular acceleration (consecutive
+  gyro readings) x lever arm, which GTSAM's sensor-pose correction leaves out.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
   `relative_pose_increment_sigma_*`.
@@ -162,6 +168,13 @@ Other behavior:
   one fused reading per period, so vibration does not alias into the factors.
   `pose_min_sample_period` applies to every `fuse_pose()` source; a dropped
   reading still refreshes that source's own-frame anchor.
+- Motion prior (`motion_prior_from_simple`, default on): an embedded
+  `StateEstimationSimple` (`motionPrior_`, own lock), configured by the
+  `motion_prior_simple` params block, gets the IMU and wheel-odometry
+  observations (`onNewObservation()`) and the `fuse_pose()`,
+  `fuse_pose_deferred()` and `fuse_twist()` calls of the first odometry-frame
+  pose source (`motionPriorFrame_`); `estimated_navstate()` in that frame
+  returns its prediction, before the graph or the async path is consulted.
 - `estimated_navstate(t, {odom_i})` is frame-local: it extrapolates from the
   source's own last raw pose (`State::last_raw_pose_by_source`) by the
   body-twist increment, falling back to the `{map}` conversion before the

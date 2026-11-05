@@ -28,6 +28,14 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-motion-prior-from-simple
+  SOURCES test-motion-prior-from-simple.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+    mola::mola_state_estimation_simple
+)
+
+mola_add_test(
   TARGET  test-static-gnss-imu-orientation
   SOURCES test-static-gnss-imu-orientation.cpp
   LINK_LIBRARIES

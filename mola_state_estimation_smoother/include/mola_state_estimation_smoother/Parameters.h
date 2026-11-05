@@ -343,6 +343,16 @@ class Parameters
      * behind genuine acceleration. */
     double predict_twist_filter_time_const = 0.3;
 
+    /** If true, predictions in the frame of an odometry-frame pose source (the
+     * motion prior a front end such as a LiDAR odometry asks for before each
+     * registration) come from an embedded simple estimator
+     * (mola::state_estimation_simple), fed with the same pose, IMU, wheel
+     * odometry and twist readings, instead of from this graph. Its parameters
+     * are the `motion_prior_simple` block (a simple estimator `params` map).
+     * The graph still fuses everything for its own estimate. Only the first
+     * odometry-frame pose source feeds it. */
+    bool motion_prior_from_simple = true;
+
     /** If true, the covariance of a prediction in an odometry source's own
      * frame (the motion prior a front end such as a LiDAR odometry receives)
      * grows with that source's measured one-step prediction error, instead of
@@ -494,6 +504,14 @@ class Parameters
      */
     double imu_angular_velocity_sigma = 0.10;
 
+    /** If false, the per-keyframe gravity and angular-velocity factors above
+     * are not added while an odometry-frame pose source (fuse_pose() in a
+     * frame other than the reference one, e.g. LiDAR odometry) is fused: its
+     * attitude is far more accurate than they are, and a biased gyroscope or
+     * the platform's own acceleration then pull the estimate away from it. IMU
+     * attitude readings and preintegration are not affected. */
+    bool imu_keyframe_factors_with_pose_source = false;
+
     /** If true, track the gyroscope and accelerometer biases of each IMU
      * (mola::imu::ImuBiasTracker: standstill windows detected from its readings, vetoed by
      * motion hints from the odometry inputs) and offer them to other modules as a
@@ -563,6 +581,12 @@ class Parameters
 
         /// Links shorter than this get no preintegration factor [s].
         double min_link_duration = 2e-3;
+
+        /** If true, the accelerometer of an IMU away from the vehicle origin is
+         * corrected for the tangential acceleration of its lever arm (angular
+         * acceleration x lever arm, from consecutive gyro readings), which the
+         * preintegration's sensor-pose correction leaves out. */
+        bool compensate_tangential_lever_arm = true;
     };
     ImuPreintegration imu_preintegration;
 

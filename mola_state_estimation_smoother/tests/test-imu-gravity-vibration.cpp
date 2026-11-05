@@ -67,6 +67,8 @@ params:
     sigma_integrator_position: 0.1
     sigma_integrator_orientation: 1.0
     imu_angular_velocity_sigma: 0.1
+    # Exercises the per-keyframe IMU factors next to a pose source:
+    imu_keyframe_factors_with_pose_source: true
     estimate_geo_reference: false
     async_backend: false
     imu_normalized_gravity_alignment_sigma: )###" +

@@ -26,6 +26,7 @@
   <depend>mola_kernel</depend>
   <depend>mola_imu_preintegration</depend>
   <depend>mola_gtsam_factors</depend>
+  <depend>mola_state_estimation_simple</depend>
 
   <depend>mrpt_obs</depend>
 

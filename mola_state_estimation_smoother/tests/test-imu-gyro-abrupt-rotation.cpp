@@ -68,6 +68,8 @@ params:
     estimate_geo_reference: false
     async_backend: false
     predict_twist_filter_enabled: false
+    # Exercises the per-keyframe IMU factors next to a pose source:
+    imu_keyframe_factors_with_pose_source: true
     imu_normalized_gravity_alignment_sigma: 0
     imu_angular_velocity_sigma: )###") +
            std::to_string(gyroSigma) + "\n";

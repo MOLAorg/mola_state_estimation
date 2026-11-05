@@ -57,6 +57,8 @@ params:
     sigma_integrator_orientation: 0.5  # Allow quick adaptation
 
     imu_normalized_gravity_alignment_sigma: 0.1
+    # Exercises the per-keyframe IMU factors next to a pose source:
+    imu_keyframe_factors_with_pose_source: true
 
     # Weak link between "map" frame origin and "odom"
     link_first_pose_to_reference_origin_sigma: 0.01
@@ -65,6 +67,8 @@ params:
 
 void run_test()
 {
+    rng.randomize(1);  // deterministic
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     stateEst.initialize(mrpt::containers::yaml::FromText(navStateParams));
 

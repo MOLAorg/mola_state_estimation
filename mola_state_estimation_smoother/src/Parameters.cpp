@@ -52,6 +52,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
+    MCP_LOAD_OPT(cfg, motion_prior_from_simple);
+    MCP_LOAD_OPT(cfg, imu_keyframe_factors_with_pose_source);
     MCP_LOAD_OPT(cfg, predict_covariance_from_residuals);
     MCP_LOAD_OPT(cfg, predict_residual_time_const);
     // Wheel odometry is always fused as relative increments. The key is still
@@ -153,6 +155,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ip.min_sigma_position = c.getOrDefault("min_sigma_position", ip.min_sigma_position);
         ip.min_sigma_velocity = c.getOrDefault("min_sigma_velocity", ip.min_sigma_velocity);
         ip.min_link_duration  = c.getOrDefault("min_link_duration", ip.min_link_duration);
+        ip.compensate_tangential_lever_arm =
+            c.getOrDefault("compensate_tangential_lever_arm", ip.compensate_tangential_lever_arm);
         ASSERT_GT_(ip.gyro_noise_density, 0.0);
         ASSERT_GT_(ip.accel_noise_density, 0.0);
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
