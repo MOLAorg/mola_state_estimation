@@ -35,7 +35,12 @@ ImuPreintegrationMode load(const std::string& block)
 {
     const auto cfg = mrpt::containers::yaml::FromText(
         "vehicle_frame_name: base_link\n"
-        "reference_frame_name: map\n" +
+        "reference_frame_name: map\n"
+        "kinematic_model: KinematicModel::ConstantVelocity\n"
+        "max_time_to_use_velocity_model: 2.0\n"
+        "sliding_window_length: 3.0\n"
+        "relative_pose_increment_sigma_lin: 0.02\n"
+        "relative_pose_increment_sigma_ang: 0.005\n" +
         block);
     Parameters p;
     p.loadFrom(cfg);

@@ -4080,17 +4080,18 @@ void StateEstimationSmoother::add_imu_bias_variable_locked(
     const frame_index_t id, const double stamp_s, const std::optional<frame_index_t>& neighbor)
 {
 #if !GTSAM_USES_BOOST
-    // Once the IMU is seen, seeded with the latest estimate. It continues the
-    // neighbor's chain (through the random walk of their link), or starts a new
-    // one at the prior: the first one, or after a gap.
-    auto& g = *state_.gtsam;
-    if (!imu_link_factors() || g.rawImuLabel.empty())
+    // Seeded with the latest estimate: on every keyframe in full mode, once the
+    // IMU is seen in gyro mode. It continues the neighbor's chain (through the
+    // random walk of their link), or starts a new one at the prior: the first
+    // one, or after a gap.
+    auto&      g    = *state_.gtsam;
+    const bool full = imu_full_mode();
+    if (!imu_link_factors() || (!full && g.rawImuLabel.empty()))
     {
         return;
     }
-    const auto& ip   = params_.imu_preintegration;
-    const bool  full = imu_full_mode();
-    const auto  key  = GtsamImpl::biasKey(full, id);
+    const auto& ip  = params_.imu_preintegration;
+    const auto  key = GtsamImpl::biasKey(full, id);
     if (full)
     {
         g.newValues.insert(key, g.lastBias);

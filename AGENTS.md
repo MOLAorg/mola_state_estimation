@@ -119,8 +119,9 @@ Sensor inputs:
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
 - IMU link factors (`imu_preintegration.mode`: `none` (default), `gyro` (experimental) or `full`;
   one at a time by construction, the deprecated `enabled: true` maps to `full`).
-  Raw readings of one IMU are buffered before decimation; once the IMU is seen,
-  every keyframe gets a bias variable (prior where its neighbor has none) and every
+  Raw readings of one IMU are buffered before decimation; every keyframe gets a
+  bias variable (full mode: from the first one; gyro mode: once the IMU is seen;
+  prior where its neighbor has none) and every
   link its random walk (`add_imu_bias_variable_locked()`,
   `add_imu_bias_random_walk_locked()`); the link's factor is attached once the
   readings cover it (`attach_imu_factors_locked()`). Gyro mode:

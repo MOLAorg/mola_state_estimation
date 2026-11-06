@@ -739,7 +739,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         return params_.imu_preintegration.mode == ImuPreintegrationMode::Full;
     }
 
-    /// IMU link factors: the bias variable of a new keyframe, once the IMU is seen.
+    /// IMU link factors: the bias variable of a new keyframe (gyro mode: once the IMU is seen).
     void add_imu_bias_variable_locked(
         frame_index_t id, double stamp_s, const std::optional<frame_index_t>& neighbor);
 
