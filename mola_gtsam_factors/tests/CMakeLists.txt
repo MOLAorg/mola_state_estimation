@@ -19,3 +19,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_gtsam_factors
 )
+
+mola_add_test(
+  TARGET  test_tricycle_kinematic_factor
+  SOURCES test_tricycle_kinematic_factor.cpp
+  LINK_LIBRARIES
+    mola::mola_gtsam_factors
+)

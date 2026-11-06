@@ -524,9 +524,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     ret.geo_ref.emplace();
 
     // We will always have this T, using IMU or GNSS:
-    ret.geo_ref->T_enu_to_map = {
-        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
-        mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
+    ret.geo_ref->T_enu_to_map = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T0, T0_cov);
 
     // We may not have geodetics reference if using IMU only. Leave lat=lon=h=0
     if (smFrames.refCoord.has_value())
@@ -565,32 +563,37 @@ mp2p_icp::metric_map_t::Georeferencing mola::recenter_georeference(
     mrpt::topography::ENU_axes_from_WGS84(in.geo_coord, e0, /*only_angles=*/false);
     const CPose3DPDFGaussian E0{CPose3D(e0)};
 
-    // Physical placement of the map in ECEF (invariant): map -> ECEF.
-    //   map -> ENU is T_enu_to_map^{-1}; ENU -> ECEF is E0.
+    // Physical placement of the map in ECEF (invariant), as T_enu_to_map maps
+    // map coordinates into ENU ones (p_enu = T_enu_to_map (+) p_map):
+    //   map -> ENU is T_enu_to_map; ENU -> ECEF is E0.
     // Using the Gaussian PDF composition operators propagates the input
     // covariance through this transformation (instead of just its mean).
-    const CPose3DPDFGaussian A = E0 + (-in.T_enu_to_map);
+    const CPose3DPDFGaussian A = E0 + in.T_enu_to_map;
 
-    // The new ENU datum is placed at the map point `t1` (T_enu_to_map maps the
-    // ENU origin to its own translation). Its ECEF position (mean only, `t1` is
-    // a fixed user input with no uncertainty):
-    const mrpt::math::TPoint3D X1 = A.mean.composePoint(t1);
-
-    // New datum in geodetic coordinates (ECEF -> geodetic):
+    // The new datum X1 must see the map origin at ENU coordinates `t1`:
+    //   A.origin = X1 + R_enu1(X1) * t1.
+    // The ENU axes rotate very slowly with X1, so a few fixed-point iterations
+    // converge to machine precision (`t1` is a fixed input, mean only).
+    const mrpt::math::TPoint3D        mapOrigin = A.mean.translation();
+    CPose3D                           E1mean    = E0.mean;
     mrpt::topography::TGeodeticCoords newDatum;
-    mrpt::topography::geocentricToGeodetic(
-        X1, newDatum, mrpt::topography::TEllipsoid::Ellipsoid_WGS84());
+    for (int iter = 0; iter < 4; iter++)
+    {
+        const mrpt::math::TPoint3D X1 = mapOrigin - E1mean.rotateVector(t1);
+        mrpt::topography::geocentricToGeodetic(
+            X1, newDatum, mrpt::topography::TEllipsoid::Ellipsoid_WGS84());
 
-    // ENU frame of the new datum in ECEF (deterministic):
-    mrpt::math::TPose3D e1;
-    mrpt::topography::ENU_axes_from_WGS84(newDatum, e1, /*only_angles=*/false);
-    const CPose3DPDFGaussian E1{CPose3D(e1)};
+        mrpt::math::TPose3D e1;
+        mrpt::topography::ENU_axes_from_WGS84(newDatum, e1, /*only_angles=*/false);
+        E1mean = CPose3D(e1);
+    }
+    const CPose3DPDFGaussian E1{E1mean};
 
     // New T_enu_to_map preserving the exact map<->ECEF placement:
-    //   map -> ECEF = E1 o T1^{-1} = A   =>   T1 = A^{-1} o E1.
+    //   map -> ECEF = E1 o T1 = A   =>   T1 = E1^{-1} o A.
     // By construction its mean translation equals `t1`; its covariance is the
     // propagation of the input T_enu_to_map covariance through this chain.
-    const CPose3DPDFGaussian T1 = (-A) + E1;
+    const CPose3DPDFGaussian T1 = (-E1) + A;
 
     out.geo_coord    = newDatum;
     out.T_enu_to_map = T1;
@@ -997,12 +1000,10 @@ void mola::add_imu_attitude_factors(
 
     auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
 
-    // Roll, pitch, yaw sigmas (approximate correspondence to the Rot3 tangent-space
-    // residual near the optimum). Yaw is independently weighted since IMU-fused yaw
+    // Tilt and azimuth sigmas. Yaw is independently weighted since IMU-fused yaw
     // (often magnetometer-based) is typically much noisier than roll/pitch:
-    auto attitudeNoise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(
-        mrpt::DEG2RAD(params.imuAttitudeSigmaDeg), mrpt::DEG2RAD(params.imuAttitudeSigmaDeg),
-        mrpt::DEG2RAD(params.imuAttitudeYawSigmaDeg)));
+    const double sigmaTilt = mrpt::DEG2RAD(params.imuAttitudeSigmaDeg);
+    const double sigmaYaw  = mrpt::DEG2RAD(params.imuAttitudeYawSigmaDeg);
 
     // If there were no GNSS frames, T(0) still exists in `v` (add_gnss_factors()
     // always inserts it unconditionally), but with no prior tying down its
@@ -1047,6 +1048,14 @@ void mola::add_imu_attitude_factors(
 
         const auto correctedAttitude = mola::factors::imu_apply_enu_azimuth_correction(
             *frame.rawAttitude, params.azimuthOffsetDeg);
+
+        // The residual lives in the frame of the measured sensor attitude, so the
+        // azimuth sigma goes along the {enu} vertical axis, as seen from that frame:
+        const gtsam::Vector3 up = correctedAttitude.unrotate(gtsam::Vector3::UnitZ());
+        const gtsam::Matrix3 cov =
+            mrpt::square(sigmaTilt) * gtsam::I_3x3 +
+            (mrpt::square(sigmaYaw) - mrpt::square(sigmaTilt)) * up * up.transpose();
+        auto attitudeNoise = gtsam::noiseModel::Gaussian::Covariance(cov);
 
         fg.emplace_shared<mola::factors::Pose3RotationFactor>(
             T(0), key, sensorOnVehicle, correctedAttitude, attitudeNoise);

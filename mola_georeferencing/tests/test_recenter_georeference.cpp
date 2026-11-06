@@ -40,9 +40,9 @@ void expect(bool cond, const std::string& msg)
 mrpt::topography::TGeodeticCoords geodetic_of_map_point(
     const mp2p_icp::metric_map_t::Georeferencing& g, const mrpt::math::TPoint3D& p_map)
 {
-    // p_enu = T_enu_to_map^{-1}(p_map), relative to the datum:
+    // p_enu = T_enu_to_map (+) p_map, relative to the datum:
     mrpt::math::TPoint3D p_enu;
-    g.T_enu_to_map.mean.inverseComposePoint(p_map.x, p_map.y, p_map.z, p_enu.x, p_enu.y, p_enu.z);
+    g.T_enu_to_map.mean.composePoint(p_map.x, p_map.y, p_map.z, p_enu.x, p_enu.y, p_enu.z);
 
     // ENU -> geocentric via the datum's ENU frame (ellipsoid-normal Up):
     mrpt::math::TPose3D enuPose;
@@ -125,9 +125,12 @@ void test_recenter_preserves_mapping(const mrpt::math::TPoint3D& target)
         expect_geodetic_near(before[i], after, "probe " + std::to_string(i));
     }
 
-    // (4) the new datum equals the geodetic of the map point at `target`:
+    // (4) the new datum is the geodetic of the map point at the new ENU origin:
+    const auto newEnuOriginInMap =
+        g1.T_enu_to_map.mean.inverseComposePoint(mrpt::math::TPoint3D(0, 0, 0));
     expect_geodetic_near(
-        g1.geo_coord, geodetic_of_map_point(g0, target), "datum == geodetic(target)");
+        g1.geo_coord, geodetic_of_map_point(g0, newEnuOriginInMap),
+        "datum == geodetic(new ENU origin)");
 }
 
 // Placing the ENU origin at the map origin (0,0,0) makes the datum equal to the

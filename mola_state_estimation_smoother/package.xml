@@ -28,6 +28,7 @@
   <depend>mola_gtsam_factors</depend>
 
   <depend>mrpt_obs</depend>
+  <depend version_gte="3.6.2">mrpt_poses</depend> <!-- to_mrpt_se3_pdf() -->
 
   <!-- GTSAM and its Boost deps -->
   <depend>gtsam</depend>
