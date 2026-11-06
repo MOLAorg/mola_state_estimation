@@ -2135,7 +2135,7 @@ void StateEstimationSmoother::fuse_pose_locked(
                     mrpt::square(params_.relative_pose_increment_sigma_per_sqrt_rad) * dA;
 
                 // Isotropic in the GTSAM tangent (rx,ry,rz,tx,ty,tz) of the increment:
-                const gtsam::Pose3 incr_out = mrpt::gtsam_wrappers::toPose3(increment);
+                const gtsam::Pose3 incr_out    = mrpt::gtsam_wrappers::toPose3(increment);
                 gtsam::Matrix6     incrCov_out = gtsam::Matrix6::Zero();
                 for (int i = 0; i < 3; i++)
                 {
