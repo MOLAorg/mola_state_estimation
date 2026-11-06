@@ -144,6 +144,24 @@ constexpr double PLANAR_XY_SIGMA                = 1e10;
 constexpr double PLANAR_Z_SIGMA                 = 1e-4;
 constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 
+// Appended to a wheel odometry's label when a pose source uses a frame of that name.
+constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
+
+// A frame name for a wheel odometry labeled `label` that no frame uses yet:
+// "<label>_wheels", or with a counter after it if that is taken too.
+template <class FRAMES_MAP>
+std::string unused_wheels_frame_name(
+    const FRAMES_MAP& frames, const std::string& label, const std::string& referenceFrame)
+{
+    const std::string base = label + WHEELS_ODOMETRY_FRAME_SUFFIX;
+    std::string       name = base;
+    for (int i = 2; frames.hasKey(name) || name == referenceFrame; i++)
+    {
+        name = base + std::to_string(i);
+    }
+    return name;
+}
+
 /// Huber threshold [whitened units] for raw gyro observations; the standard
 /// value giving ~95% efficiency under Gaussian noise.
 constexpr double GYRO_HUBER_K = 1.345;
@@ -1256,7 +1274,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName,
     const mrpt::poses::CPose3DPDFGaussian& absolutePoseInOdom)
 {
-    const auto frame_id_idx = add_or_get_odom_frame_id(odomName);
+    const auto frame_id_idx = add_or_get_odom_frame_id(wheels_odometry_frame_locked(odomName));
     const auto this_kf_id   = create_or_get_keyframe_by_timestamp_locked(odom.timestamp);
 
     // Unconditional, and independent of which factor is added below: this is the
@@ -1970,6 +1988,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     const std::string& frame_id)
 {
     // get this numerical frame_id :
+    move_wheels_odometry_frame_aside_locked(frame_id);
     const auto frame_id_idx = add_or_get_odom_frame_id(frame_id);
 
     // numerical sanity: replace zero-variance entries (common in
@@ -3116,6 +3135,57 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     return newId;
 }
 
+// Two sources must never share an odometry frame: each one has its own origin
+// and drift, and the frame also holds the source's last raw pose and its
+// prediction errors. A pose source keeps the name it asked for, since that is
+// also the frame the front end asks its predictions in; a wheel odometry
+// labeled the same goes to a frame of its own.
+std::string StateEstimationSmoother::wheels_odometry_frame_locked(const std::string& odomName)
+{
+    if (!state_.wheels_odometry_frame)
+    {
+        std::string name = odomName;
+        if (name != params_.reference_frame_name && state_.known_odom_frames.hasKey(name))
+        {
+            name = unused_wheels_frame_name(
+                state_.known_odom_frames, odomName, params_.reference_frame_name);
+            MRPT_LOG_WARN_FMT(
+                "Wheel odometry '%s' shares its name with the frame of another pose source: it "
+                "is fused in a frame of its own, '%s'.",
+                odomName.c_str(), name.c_str());
+        }
+        state_.wheels_odometry_frame = name;
+    }
+    return *state_.wheels_odometry_frame;
+}
+
+void StateEstimationSmoother::move_wheels_odometry_frame_aside_locked(const std::string& frame_id)
+{
+    if (!state_.wheels_odometry_frame || *state_.wheels_odometry_frame != frame_id ||
+        frame_id == params_.reference_frame_name)
+    {
+        return;
+    }
+    const auto it = state_.known_odom_frames.find_key(frame_id);
+    if (it == state_.known_odom_frames.getDirectMap().end())
+    {
+        return;
+    }
+    // Factors refer to the numeric id, so renaming the entry moves the wheel
+    // odometry with all its history, and frees the name for the pose source.
+    // The new name is free before anything changes, so the insert cannot fail.
+    const auto        id = it->second;
+    const std::string newName =
+        unused_wheels_frame_name(state_.known_odom_frames, frame_id, params_.reference_frame_name);
+    state_.known_odom_frames.erase_by_key(frame_id);
+    state_.known_odom_frames.insert(newName, id);
+    state_.wheels_odometry_frame = newName;
+    MRPT_LOG_WARN_FMT(
+        "Pose source in frame '%s' shares that name with the wheel odometry: the latter "
+        "is moved to a frame of its own, '%s'.",
+        frame_id.c_str(), newName.c_str());
+}
+
 void StateEstimationSmoother::mark_map_observed_locked()
 {
     auto& g = *state_.gtsam;
@@ -3635,10 +3705,10 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 tailKf         = it->second.last_kf;
                 tailPoseInOdom = it->second.last_pose_in_odom->mean;
             }
-            else if (state_.last_wheels_odometry_name && state_.last_wheels_odometry_at_kf)
+            else if (state_.wheels_odometry_frame && state_.last_wheels_odometry_at_kf)
             {
                 const auto itName =
-                    state_.known_odom_frames.find_key(*state_.last_wheels_odometry_name);
+                    state_.known_odom_frames.find_key(*state_.wheels_odometry_frame);
                 if (itName != state_.known_odom_frames.getDirectMap().end() &&
                     itName->second == idx)
                 {
