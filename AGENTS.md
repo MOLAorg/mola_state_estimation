@@ -179,7 +179,8 @@ Other behavior:
   running mean (`predict_residual_time_const`) of that source's squared
   one-step prediction errors (`State::prediction_residuals`, copied into the
   `Snapshot`), no random-walk term on top; the graph's twist marginal until 10
-  errors are in.
+  errors are in, whose per-axis median seeds the mean (a start-up transient
+  must not set it: `test-prediction-residual-seed`).
 - Linear kinematics (`sigma_random_walk_acceleration_linear` 5 m/s²,
   `sigma_integrator_position` 1 m, YAML and C++): a prior on accelerations,
   centripetal included. An accurate odometry-frame pose source must come out
