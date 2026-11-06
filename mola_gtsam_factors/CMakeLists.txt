@@ -54,6 +54,7 @@ mola_add_library(
     include/mola_gtsam_factors/imu_helpers.h
     include/mola_gtsam_factors/MapGravityFactor.h
     include/mola_gtsam_factors/MeasuredGravityFactor.h
+    include/mola_gtsam_factors/mrpt_gtsam_compat.h
     include/mola_gtsam_factors/Pose3RotationFactor.h
     include/mola_gtsam_factors/Pose3RotationYawBiasFactor.h
     src/FactorAngularVelocityIntegration.cpp

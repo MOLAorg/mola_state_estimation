@@ -35,6 +35,7 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_gtsam_factors/imu_helpers.h>
+#include <mola_gtsam_factors/mrpt_gtsam_compat.h>
 
 #if GTSAM_USES_BOOST
 #include <boost/pointer_cast.hpp>
@@ -524,7 +525,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     ret.geo_ref.emplace();
 
     // We will always have this T, using IMU or GNSS:
-    ret.geo_ref->T_enu_to_map = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T0, T0_cov);
+    ret.geo_ref->T_enu_to_map = mola::gtsam_compat::to_mrpt_se3_pdf(T0, T0_cov);
 
     // We may not have geodetics reference if using IMU only. Leave lat=lon=h=0
     if (smFrames.refCoord.has_value())

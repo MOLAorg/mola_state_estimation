@@ -23,7 +23,7 @@
   <depend>mola_yaml</depend>
   <depend>mp2p_icp</depend>
   <depend>mrpt_maps</depend>
-  <depend version_gte="3.6.2">mrpt_poses</depend> <!-- to_mrpt_se3_pdf() -->
+  <depend>mrpt_poses</depend>
 
   <doc_depend>doxygen</doc_depend>
 

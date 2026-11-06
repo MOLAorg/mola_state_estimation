@@ -63,6 +63,7 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
+#include <mola_gtsam_factors/mrpt_gtsam_compat.h>
 
 #include <deque>
 #include <regex>
@@ -668,7 +669,7 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
             T_enu_to_map.cov(i, i) = std::max(T_enu_to_map.cov(i, i), 1e-6);
         }
 
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(T_enu_to_map, enu2map, enu2map_cov);
+        mola::gtsam_compat::to_gtsam_se3_cov6(T_enu_to_map, enu2map, enu2map_cov);
 
         // Update into last_estimated_frames too, so estimated_T_enu_to_map() returns it:
         state_.last_estimated_frames[REFERENCE_FRAME_ID] = state_.geo_reference->T_enu_to_map;
@@ -1268,7 +1269,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
     {
         gtsam::Pose3   pose_out;
         gtsam::Matrix6 cov_out;
-        mrpt::gtsam_wrappers::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
+        mola::gtsam_compat::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
 
         seed_odom_frame_locked(frame_id_idx, this_kf_id, absolutePoseInOdom.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -1325,7 +1326,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 
     gtsam::Pose3   incr_out;
     gtsam::Matrix6 incrCov_out;
-    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
+    mola::gtsam_compat::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
 
     state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
         T(*prev), T(this_kf_id), incr_out, gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
@@ -2040,7 +2041,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     // Add factor:
     gtsam::Pose3   pose_out;
     gtsam::Matrix6 cov_out;
-    mrpt::gtsam_wrappers::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
+    mola::gtsam_compat::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
 
     // reference frame ("map") or "odom_i"?
     if (frame_id_idx == REFERENCE_FRAME_ID)
@@ -3523,7 +3524,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
         auto& pdf = state_.last_estimated_frames[REFERENCE_FRAME_ID];
 
-        pdf = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T_enu_to_map, T_enu_to_map_cov);
+        pdf = mola::gtsam_compat::to_mrpt_se3_pdf(T_enu_to_map, T_enu_to_map_cov);
 
         // Convert info matrix to covariance
         if (!state_.stamp2frame_index.empty())
@@ -3534,7 +3535,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             const auto poseCov =
                 gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(latestFrameIdx)));
             const mrpt::math::CMatrixDouble66 cov =
-                mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+                mola::gtsam_compat::to_mrpt_se3_pdf(
                     optValues.at<gtsam::Pose3>(T(latestFrameIdx)), poseCov)
                     .cov;
 
@@ -3665,7 +3666,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
             const auto live = liveRelativeFrame(odomFrameIdx);
-            pdf = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T_map2_odom_i, T_map2_odom_i_cov);
+            pdf             = mola::gtsam_compat::to_mrpt_se3_pdf(T_map2_odom_i, T_map2_odom_i_cov);
             if (live)
             {
                 pdf.mean = *live;
@@ -4352,7 +4353,7 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
             static_cast<unsigned>(idx), poseCov.determinant());
     }
     ns.pose.cov_inv =
-        mrpt::gtsam_wrappers::to_mrpt_se3_pdf(mrpt::gtsam_wrappers::toPose3(frame.pose), poseCov)
+        mola::gtsam_compat::to_mrpt_se3_pdf(mrpt::gtsam_wrappers::toPose3(frame.pose), poseCov)
             .cov.inverse_LLt();
 
     // Twist:
