@@ -93,6 +93,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 // arguments: class_name, parent_class, class namespace
 IMPLEMENTS_MRPT_OBJECT(
@@ -4404,18 +4405,48 @@ void StateEstimationSmoother::update_prediction_residuals_locked(
 
     const std::array<double, 6> r = {err.x(), err.y(), err.z(), rot[0], rot[1], rot[2]};
 
-    auto&        s     = state_.prediction_residuals[src];
-    const double tau   = std::max(1e-3, params_.predict_residual_time_const);
-    const double alpha = s.count == 0 ? 1.0 : 1.0 - std::exp(-dt / tau);
+    std::array<double, 6> q{};
     for (size_t i = 0; i < r.size(); i++)
     {
-        double q = mrpt::square(r[i] / dt);
-        // One gross error (a failed registration) must not dominate the mean:
-        if (s.count >= MIN_PREDICTION_RESIDUALS)
+        q[i] = mrpt::square(r[i] / dt);
+    }
+
+    auto& s = state_.prediction_residuals[src];
+
+    // Warm-up, while these errors are not used yet: seed the running mean with
+    // their per-axis median, so a start-up transient (e.g. a source that is
+    // already moving when the estimator assumes rest) cannot set it.
+    if (s.count < MIN_PREDICTION_RESIDUALS)
+    {
+        s.warmup.push_back(q);
+        s.count++;
+        if (s.count == MIN_PREDICTION_RESIDUALS)
         {
-            q = std::min(q, 25.0 * std::max(s.varRate[i], MIN_PREDICTION_VAR_RATE));
+            for (size_t i = 0; i < q.size(); i++)
+            {
+                std::vector<double> v;
+                v.reserve(s.warmup.size());
+                for (const auto& w : s.warmup)
+                {
+                    v.push_back(w[i]);
+                }
+                const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
+                std::nth_element(v.begin(), mid, v.end());
+                s.varRate[i] = *mid;
+            }
+            s.warmup.clear();
+            s.warmup.shrink_to_fit();
         }
-        s.varRate[i] += alpha * (q - s.varRate[i]);
+        return;
+    }
+
+    const double tau   = std::max(1e-3, params_.predict_residual_time_const);
+    const double alpha = 1.0 - std::exp(-dt / tau);
+    for (size_t i = 0; i < q.size(); i++)
+    {
+        // One gross error (a failed registration) must not dominate the mean:
+        const double qi = std::min(q[i], 25.0 * std::max(s.varRate[i], MIN_PREDICTION_VAR_RATE));
+        s.varRate[i] += alpha * (qi - s.varRate[i]);
     }
     s.count++;
 }

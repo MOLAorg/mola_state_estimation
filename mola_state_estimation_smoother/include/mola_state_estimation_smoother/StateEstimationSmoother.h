@@ -69,6 +69,7 @@
 #include <set>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace mola::state_estimation_smoother
 {
@@ -390,6 +391,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         {
             std::array<double, 6> varRate{};
             size_t                count = 0;
+            /// The first errors, whose per-axis median seeds varRate.
+            std::vector<std::array<double, 6>> warmup;
         };
         std::map<odometry_frameid_t, PredictionResiduals> prediction_residuals;
 
