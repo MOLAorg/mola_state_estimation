@@ -1000,12 +1000,10 @@ void mola::add_imu_attitude_factors(
 
     auto noisePoses = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2);
 
-    // Roll, pitch, yaw sigmas (approximate correspondence to the Rot3 tangent-space
-    // residual near the optimum). Yaw is independently weighted since IMU-fused yaw
+    // Tilt and azimuth sigmas. Yaw is independently weighted since IMU-fused yaw
     // (often magnetometer-based) is typically much noisier than roll/pitch:
-    auto attitudeNoise = gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(
-        mrpt::DEG2RAD(params.imuAttitudeSigmaDeg), mrpt::DEG2RAD(params.imuAttitudeSigmaDeg),
-        mrpt::DEG2RAD(params.imuAttitudeYawSigmaDeg)));
+    const double sigmaTilt = mrpt::DEG2RAD(params.imuAttitudeSigmaDeg);
+    const double sigmaYaw  = mrpt::DEG2RAD(params.imuAttitudeYawSigmaDeg);
 
     // If there were no GNSS frames, T(0) still exists in `v` (add_gnss_factors()
     // always inserts it unconditionally), but with no prior tying down its
@@ -1050,6 +1048,14 @@ void mola::add_imu_attitude_factors(
 
         const auto correctedAttitude = mola::factors::imu_apply_enu_azimuth_correction(
             *frame.rawAttitude, params.azimuthOffsetDeg);
+
+        // The residual lives in the frame of the measured sensor attitude, so the
+        // azimuth sigma goes along the {enu} vertical axis, as seen from that frame:
+        const gtsam::Vector3 up = correctedAttitude.unrotate(gtsam::Vector3::UnitZ());
+        const gtsam::Matrix3 cov =
+            mrpt::square(sigmaTilt) * gtsam::I_3x3 +
+            (mrpt::square(sigmaYaw) - mrpt::square(sigmaTilt)) * up * up.transpose();
+        auto attitudeNoise = gtsam::noiseModel::Gaussian::Covariance(cov);
 
         fg.emplace_shared<mola::factors::Pose3RotationFactor>(
             T(0), key, sensorOnVehicle, correctedAttitude, attitudeNoise);
