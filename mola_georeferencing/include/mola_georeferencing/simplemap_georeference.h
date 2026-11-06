@@ -127,9 +127,9 @@ SMGeoReferencingOutput simplemap_georeference(
  *  `T_enu_to_map` is only approximately preserved (exactly so for small datum
  *  shifts); the 6D covariance is propagated accordingly, not just copied.
  *
- *  The ENU frame origin (datum) ends up placed at the map point located at
- *  \a desiredEnuToMapTranslation (since `T_enu_to_map` maps ENU (0,0,0) to its
- *  own translation).
+ *  `T_enu_to_map` maps map coordinates into ENU ones, so the map origin ends up
+ *  at the ENU coordinates \a desiredEnuToMapTranslation of the new datum (for
+ *  {0,0,0}, the datum is the map origin).
  *
  *  This is useful to force the ENU origin to a chosen map location (e.g. the map
  *  origin, passing {0,0,0}) instead of the arbitrary first-GNSS position, which
