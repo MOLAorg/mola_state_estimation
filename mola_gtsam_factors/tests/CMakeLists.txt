@@ -26,3 +26,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_gtsam_factors
 )
+
+mola_add_test(
+  TARGET  test_mrpt_gtsam_compat
+  SOURCES test_mrpt_gtsam_compat.cpp
+  LINK_LIBRARIES
+    mola::mola_gtsam_factors
+)
