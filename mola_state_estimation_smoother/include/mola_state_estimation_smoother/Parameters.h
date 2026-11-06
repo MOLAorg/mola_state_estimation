@@ -235,6 +235,17 @@ class Parameters
     double odom_motion_model_min_std_phi_deg = 0.1;  // [deg] -- see effective-floor note above
     /** @} */
 
+    /** Extra uncertainty of a planar (2D) wheel-odometry increment in the
+     *  degrees of freedom it does not measure: z, and pitch and roll. Added on
+     *  top of the 0.01 m / 0.01 rad floor above. The default 0 asserts planar
+     *  motion in the vehicle frame (no height, pitch or roll change between
+     *  readings), right for a wheeled robot on even ground; raise both for
+     *  uneven terrain, or for a platform that pitches and rolls as it moves.
+     *  @{ */
+    double odom_out_of_plane_std_z          = 0;  // [m]
+    double odom_out_of_plane_std_roll_pitch = 0;  // [rad]
+    /** @} */
+
     /** High-rate same-sensor decimation for fuse_pose() sources. If > 0,
      * readings of a given frame_id arriving less than this many seconds after
      * the last *kept* one of that same frame_id are dropped before they reach

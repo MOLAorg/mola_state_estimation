@@ -144,6 +144,12 @@ params:
   odom_motion_model_min_std_xy: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_XY|1e-3} # [m], see effective-floor note above
   odom_motion_model_min_std_phi_deg: ${MOLA_ODOM_MOTION_MODEL_MIN_STD_PHI_DEG|0.1} # [deg], see effective-floor note above
 
+  # Extra uncertainty of a planar wheel-odometry increment in what it does not
+  # measure (z; pitch and roll), on top of that floor. 0 asserts planar motion
+  # in the vehicle frame: right on even ground, raise both on uneven terrain.
+  odom_out_of_plane_std_z: ${MOLA_ODOM_OUT_OF_PLANE_STD_Z|0} # [m]
+  odom_out_of_plane_std_roll_pitch: ${MOLA_ODOM_OUT_OF_PLANE_STD_ROLL_PITCH|0} # [rad]
+
   # High-rate same-sensor decimation for IMU [seconds]. If > 0, readings are
   # averaged over periods of this length and one average per period is fused,
   # so vibration faster than that does not alias into the factors. 0 = fuse
