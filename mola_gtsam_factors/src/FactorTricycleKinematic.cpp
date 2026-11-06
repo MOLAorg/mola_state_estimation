@@ -112,10 +112,11 @@ gtsam::Vector FactorTricycleKinematic::evaluateError(
         const double dy = R * (1.0 - c);
         delta_pose      = gtsam::Pose3(gtsam::Rot3::Rz(theta), gtsam::Point3(dx, dy, 0.0));
 
-        // Analytical derivatives in delta_pose's local tangent space
-        J_v << 0, 0, 0, s / w, (1.0 - c) / w, 0;
+        // Analytical derivatives in delta_pose's local tangent space (right
+        // perturbations), so the translation part is d(dx,dy) rotated by Rz(theta)^T:
+        J_v << 0, 0, 0, s / w, (c - 1.0) / w, 0;
 
-        J_w << 0, 0, dt_, v * (theta * c - s) / (w * w), v * (theta * s + c - 1) / (w * w), 0;
+        J_w << 0, 0, dt_, v * (theta - s) / (w * w), v * (1.0 - c) / (w * w), 0;
     }
 
     // 1. Prediction: T_pred = Ti * delta_pose
