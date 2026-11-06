@@ -303,6 +303,11 @@ mrpt::poses::CPose3DPDFGaussian odometry_increment_pdf(
     incrementPdf.copyFrom(*odoAct.poseChange);
     // Ensure as minimal uncertainty in all 3D DOFs to prevent numerical issues:
     incrementPdf.cov.asEigen().diagonal().array() += 1e-4;
+    // ...plus the configured one in those a planar odometry does not measure
+    // (MRPT order: x y z yaw pitch roll):
+    incrementPdf.cov(2, 2) += mrpt::square(p.odom_out_of_plane_std_z);
+    incrementPdf.cov(4, 4) += mrpt::square(p.odom_out_of_plane_std_roll_pitch);
+    incrementPdf.cov(5, 5) += mrpt::square(p.odom_out_of_plane_std_roll_pitch);
     return incrementPdf;
 }
 

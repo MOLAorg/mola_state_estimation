@@ -105,6 +105,10 @@ Sensor inputs:
   `1e-4` variance floor). Its frame is named after its label, or
   `<label>_wheels` if a `fuse_pose()` source uses that name, in either arrival
   order: two sources never share a frame (`test-wheel-odometry-frame-collision`).
+  Out of plane (z, pitch, roll) it asserts planar motion in the vehicle frame
+  unless `odom_out_of_plane_std_z/_roll_pitch` add uncertainty there (default
+  0; raise on uneven terrain or for legged/handheld carriers:
+  `test-planar-odometry-out-of-plane`).
 - `fuse_imu()`: attitude, gravity (`MeasuredGravityFactor`) and a Huber-robust
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
   Before averaging, the accelerometer is corrected by the centripetal term
