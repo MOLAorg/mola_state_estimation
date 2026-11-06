@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <string>
 
 namespace
 {
@@ -89,7 +90,9 @@ void fuse_wheels(StateEstimationSmoother& est, const double t)
     est.fuse_odometry(o, FRAME);
 }
 
-void test_frames_kept_apart(const bool wheelsFirst)
+// With `suffixTaken`, another pose source already uses the name the wheel
+// odometry would move to, so it must pick yet another one.
+void test_frames_kept_apart(const bool wheelsFirst, const bool suffixTaken)
 {
     StateEstimationSmoother est;
     {
@@ -103,6 +106,12 @@ void test_frames_kept_apart(const bool wheelsFirst)
             mrpt::Clock::fromDouble(0),
             mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D::Identity(), cov),
             est.parameters().reference_frame_name);
+    }
+    if (suffixTaken)
+    {
+        mrpt::poses::CPose3DPDFGaussian p;
+        p.cov.setDiagonal(mrpt::square(0.02));
+        est.fuse_pose(mrpt::Clock::fromDouble(0), p, std::string(FRAME) + "_wheels");
     }
 
     // As a front end does: ask for the prediction in its frame before fusing.
@@ -150,8 +159,9 @@ void test_frames_kept_apart(const bool wheelsFirst)
 
     if (VERBOSE)
     {
-        std::cout << "[wheels first=" << wheelsFirst << "] prediction in '" << FRAME
-                  << "': " << st->pose.mean << " expected: " << expected << " frames:";
+        std::cout << "[wheels first=" << wheelsFirst << " suffix taken=" << suffixTaken
+                  << "] prediction in '" << FRAME << "': " << st->pose.mean
+                  << " expected: " << expected << " frames:";
         for (const auto& f : frames)
         {
             std::cout << " " << f;
@@ -165,8 +175,9 @@ void test_frames_kept_apart(const bool wheelsFirst)
     ASSERT_LT_(errPitch, mrpt::DEG2RAD(1.0));
 
     // ...which still has a frame of its own:
-    ASSERT_EQUAL_(frames.size(), 2U);
+    ASSERT_EQUAL_(frames.size(), suffixTaken ? 3U : 2U);
     ASSERT_(frames.count(FRAME) == 1);
+    ASSERT_(frames.count(std::string(FRAME) + (suffixTaken ? "_wheels2" : "_wheels")) == 1);
 }
 
 }  // namespace
@@ -175,8 +186,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
     {
-        test_frames_kept_apart(false);
-        test_frames_kept_apart(true);
+        for (const bool wheelsFirst : {false, true})
+        {
+            for (const bool suffixTaken : {false, true})
+            {
+                test_frames_kept_apart(wheelsFirst, suffixTaken);
+            }
+        }
         std::cout << "Test successful." << std::endl;
         return 0;
     }

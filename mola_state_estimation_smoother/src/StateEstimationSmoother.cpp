@@ -147,6 +147,21 @@ constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
 
+// A frame name for a wheel odometry labeled `label` that no frame uses yet:
+// "<label>_wheels", or with a counter after it if that is taken too.
+template <class FRAMES_MAP>
+std::string unused_wheels_frame_name(
+    const FRAMES_MAP& frames, const std::string& label, const std::string& referenceFrame)
+{
+    const std::string base = label + WHEELS_ODOMETRY_FRAME_SUFFIX;
+    std::string       name = base;
+    for (int i = 2; frames.hasKey(name) || name == referenceFrame; i++)
+    {
+        name = base + std::to_string(i);
+    }
+    return name;
+}
+
 /// Huber threshold [whitened units] for raw gyro observations; the standard
 /// value giving ~95% efficiency under Gaussian noise.
 constexpr double GYRO_HUBER_K = 1.345;
@@ -3132,7 +3147,8 @@ std::string StateEstimationSmoother::wheels_odometry_frame_locked(const std::str
         std::string name = odomName;
         if (name != params_.reference_frame_name && state_.known_odom_frames.hasKey(name))
         {
-            name += WHEELS_ODOMETRY_FRAME_SUFFIX;
+            name = unused_wheels_frame_name(
+                state_.known_odom_frames, odomName, params_.reference_frame_name);
             MRPT_LOG_WARN_FMT(
                 "Wheel odometry '%s' shares its name with the frame of another pose source: it "
                 "is fused in a frame of its own, '%s'.",
@@ -3157,8 +3173,10 @@ void StateEstimationSmoother::move_wheels_odometry_frame_aside_locked(const std:
     }
     // Factors refer to the numeric id, so renaming the entry moves the wheel
     // odometry with all its history, and frees the name for the pose source.
-    const auto        id      = it->second;
-    const std::string newName = frame_id + WHEELS_ODOMETRY_FRAME_SUFFIX;
+    // The new name is free before anything changes, so the insert cannot fail.
+    const auto        id = it->second;
+    const std::string newName =
+        unused_wheels_frame_name(state_.known_odom_frames, frame_id, params_.reference_frame_name);
     state_.known_odom_frames.erase_by_key(frame_id);
     state_.known_odom_frames.insert(newName, id);
     state_.wheels_odometry_frame = newName;
