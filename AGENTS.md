@@ -102,7 +102,9 @@ Sensor inputs:
   `{odom_i}`, always fused as relative increments (see below).
 - `fuse_odometry()`: wheel odometry, always fused as relative increments with
   a motion-model covariance (`odom_motion_model_a1..a4`, `_min_std_*`, plus a
-  `1e-4` variance floor).
+  `1e-4` variance floor). Its frame is named after its label, or
+  `<label>_wheels` if a `fuse_pose()` source uses that name, in either arrival
+  order: two sources never share a frame (`test-wheel-odometry-frame-collision`).
 - `fuse_imu()`: attitude, gravity (`MeasuredGravityFactor`) and a Huber-robust
   angular-velocity prior on `W(k)` (`imu_angular_velocity_sigma`, 0 disables).
   Before averaging, the accelerometer is corrected by the centripetal term

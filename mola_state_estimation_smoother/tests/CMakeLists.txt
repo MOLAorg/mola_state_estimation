@@ -189,6 +189,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-wheel-odometry-frame-collision
+  SOURCES test-wheel-odometry-frame-collision.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-imu-gyro-abrupt-rotation
   SOURCES test-imu-gyro-abrupt-rotation.cpp
   LINK_LIBRARIES

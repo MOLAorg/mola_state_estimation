@@ -439,6 +439,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::optional<mrpt::poses::CPose2D> last_wheels_odometry;
         std::optional<std::string>          last_wheels_odometry_name;
 
+        /// Odometry frame the wheel odometry is registered under: its label,
+        /// unless a pose source uses a frame of that same name.
+        std::optional<std::string> wheels_odometry_frame;
+
         /// Stamp of the last wheel-odometry reading that was actually KEPT
         /// (turned into a keyframe/factor). Used by odometry_min_sample_period
         /// to merge higher-rate readings: while a reading arrives within that
@@ -627,6 +631,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Creates or returns the existing ID, for an odometry frame_id:
     [[nodiscard]] odometry_frameid_t add_or_get_odom_frame_id(const std::string& frame_id_name);
+
+    /// Name of the odometry frame for the wheel odometry labeled `odomName`.
+    [[nodiscard]] std::string wheels_odometry_frame_locked(const std::string& odomName);
+
+    /// Moves the wheel odometry out of the frame `frame_id`, if it uses it.
+    void move_wheels_odometry_frame_aside_locked(const std::string& frame_id);
 
     /// While T_map_to_odom_i is still pending insertion into the smoother, sets
     /// its initial value consistent with a reading `poseInOdom` of keyframe `kf`.
