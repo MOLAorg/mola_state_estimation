@@ -524,9 +524,7 @@ mola::SMGeoReferencingOutput mola::simplemap_georeference(
     ret.geo_ref.emplace();
 
     // We will always have this T, using IMU or GNSS:
-    ret.geo_ref->T_enu_to_map = {
-        mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T0)),
-        mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T0_cov)};
+    ret.geo_ref->T_enu_to_map = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T0, T0_cov);
 
     // We may not have geodetics reference if using IMU only. Leave lat=lon=h=0
     if (smFrames.refCoord.has_value())

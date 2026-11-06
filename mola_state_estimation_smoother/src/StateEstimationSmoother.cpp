@@ -2110,8 +2110,8 @@ void StateEstimationSmoother::fuse_pose_locked(
             }
             else
             {
-                mrpt::poses::CPose3DPDFGaussian increment;
-                increment.mean = poseSanitized.mean - chain.last_pose_in_odom->mean;
+                const mrpt::poses::CPose3D increment =
+                    poseSanitized.mean - chain.last_pose_in_odom->mean;
 
                 // A drifting source publishes the covariance of its absolute
                 // dead-reckoned pose, which says nothing about one increment,
@@ -2123,9 +2123,9 @@ void StateEstimationSmoother::fuse_pose_locked(
                 // path is split into increments, i.e. whatever the keyframe
                 // rate or pose_min_sample_period. The flat value is the floor
                 // asserted while standing still.
-                const double dL = increment.mean.translation().norm();
+                const double dL = increment.translation().norm();
                 const double dA =
-                    mrpt::poses::Lie::SO<3>::log(increment.mean.getRotationMatrix()).norm();
+                    mrpt::poses::Lie::SO<3>::log(increment.getRotationMatrix()).norm();
 
                 const double varLin =
                     mrpt::square(params_.relative_pose_increment_sigma_lin) +
@@ -2133,16 +2133,15 @@ void StateEstimationSmoother::fuse_pose_locked(
                 const double varAng =
                     mrpt::square(params_.relative_pose_increment_sigma_ang) +
                     mrpt::square(params_.relative_pose_increment_sigma_per_sqrt_rad) * dA;
-                increment.cov.setZero();
+
+                // Isotropic in the GTSAM tangent (rx,ry,rz,tx,ty,tz) of the increment:
+                const gtsam::Pose3 incr_out = mrpt::gtsam_wrappers::toPose3(increment);
+                gtsam::Matrix6     incrCov_out = gtsam::Matrix6::Zero();
                 for (int i = 0; i < 3; i++)
                 {
-                    increment.cov(i, i)         = varLin;
-                    increment.cov(i + 3, i + 3) = varAng;
+                    incrCov_out(i, i)         = varAng;
+                    incrCov_out(i + 3, i + 3) = varLin;
                 }
-
-                gtsam::Pose3   incr_out;
-                gtsam::Matrix6 incrCov_out;
-                mrpt::gtsam_wrappers::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
                 if (params_.relative_pose_increment_from_source_covariance)
                 {
                     // The covariance of the reading, in the right tangent of the
@@ -3524,8 +3523,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
         auto& pdf = state_.last_estimated_frames[REFERENCE_FRAME_ID];
 
-        pdf.mean = mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_enu_to_map));
-        pdf.cov  = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_enu_to_map_cov);
+        pdf = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T_enu_to_map, T_enu_to_map_cov);
 
         // Convert info matrix to covariance
         if (!state_.stamp2frame_index.empty())
@@ -3535,7 +3533,10 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 
             const auto poseCov =
                 gtsam::Matrix6(state_.gtsam->smoother->marginalCovariance(T(latestFrameIdx)));
-            mrpt::math::CMatrixDouble66 cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov);
+            const mrpt::math::CMatrixDouble66 cov =
+                mrpt::gtsam_wrappers::to_mrpt_se3_pdf(
+                    optValues.at<gtsam::Pose3>(T(latestFrameIdx)), poseCov)
+                    .cov;
 
             // Check MAP->BASE_LINK position uncertainty (diagonal elements 0,1,2 are x,y,z)
             const double pos_sigma_x   = std::sqrt(cov(0, 0));
@@ -3664,9 +3665,11 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
             const auto live = liveRelativeFrame(odomFrameIdx);
-            pdf.mean =
-                live ? *live : mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
-            pdf.cov = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(T_map2_odom_i_cov);
+            pdf = mrpt::gtsam_wrappers::to_mrpt_se3_pdf(T_map2_odom_i, T_map2_odom_i_cov);
+            if (live)
+            {
+                pdf.mean = *live;
+            }
         }
     }
 
@@ -4348,7 +4351,9 @@ NavState StateEstimationSmoother::get_latest_state_and_covariance(const frame_in
             "numerically degenerate (det=%g). The factor graph may be under-constrained.",
             static_cast<unsigned>(idx), poseCov.determinant());
     }
-    ns.pose.cov_inv = mrpt::gtsam_wrappers::to_mrpt_se3_cov6(poseCov).inverse_LLt();
+    ns.pose.cov_inv =
+        mrpt::gtsam_wrappers::to_mrpt_se3_pdf(mrpt::gtsam_wrappers::toPose3(frame.pose), poseCov)
+            .cov.inverse_LLt();
 
     // Twist:
     ns.twist        = frame.twist;
