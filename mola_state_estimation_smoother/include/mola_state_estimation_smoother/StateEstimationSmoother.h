@@ -273,7 +273,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *
      *  Requires `keep_finalized_trajectory` (off by default). An odometry
      *  frame is served through the latest estimate of that frame's transform,
-     *  held constant over the trajectory.
+     *  held constant over the trajectory. In the ENU frame, each keyframe goes
+     *  through the T_enu_to_map estimated when it left the window, since
+     *  {map} itself moves with respect to ENU while that estimate is refined;
+     *  keyframes finalized before the geo-reference converged, and those still
+     *  in the window, use the latest one.
      */
     [[nodiscard]] std::optional<mrpt::poses::CPose3DInterpolator> estimated_trajectory(
         const mrpt::Clock::time_point& start_time, const mrpt::Clock::time_point& end_time,
@@ -518,6 +522,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Will be populated with the first GNSS coords when in active estimation mode.
         std::optional<mrpt::topography::TGeodeticCoords> tentative_geo_coord_reference;
 
+        /// Estimated geo-reference (datum + T_enu_to_map) as of the last solve.
+        std::optional<mola::Georeferencing> lastSolvedGeoref;
+
         /// Flag to track if we've already published the estimated geo-ref
         bool estimated_georef_published = false;
 
@@ -596,6 +603,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
     /// of the factor graph does not discard the history already collected.
     mrpt::poses::CPose3DInterpolator finalizedTrajectory_;
+    /// Same keyframes in ENU, through the T_enu_to_map estimated when each one
+    /// left the window (the one it was optimized against). Only those finalized
+    /// once the geo-reference was fixed or had converged.
+    mrpt::poses::CPose3DInterpolator finalizedTrajectoryEnu_;
     bool                             params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
@@ -695,9 +706,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const mrpt::math::CMatrixDouble66& twistCov);
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
-        const std::optional<double>&   overrideCloseEnough = std::nullopt);
+        const std::optional<double>& overrideCloseEnough = std::nullopt, bool pickClosest = false);
     void                                              process_pending_gtsam_updates_locked();
     [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference_locked() const;
+    /// Geo-reference to express {map} poses in ENU, or empty if they cannot be.
+    [[nodiscard]] std::optional<mola::Georeferencing> georef_for_enu_poses_locked() const;
+    /// Geo-reference from the current graph state (datum + T_enu_to_map).
+    [[nodiscard]] std::optional<mola::Georeferencing> compute_geo_reference_locked() const;
 
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map_locked()
         const;

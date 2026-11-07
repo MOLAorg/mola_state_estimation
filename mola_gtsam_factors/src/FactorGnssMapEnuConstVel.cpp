@@ -8,7 +8,7 @@
                          and individual contributors.
  SPDX-License-Identifier: GPL-3.0
  See LICENSE for full license information.
- Closed-source licenses available upon request, for this odometry package
+ Closed-source licenses available upon request, for this package
  alone or in combination with the complete SLAM system.
 */
 

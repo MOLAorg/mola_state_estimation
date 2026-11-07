@@ -633,13 +633,17 @@ class Parameters
      */
     double gnss_huber_threshold = 1.5;  // [sigmas]
 
-    /** Lower bound [m] on the standard deviation of every GNSS fix, along each
-     *  ENU axis: a receiver covariance below it is inflated to it. RTK fixes
-     *  often report ~1 cm, smaller than what the rest of the graph can explain
+    /** Lower bound [m] on the horizontal (East, North) standard deviation of a
+     *  GNSS fix: a receiver variance below it is raised to it. RTK fixes often
+     *  report ~1 cm, smaller than what the rest of the graph can explain
      *  (time-stamping, lever arm, odometry noise), and an overconfident fix bends
-     *  the trajectory instead of nudging it. 0 disables it.
+     *  the trajectory instead of nudging it. 0 disables it. Same name and default
+     *  as in the simple estimator.
      */
-    double gnss_min_sigma = 0.0;  // [m]
+    double gnss_min_sigma_floor_xy = 0.10;  // [m]
+
+    /// Same floor for the vertical (Up) component [m].
+    double gnss_min_sigma_floor_z = 0.30;  // [m]
 
     /** If not empty, the final geo-reference (geodetic datum + T_enu_to_map,
      *  fixed or estimated) is written to this YAML file when the estimator is

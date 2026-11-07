@@ -483,12 +483,14 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        between pose updates (``imu_propagation``).
    * - ``sensor_msgs/NavSatFix``, ``gps_msgs/GPSFix``
      - ENU position factor with a Huber kernel (``gnss_huber_threshold``), on the closest keyframe
-       moved to the fix time with its twist, and each ENU sigma floored at ``gnss_min_sigma``
-       (``MOLA_NAVSTATE_GNSS_MIN_SIGMA``, 0.10 m by default). Requires a geo-reference:
+       moved to the fix time with its twist. Sigmas are floored at ``gnss_min_sigma_floor_xy``
+       and ``gnss_min_sigma_floor_z`` (``MOLA_NAVSTATE_GNSS_MIN_SIGMA_XY`` / ``_Z``, 0.10 m and
+       0.30 m by default, as in the simple estimator). Requires a geo-reference:
        either estimated (``estimate_geo_reference: true``) or fixed (``fixed_geo_reference``,
        or given by a geo-referenced map). The final one can be written to a YAML file with
        ``save_final_georef_to_file`` (``MOLA_SE_SAVE_GEOREF_FILE``), and poses can be queried
-       in the ``enu`` frame.
+       in the ``enu`` frame: each one through the ``T_enu_to_map`` it was estimated with, since
+       ``map`` itself moves with respect to ``enu`` while that transform is refined.
      - Ignored unless ``gnss_enabled: true`` and a geo-reference is set; then low-sigma fixes
        nudge the position.
    * - (none: C++ or other MOLA modules, e.g. LiDAR odometry)

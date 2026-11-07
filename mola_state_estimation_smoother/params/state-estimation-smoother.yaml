@@ -374,10 +374,12 @@ params:
   # source (e.g. a geo-referenced .mm map loaded in mola_lidar_odometry).
   estimate_geo_reference: "${MOLA_ESTIMATE_GEO_REF|false}"
 
-  # Lower bound [m] on each ENU sigma of a GNSS fix. RTK receivers report ~1 cm,
-  # less than time-stamping, lever arm and odometry errors: below this floor an
-  # overconfident fix bends the trajectory. 0 = use the receiver covariance as is.
-  gnss_min_sigma: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA|0.10}
+  # Lower bounds [m] on the horizontal and vertical sigmas of a GNSS fix. RTK
+  # receivers report ~1 cm, less than time-stamping, lever arm and odometry
+  # errors: below these floors an overconfident fix bends the trajectory.
+  # 0 = use the receiver covariance as is.
+  gnss_min_sigma_floor_xy: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA_XY|0.10}
+  gnss_min_sigma_floor_z: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA_Z|0.30}
 
   # If set, the final geo-reference (datum + T_enu_to_map) is written to this YAML
   # file (mp2p_icp georeferencing format) when the estimator is destroyed.

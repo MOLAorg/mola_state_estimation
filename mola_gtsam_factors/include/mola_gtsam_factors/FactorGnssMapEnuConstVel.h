@@ -31,6 +31,9 @@
 #include <gtsam/slam/expressions.h>
 #include <mola_gtsam_factors/gtsam_detect_version.h>
 
+#include <cmath>
+#include <iostream>
+
 namespace mola::factors
 {
 /**

@@ -143,7 +143,8 @@ std::optional<NavState> FastPredictor::predict(
         // ENU frame: the {map} prediction through the current T_enu_to_map.
         if (frame_id == params.enu_frame_name)
         {
-            if (!snap->currentGeoReference)
+            if (!snap->currentGeoReference ||
+                (!params.estimate_geo_reference && !snap->mapPositionObserved))
             {
                 return std::nullopt;  // not geo-referenced (yet)
             }

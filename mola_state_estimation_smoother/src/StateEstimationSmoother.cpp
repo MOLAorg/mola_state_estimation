@@ -87,7 +87,6 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -1031,6 +1030,9 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::reset_locked()
 {
     state_ = State();
+    // The datum goes with the state, so ENU poses recorded so far may refer to
+    // another one: keep only the {map} history.
+    finalizedTrajectoryEnu_.clear();
     {
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_.reset();
@@ -1783,6 +1785,18 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
 
+    // Receiver covariance with the configured floors, used for everything below
+    // (factor noise and azimuth baselines alike):
+    Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
+    {
+        const double minVarXY = mrpt::square(params_.gnss_min_sigma_floor_xy);
+        const double minVarZ  = mrpt::square(params_.gnss_min_sigma_floor_z);
+        enuCov(0, 0) += std::max(0.0, minVarXY - enuCov(0, 0));
+        enuCov(1, 1) += std::max(0.0, minVarXY - enuCov(1, 1));
+        enuCov(2, 2) += std::max(0.0, minVarZ - enuCov(2, 2));
+    }
+    const double sigmaXY = std::sqrt(std::max(enuCov(0, 0), enuCov(1, 1)));
+
     // The azimuth of T_enu_to_map becomes observable only once the fixes span a
     // horizontal baseline long enough for the configured convergence accuracy.
     // Until then (no attitude source) it is pinned by its gauge anchor at an
@@ -1840,8 +1854,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
             g.firstGnssMapXY = antennaMapXY;
             return;
         }
-        const auto&  cov          = *gps.covariance_enu;
-        const double sigmaXY      = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
         const auto   enuBaseline  = xy - *g.firstGnssEnuXY;
         const auto   mapBaseline  = *antennaMapXY - *g.firstGnssMapXY;
         const double baselineNorm = enuBaseline.norm();
@@ -1899,7 +1911,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
-        gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance);
+        gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance, true /*pickClosest*/);
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_gnss]: t=%f this_kf_id=%zu ENU=%s", mrpt::Clock::toDouble(gps.timestamp),
@@ -1909,16 +1921,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
 
-    // Receiver covariance, with each ENU variance raised to the configured floor:
-    Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
-    if (params_.gnss_min_sigma > 0)
-    {
-        const double minVar = mrpt::square(params_.gnss_min_sigma);
-        for (int i = 0; i < 3; i++)
-        {
-            enuCov(i, i) += std::max(0.0, minVar - enuCov(i, i));
-        }
-    }
     const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(enuCov);
 
     gtsam::SharedNoiseModel enuNoiseModel;
@@ -1968,8 +1970,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         }
         else
         {
-            const auto&  cov     = *gps.covariance_enu;
-            const double sigmaXY = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
             const double minBaseline =
                 std::sqrt(2.0) * sigmaXY / mrpt::DEG2RAD(YAW_FROM_BASELINE_ACCURACY_DEG);
             if ((xy - *state_.gtsam->firstGnssXYForYaw).norm() >= minBaseline)
@@ -2468,7 +2468,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         // ENU frame: the {map} prediction through the current T_enu_to_map.
         if (frame_id == params_.enu_frame_name)
         {
-            const auto georef = get_geo_reference_locked();
+            const auto georef = georef_for_enu_poses_locked();
             if (!georef)
             {
                 return {};  // not geo-referenced (yet)
@@ -2587,11 +2587,12 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
     // two frames coincide, which is the case of an offline odometry run, and
     // the best available answer otherwise, since no per-keyframe anchor is kept.
     std::optional<mrpt::poses::CPose3D> T_frame_wrt_map;
-    // In the ENU frame, every pose goes through the latest T_enu_to_map:
+    // In the ENU frame, keyframes without a pose recorded in ENU when they were
+    // finalized go through the latest T_enu_to_map:
     std::optional<mrpt::poses::CPose3D> T_enu_to_map;
     if (frame_id == params_.enu_frame_name)
     {
-        const auto georef = get_geo_reference_locked();
+        const auto georef = georef_for_enu_poses_locked();
         if (!georef)
         {
             return {};
@@ -2630,10 +2631,20 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
 
     for (const auto& [t, p] : finalizedTrajectory_)
     {
-        if (inRange(t))
+        if (!inRange(t))
         {
-            ret.insert(t, toRequestedFrame(mrpt::poses::CPose3D(p)));
+            continue;
         }
+        if (T_enu_to_map)
+        {
+            if (const auto itEnu = finalizedTrajectoryEnu_.find(t);
+                itEnu != finalizedTrajectoryEnu_.end())
+            {
+                ret.insert(t, itEnu->second);
+                continue;
+            }
+        }
+        ret.insert(t, toRequestedFrame(mrpt::poses::CPose3D(p)));
     }
     for (const auto& [t, frame_idx] : state_.stamp2frame_index)
     {
@@ -3014,6 +3025,14 @@ void StateEstimationSmoother::delete_too_old_entries()
     // smoothed trajectory instead of the front end's registered poses.
     if (params_.keep_finalized_trajectory)
     {
+        // Recorded in ENU only once an estimated geo-reference has converged:
+        // until then T_enu_to_map is still far from its final value, and the
+        // latest one is the better choice for those keyframes.
+        std::optional<mola::Georeferencing> georef;
+        if (!params_.estimate_geo_reference || state_.geo_reference.has_value())
+        {
+            georef = georef_for_enu_poses_locked();
+        }
         for (const auto& [t_erase, frame_idx] : stamp2erasedFrame)
         {
             const auto it = state_.last_estimated_states.find(frame_idx);
@@ -3022,6 +3041,11 @@ void StateEstimationSmoother::delete_too_old_entries()
                 continue;
             }
             finalizedTrajectory_.insert(t_erase, it->second.pose.asTPose());
+            if (georef)
+            {
+                finalizedTrajectoryEnu_.insert(
+                    t_erase, (georef->T_enu_to_map.mean + it->second.pose).asTPose());
+            }
         }
     }
 
@@ -3072,15 +3096,17 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
 StateEstimationSmoother::frame_index_t
     StateEstimationSmoother::create_or_get_keyframe_by_timestamp_locked(
-        const mrpt::Clock::time_point& t, const std::optional<double>& overrideCloseEnough)
+        const mrpt::Clock::time_point& t, const std::optional<double>& overrideCloseEnough,
+        bool pickClosest)
 {
     const auto tle = mola::ProfilerEntry(profiler_, "create_or_get_keyframe_by_timestamp");
 
     const double threshold = overrideCloseEnough ? *overrideCloseEnough
                                                  : params_.min_time_difference_to_create_new_frame;
 
-    // See if we have an existing frame index close enough to t; the closest
-    // one, since with a permissive threshold both neighbors may qualify:
+    // See if we have an existing frame index close enough to t: the first one
+    // found, or the closest one if requested (with a permissive threshold both
+    // neighbors may qualify):
     const auto                   closestPrior = find_before_after(t, true);
     std::optional<frame_index_t> best;
     double                       bestDt = threshold;
@@ -3098,6 +3124,10 @@ StateEstimationSmoother::frame_index_t
         {
             bestDt = dt;
             best   = frame_idx;
+            if (!pickClosest)
+            {
+                break;
+            }
         }
     }
     if (best)
@@ -3530,7 +3560,9 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 ++nImuAttitude;
             else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
                 ++nImuGravity;
-            else if (dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p))
+            else if (
+                dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p) ||
+                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVel*>(p))
                 ++nGnss;
             else if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(p))
                 ++nConstVel;
@@ -3867,6 +3899,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     state_.gtsam->newFactors.resize(0);
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
+
+    // Geo-reference as of this solve. Keyframes finalized above came from the
+    // previous one, so delete_too_old_entries() paired them with the previous
+    // value of this field:
+    if (params_.estimate_geo_reference)
+    {
+        state_.lastSolvedGeoref = compute_geo_reference_locked();
+    }
 
     // Publish an immutable snapshot for the lock-free read path. Only built in
     // async mode: the synchronous path reads state_ directly and building the
@@ -4689,7 +4729,24 @@ std::optional<mola::Georeferencing> StateEstimationSmoother::get_geo_reference_l
     {
         return state_.geo_reference;  // the fixed one, if any
     }
+    // Estimated: as of the last solve, so the gate and T_enu_to_map always come
+    // from the same one, and match the keyframe poses of that solve.
+    return state_.lastSolvedGeoref;
+}
 
+std::optional<mola::Georeferencing> StateEstimationSmoother::georef_for_enu_poses_locked() const
+{
+    // With a fixed geo-reference, {map} poses mean nothing until something
+    // observes the {map} position (it is the first odometry frame until then):
+    if (!params_.estimate_geo_reference && !state_.gtsam->mapPositionObservedSolved)
+    {
+        return {};
+    }
+    return get_geo_reference_locked();
+}
+
+std::optional<mola::Georeferencing> StateEstimationSmoother::compute_geo_reference_locked() const
+{
     // Estimated: the datum is the first GNSS fix; T_enu_to_map is meaningful
     // only once its azimuth is observed (not held by the gauge anchor).
     std::optional<mrpt::topography::TGeodeticCoords> datum;
@@ -4758,8 +4815,9 @@ bool StateEstimationSmoother::save_geo_reference_to_file(const std::string& yaml
     {
         return false;
     }
-    f << std::setprecision(15) << d;
-    return f.good();
+    f << d;
+    f.close();
+    return !f.fail();
 }
 
 std::optional<mrpt::poses::CPose3DPDFGaussian>
