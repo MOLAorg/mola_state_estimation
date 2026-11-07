@@ -766,7 +766,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
         const std::optional<double>& overrideCloseEnough = std::nullopt, bool pickClosest = false);
+    /// Runs the solve; never throws: on any failure it logs and resets the smoother.
     void                                              process_pending_gtsam_updates_locked();
+    void                                              solve_locked();
     [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference_locked() const;
     /// Geo-reference to express {map} poses in ENU, or empty if they cannot be.
     [[nodiscard]] std::optional<mola::Georeferencing> georef_for_enu_poses_locked() const;

@@ -3402,6 +3402,30 @@ void StateEstimationSmoother::process_pending_gtsam_updates()
 
 void StateEstimationSmoother::process_pending_gtsam_updates_locked()
 {
+    // Not only the iSAM2 update can throw on an ill-conditioned graph (e.g.
+    // IndeterminantLinearSystemException), but also calculateEstimate() and the
+    // marginal covariance queries after it. Callers (estimated_navstate() in the
+    // synchronous mode, spinOnce(), the backend thread) must never see it.
+    try
+    {
+        solve_locked();
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_ERROR_STREAM(
+            "[process_pending_gtsam_updates] GTSAM solve failed (factor graph may be "
+            "underconstrained or ill-conditioned). Resetting smoother state. Exception:\n"
+            << e.what());
+
+        // A failed smoother.update() is not strongly exception-safe: it can leave
+        // the iSAM2 Bayes tree internally inconsistent, so every later update
+        // would keep throwing. Rebuild the smoother from scratch instead.
+        reset_locked();
+    }
+}
+
+void StateEstimationSmoother::solve_locked()
+{
     const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
 
     // Until some source relates {map} to the vehicle (e.g. while IMU readings
@@ -3494,59 +3518,40 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
     state_.gtsam->pendingKinematic.clear();
 
-    // Update the smoother with pending factors/values:
-    try
+    // Update the smoother with pending factors/values (on failure, the caller resets it):
+    if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
+        !state_.gtsam->newKeyStamps.empty() || !state_.gtsam->factorsToRemove.empty())
     {
-        if (!state_.gtsam->newFactors.empty() || !state_.gtsam->newValues.empty() ||
-            !state_.gtsam->newKeyStamps.empty() || !state_.gtsam->factorsToRemove.empty())
-        {
-            const auto tleUpd = mola::ProfilerEntry(profiler_, "process_pending.iSAM2.update");
-            smoother.update(
-                state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps,
-                state_.gtsam->factorsToRemove);
+        const auto tleUpd = mola::ProfilerEntry(profiler_, "process_pending.iSAM2.update");
+        smoother.update(
+            state_.gtsam->newFactors, state_.gtsam->newValues, state_.gtsam->newKeyStamps,
+            state_.gtsam->factorsToRemove);
 
-            // newFactorsIndices is 1-to-1 with the factors just passed in, so each
-            // link's range maps straight onto the indices it was given. Keep them:
-            // that is what makes a later splice able to remove this link again.
-            const auto& newIdx = smoother.getISAM2Result().newFactorsIndices;
-            for (const auto& [linkKey, range] : flushedRanges)
-            {
-                // Append: a link's IMU factor can be flushed after the rest of it.
-                auto& indices = state_.gtsam->flushedKinematic[linkKey];
-                for (size_t i = range.first; i < range.second && i < newIdx.size(); i++)
-                {
-                    indices.push_back(newIdx[i]);
-                }
-            }
-            state_.gtsam->on_update_done(newIdx);
-            state_.gtsam->factorsToRemove.clear();
-        }
-
-        // Optional: Perform extra internal iterations for better accuracy
-        if (params_.additional_isam2_update_steps > 1)
+        // newFactorsIndices is 1-to-1 with the factors just passed in, so each
+        // link's range maps straight onto the indices it was given. Keep them:
+        // that is what makes a later splice able to remove this link again.
+        const auto& newIdx = smoother.getISAM2Result().newFactorsIndices;
+        for (const auto& [linkKey, range] : flushedRanges)
         {
-            const auto tleExtra =
-                mola::ProfilerEntry(profiler_, "process_pending.iSAM2.extra_updates");
-            for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+            // Append: a link's IMU factor can be flushed after the rest of it.
+            auto& indices = state_.gtsam->flushedKinematic[linkKey];
+            for (size_t i = range.first; i < range.second && i < newIdx.size(); i++)
             {
-                smoother.update();
+                indices.push_back(newIdx[i]);
             }
         }
+        state_.gtsam->on_update_done(newIdx);
+        state_.gtsam->factorsToRemove.clear();
     }
-    catch (const std::exception& e)
-    {
-        MRPT_LOG_ERROR_STREAM(
-            "[process_pending_gtsam_updates] GTSAM update failed (factor graph may be "
-            "underconstrained or ill-conditioned). Resetting smoother state. Exception:\n"
-            << e.what());
 
-        // smoother.update() is not strongly exception-safe: a failed call can
-        // leave the iSAM2 Bayes tree internally inconsistent, so every later
-        // update would keep throwing the same way forever. Merely discarding
-        // the pending (not-yet-applied) factors/values/stamps does not fix
-        // that. Rebuild the smoother from scratch instead.
-        reset_locked();
-        return;
+    // Optional: Perform extra internal iterations for better accuracy
+    if (params_.additional_isam2_update_steps > 1)
+    {
+        const auto tleExtra = mola::ProfilerEntry(profiler_, "process_pending.iSAM2.extra_updates");
+        for (unsigned int i = 1; i < params_.additional_isam2_update_steps; ++i)
+        {
+            smoother.update();
+        }
     }
 
     // Print debug info:
@@ -3613,23 +3618,9 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     }
 
     gtsam::Values optValues;
-    try
     {
         const auto tleCalc = mola::ProfilerEntry(profiler_, "process_pending.calculateEstimate");
         optValues          = smoother.calculateEstimate();
-    }
-    catch (const std::exception& e)
-    {
-        MRPT_LOG_ERROR_STREAM(
-            "[process_pending_gtsam_updates] GTSAM calculateEstimate() failed. "
-            "Resetting smoother state. Exception:\n"
-            << e.what());
-
-        // Same reasoning as the update() catch above: calculateEstimate()
-        // failing after a successful update() still means the smoother is in
-        // a state we can't trust going forward, so rebuild it from scratch.
-        reset_locked();
-        return;
     }
 
 #if !GTSAM_USES_BOOST

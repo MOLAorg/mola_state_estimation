@@ -218,7 +218,8 @@ Other behavior:
   `estimated_navstate()` served lock-free by `FastPredictor` from the latest
   `Snapshot`. The synchronous path is deterministic.
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
-  cannot be solved yet.
+  cannot be solved yet. Any exception in the solve (`solve_locked()`: update,
+  estimate or marginals) is logged and resets the smoother; it never reaches callers.
 - Gauge anchors (strong priors on never-marginalized variables, withdrawn once
   observed; weak priors there break GTSAM>=4.3 Cholesky): `{map}` is pinned to
   the first odometry frame until a `{map}` pose arrives (or, with a fixed
