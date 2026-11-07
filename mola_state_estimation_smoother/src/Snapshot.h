@@ -58,6 +58,8 @@ struct Snapshot
 
     /// Latest estimated T_map_to_odom_i, keyed by numeric odometry frame id,
     /// plus the name<->id mapping so a query by frame name can be resolved.
+    /// The covariance is only filled in for sources without a raw pose yet
+    /// (the only case FastPredictor reads it); the mean is always valid.
     std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> frameTransforms;
     mrpt::containers::bimap<std::string, odometry_frameid_t>      frameNames;
 

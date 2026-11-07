@@ -398,6 +398,14 @@ struct StateEstimationSmoother::GtsamImpl
     // This is initialized in initialize(), once we have the parameters
     std::optional<gtsam::IncrementalFixedLagSmoother> smoother;
 
+    /** Odometry frames whose covariance in State::last_estimated_frames is not
+     *  computed yet for the latest solve, with the value of their graph
+     *  variable in that solve (the covariance is expressed at it). Few solves
+     *  have a consumer for it, and each one is a Bayes-tree marginal query.
+     *  Filled in by complete_odom_frame_covariance_locked().
+     */
+    mutable std::map<odometry_frameid_t, gtsam::Pose3> odomFrameCovPending;
+
     // Queue of pending updates for incremental iSAM2:
     gtsam::NonlinearFactorGraph              newFactors;
     gtsam::Values                            newValues;
@@ -733,6 +741,7 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     // isam2Params.optimizationParams    = gtsam::ISAM2DoglegParams();
 
     state_.gtsam->smoother.emplace(params_.sliding_window_length, isam2Params);
+    state_.gtsam->odomFrameCovPending.clear();
 
     // Initialize georeference-related gtsam variables:
     // Even if not using a geo-referenced map, even if not using GPS sensors,
@@ -2533,6 +2542,10 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         {
             // No raw pose received from this source yet: fall back to the global
             // conversion (correct while {map} and {odom_i} still coincide).
+            if (!complete_odom_frame_covariance_locked(requestedFrameIdx))
+            {
+                return {};
+            }
             const auto itFrame = state_.last_estimated_frames.find(requestedFrameIdx);
             if (itFrame == state_.last_estimated_frames.end())
             {
@@ -3871,20 +3884,23 @@ void StateEstimationSmoother::solve_locked()
             return itKf->second.pose + (-*tailPoseInOdom);
         };
 
+        // Only the means here: the covariances are filled in on first use, see
+        // complete_odom_frame_covariance_locked().
+        state_.gtsam->odomFrameCovPending.clear();
         for (const auto& [_, odomFrameIdx] : state_.known_odom_frames)
         {
-            const auto symbolOdom        = symbol_T_map_to_odom_i_base + odomFrameIdx;
-            const auto T_map2_odom_i     = optValues.at<gtsam::Pose3>(symbolOdom);
-            const auto T_map2_odom_i_cov = smoother.marginalCovariance(symbolOdom);
+            const auto symbolOdom    = symbol_T_map_to_odom_i_base + odomFrameIdx;
+            const auto T_map2_odom_i = optValues.at<gtsam::Pose3>(symbolOdom);
 
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
             const auto live = liveRelativeFrame(odomFrameIdx);
-            pdf             = mola::gtsam_compat::to_mrpt_se3_pdf(T_map2_odom_i, T_map2_odom_i_cov);
+            pdf = mola::gtsam_compat::to_mrpt_se3_pdf(T_map2_odom_i, gtsam::Matrix6::Zero());
             if (live)
             {
                 pdf.mean = *live;
             }
+            state_.gtsam->odomFrameCovPending[odomFrameIdx] = T_map2_odom_i;
         }
     }
 
@@ -4531,10 +4547,17 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
     }
 
     // Odometry-frame transforms (numeric id >= 1) and the name<->id mapping.
+    // FastPredictor only reads their covariance for a source without a raw
+    // pose yet, so only then is it worth completing.
     snap->frameNames = state_.known_odom_frames;
     for (const auto& [id, pdf] : state_.last_estimated_frames)
     {
         if (id == REFERENCE_FRAME_ID)
+        {
+            continue;
+        }
+        if (state_.last_raw_pose_by_source.count(id) == 0 &&
+            !complete_odom_frame_covariance_locked(id))
         {
             continue;
         }
@@ -4879,12 +4902,49 @@ std::optional<mrpt::poses::CPose3DPDFGaussian>
 {
     ASSERT_GE_(idx, 1);
     // Called with stateMutex_ already held by the caller.
+    if (!complete_odom_frame_covariance_locked(idx))
+    {
+        return {};
+    }
     auto it = state_.last_estimated_frames.find(idx);
     if (it == state_.last_estimated_frames.end())
     {
         return {};
     }
     return {it->second};
+}
+
+bool StateEstimationSmoother::complete_odom_frame_covariance_locked(
+    const odometry_frameid_t idx) const
+{
+    auto&      pending   = state_.gtsam->odomFrameCovPending;
+    const auto itPending = pending.find(idx);
+    if (itPending == pending.end())
+    {
+        return true;
+    }
+    const auto it = state_.last_estimated_frames.find(idx);
+    ASSERT_(it != state_.last_estimated_frames.end());
+
+    const auto tle = mola::ProfilerEntry(profiler_, "marginals.odom_frames");
+    try
+    {
+        // No update ran since the solve that left it pending: updates only
+        // happen in solve_locked(), which refills `pending`.
+        const auto cov =
+            state_.gtsam->smoother->marginalCovariance(symbol_T_map_to_odom_i_base + idx);
+        it->second.cov = mola::gtsam_compat::to_mrpt_se3_pdf(itPending->second, cov).cov;
+    }
+    catch (const std::exception& e)
+    {
+        // An under-constrained graph: "not ready yet", as for the keyframe marginals.
+        MRPT_LOG_DEBUG_FMT(
+            "[complete_odom_frame_covariance] Covariance of odometry frame %u not available: %s",
+            static_cast<unsigned>(idx), e.what());
+        return false;
+    }
+    pending.erase(itPending);
+    return true;
 }
 
 std::optional<mrpt::poses::CPose3DPDFGaussian>
