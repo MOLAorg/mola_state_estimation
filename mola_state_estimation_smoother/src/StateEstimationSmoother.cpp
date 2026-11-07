@@ -5339,22 +5339,61 @@ std::optional<mrpt::math::TPoint3D> StateEstimationSmoother::predicted_antenna_i
     const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt,
     bool solvedOnly)
 {
-    const auto                          nearby = find_before_after(t, true);
+    const auto& kfs = state_.stamp2frame_index.getDirectMap();
+
+    // A keyframe created since the last solve only holds its neighbor's pose:
+    const auto isSolved = [&](const frame_index_t idx)
+    { return !state_.gtsam->newValues.exists(T(idx)); };
+
+    // The two neighbors in time or, for solved ones only, the nearest solved
+    // keyframe on each side within maxDt (with an async backend, the newest
+    // keyframes are often still waiting for their solve):
+    std::vector<decltype(kfs.begin())> candidates;
+    if (!solvedOnly)
+    {
+        const auto nearby = find_before_after(t, true);
+        candidates        = {nearby.first, nearby.second};
+    }
+    else
+    {
+        const auto after = kfs.lower_bound(t);
+        for (auto it = after; it != kfs.end(); ++it)
+        {
+            if (std::abs(mrpt::system::timeDifference(t, it->first)) > maxDt)
+            {
+                break;
+            }
+            if (isSolved(it->second))
+            {
+                candidates.push_back(it);
+                break;
+            }
+        }
+        for (auto it = after; it != kfs.begin();)
+        {
+            --it;
+            if (std::abs(mrpt::system::timeDifference(it->first, t)) > maxDt)
+            {
+                break;
+            }
+            if (isSolved(it->second))
+            {
+                candidates.push_back(it);
+                break;
+            }
+        }
+    }
+
     std::optional<double>               bestDt;
     std::optional<mrpt::math::TPoint3D> ret;
-    for (const auto& it : {nearby.first, nearby.second})
+    for (const auto& it : candidates)
     {
-        if (it == state_.stamp2frame_index.getDirectMap().end())
+        if (it == kfs.end())
         {
             continue;
         }
         const auto st = state_.last_estimated_states.find(it->second);
         if (st == state_.last_estimated_states.end())
-        {
-            continue;
-        }
-        // A keyframe created since the last solve only holds its neighbor's pose:
-        if (solvedOnly && state_.gtsam->newValues.exists(T(it->second)))
         {
             continue;
         }

@@ -44,12 +44,14 @@
 #include <mrpt/random/RandomGenerators.h>
 #include <mrpt/topography/conversions.h>
 
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace
 {
@@ -79,7 +81,6 @@ params:
     sigma_random_walk_acceleration_angular: 1.0
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
-    async_backend: false
 )###";
 
 /// What a fix generator may do at a given time, besides publishing the truth.
@@ -99,6 +100,7 @@ struct Scenario
     std::string extraParams;  //!< appended to BASE_PARAMS (indented 4)
     double      convergencePosSigma = 1.0;  // [m]
     double      convergenceOriSigma = 5.0;  // [deg]
+    bool        asyncBackend        = false;
     bool        estimateGeoref      = true;
     double      duration            = 40.0;  // [s]
     double      stillTime           = 2.0;  // [s]
@@ -197,8 +199,9 @@ Result run(const Scenario& sc, double checkFrom)
                                   "        altitude: 130.0\n";
     params += mrpt::format(
         "    convergence_max_position_sigma: %f\n"
-        "    convergence_max_orientation_sigma_deg: %f\n",
-        sc.convergencePosSigma, sc.convergenceOriSigma);
+        "    convergence_max_orientation_sigma_deg: %f\n"
+        "    async_backend: %s\n",
+        sc.convergencePosSigma, sc.convergenceOriSigma, sc.asyncBackend ? "true" : "false");
     params += sc.extraParams;
     est.initialize(mrpt::containers::yaml::FromText(params));
 
@@ -287,6 +290,14 @@ Result run(const Scenario& sc, double checkFrom)
 
         (void)est.estimated_navstate(stamp, "map");  // runs the (synchronous) solve
 
+        if (sc.asyncBackend)
+
+        {
+            // Let the backend thread keep up, as a real-time source would:
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+
         const auto g = est.get_geo_reference();
         if (!g)
         {
@@ -313,6 +324,11 @@ Result run(const Scenario& sc, double checkFrom)
         res.nChecked++;
     }
 
+    if (sc.asyncBackend)
+    {
+        // Let the backend drain its queue before reading the counters:
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
     res.stats = est.gnss_gate_stats();
     // Error bounds mean nothing if no ENU pose was ever produced:
     if (checkFrom < sc.duration)
@@ -379,6 +395,20 @@ void test_impostor_interleaved()
     ASSERT_EQUAL_(r.stats.reacquired, 0U);
     ASSERT_LT_(r.maxVertErr, 0.5);
     ASSERT_LT_(r.maxHorizErr, 0.3);
+}
+
+void test_impostor_interleaved_async()
+{
+    Scenario sc;
+    sc.name         = "Same bogus source, async backend (predictions from solved keyframes only)";
+    sc.asyncBackend = true;
+    sc.fixKind      = [](double t, int k)
+    { return (t > 15.0 && k % 2 == 1) ? FixKind::Impostor : FixKind::Real; };
+    const auto r = run(sc, 1e9);
+    // The async backend reorders solves, so only the gate's own counts are
+    // checked: every bogus fix rejected, none reacquired.
+    ASSERT_GE_(r.stats.rejected_innovation, 60U);
+    ASSERT_EQUAL_(r.stats.reacquired, 0U);
 }
 
 void test_impostor_at_startup()
@@ -548,6 +578,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_nominal_rtk_fast();
         test_nominal_single_point();
         test_impostor_interleaved();
+        test_impostor_interleaved_async();
         test_impostor_at_startup();
         test_multipath_spikes();
         test_outage_with_heading_drift();
