@@ -1860,7 +1860,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         {
             constexpr double MAX_DT = 0.25;  // [s]
             if (const auto p = predicted_antenna_in_map_locked(
-                    gps.timestamp, gps.sensorPose.translation(), MAX_DT);
+                    gps.timestamp, gps.sensorPose.translation(), MAX_DT, false);
                 p)
             {
                 antennaMapXY = gtsam::Point2(p->x, p->y);
@@ -5336,7 +5336,8 @@ void StateEstimationSmoother::advertise_imu_biases() {}
 #endif
 
 std::optional<mrpt::math::TPoint3D> StateEstimationSmoother::predicted_antenna_in_map_locked(
-    const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt)
+    const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt,
+    bool solvedOnly)
 {
     const auto                          nearby = find_before_after(t, true);
     std::optional<double>               bestDt;
@@ -5349,6 +5350,11 @@ std::optional<mrpt::math::TPoint3D> StateEstimationSmoother::predicted_antenna_i
         }
         const auto st = state_.last_estimated_states.find(it->second);
         if (st == state_.last_estimated_states.end())
+        {
+            continue;
+        }
+        // A keyframe created since the last solve only holds its neighbor's pose:
+        if (solvedOnly && state_.gtsam->newValues.exists(T(it->second)))
         {
             continue;
         }
@@ -5410,14 +5416,22 @@ bool StateEstimationSmoother::gnss_gate_locked(
         return false;
     };
 
+    // Solved antenna position in {map} now: odometry evidence for the tests below.
+    const auto antennaMapNow = predicted_antenna_in_map_locked(
+        gps.timestamp, gps.sensorPose.translation(), params_.gnss_nearby_keyframe_stamp_tolerance,
+        true);
+
     const auto accept = [&]()
     {
         st.accepted++;
-        st.consecutive_rejected = 0;
-        gg.rejectedRunLength    = 0;
+        gg.lastAcceptedAntennaMap = antennaMapNow;
+        st.consecutive_rejected   = 0;
+        gg.rejectedRunLength      = 0;
         gg.lastRejected.reset();
         gg.runStartFixEnu.reset();
         gg.runStartPredEnu.reset();
+        gg.runStartFix.reset();
+        gg.runStartAntennaMap.reset();
         return true;
     };
 
@@ -5492,6 +5506,27 @@ bool StateEstimationSmoother::gnss_gate_locked(
                            params_.gnss_max_plausible_speed * dt;
     };
 
+    // With odometry, a fix may be as far from the last accepted one as the
+    // antenna moved since then (plus a margin for odometry scale errors), not as
+    // far as a plausible speed allows: otherwise, after a few seconds without
+    // accepted fixes, any source within that radius would be let in.
+    const auto consistentWithLastAccepted = [&]()
+    {
+        if (!gg.lastAccepted)
+        {
+            return true;
+        }
+        if (!gg.lastAcceptedAntennaMap || !antennaMapNow)
+        {
+            return consistent(*gg.lastAccepted, fix);
+        }
+        const double odoMove = (*antennaMapNow - *gg.lastAcceptedAntennaMap).norm();
+        const double dist    = (gg.lastAccepted->ecef - fix.ecef).norm();
+        return dist <=
+               kSigma * std::sqrt(mrpt::square(gg.lastAccepted->sigma) + mrpt::square(fix.sigma)) +
+                   params_.gnss_gate_prediction_sigma + 1.5 * odoMove;
+    };
+
     // --- Datum: only after a few mutually consistent fixes ---
     if (params_.estimate_geo_reference && !datum)
     {
@@ -5543,7 +5578,7 @@ bool StateEstimationSmoother::gnss_gate_locked(
     {
         predMap = predicted_antenna_in_map_locked(
             gps.timestamp, gps.sensorPose.translation(),
-            params_.gnss_nearby_keyframe_stamp_tolerance);
+            params_.gnss_nearby_keyframe_stamp_tolerance, true);
     }
 
     const auto runOrReacquire = [&](bool sameRun, bool movedEnough, const std::string& why)
@@ -5567,17 +5602,47 @@ bool StateEstimationSmoother::gnss_gate_locked(
     {
         // No prediction (not converged, or {map} not observed yet): fixes must
         // at least be consistent with the previous accepted one.
-        if (!gg.lastAccepted || consistent(*gg.lastAccepted, fix))
+        if (consistentWithLastAccepted())
         {
             gg.lastAccepted = fix;
             return accept();
         }
         const bool sameRun = gg.lastRejected.has_value() && consistent(*gg.lastRejected, fix);
-        const auto why     = mrpt::format(
-                "%.2f m from the previous accepted fix, %.2f s apart",
-                (gg.lastAccepted->ecef - fix.ecef).norm(),
-                std::abs(mrpt::system::timeDifference(gg.lastAccepted->t, fix.t)));
-        if (runOrReacquire(sameRun, true, why))
+
+        // Odometry, when there is any, must agree that the antenna moved as much
+        // as the fixes did, and enough to tell them from a source at a fixed
+        // place; without it, mutually consistent fixes are all there is.
+        const auto& antennaMap = antennaMapNow;
+        if (!sameRun || (!gg.runStartAntennaMap && antennaMap))
+        {
+            // A new run, or odometry available from now on: measure from here.
+            gg.runStartFix        = fix;
+            gg.runStartAntennaMap = antennaMap;
+        }
+        bool movedLikeOdometry = true;
+        if (gg.runStartAntennaMap && antennaMap)
+        {
+            const double odoMove = (*antennaMap - *gg.runStartAntennaMap).norm();
+            const double fixMove = (fix.ecef - gg.runStartFix->ecef).norm();
+            movedLikeOdometry =
+                odoMove >= params_.gnss_gate_reacquire_min_path &&
+                std::abs(fixMove - odoMove) <= 3.0 * std::sqrt(2.0) * fix.sigma + 0.5 * odoMove;
+            MRPT_LOG_DEBUG_FMT(
+                "[fuse_gnss] Rejected run of %zu: odometry moved %.2f m, fixes %.2f m",
+                gg.rejectedRunLength + 1, odoMove, fixMove);
+        }
+        else
+        {
+            MRPT_LOG_DEBUG_FMT(
+                "[fuse_gnss] Rejected run of %zu: no odometry evidence (start %s, now %s)",
+                gg.rejectedRunLength + 1, gg.runStartAntennaMap ? "yes" : "no",
+                antennaMap ? "yes" : "no");
+        }
+        const auto why = mrpt::format(
+            "%.2f m from the previous accepted fix, %.2f s apart",
+            (gg.lastAccepted->ecef - fix.ecef).norm(),
+            std::abs(mrpt::system::timeDifference(gg.lastAccepted->t, fix.t)));
+        if (runOrReacquire(sameRun, movedLikeOdometry, why))
         {
             gg.lastAccepted = fix;
             return accept();

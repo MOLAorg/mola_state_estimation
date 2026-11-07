@@ -17,7 +17,8 @@
  * @brief  GNSS admission tests and innovation gate of the smoother, on a
  *         simulated vehicle with odometry, a gravity-only IMU and GNSS, in
  *         realistic failure situations:
- *         - nominal RTK and nominal single-point fixes: (almost) nothing rejected;
+ *         - nominal RTK (also at 20 m/s) and nominal single-point fixes: (almost)
+ *           nothing rejected;
  *         - a second, bogus source on the same input publishing the datum
  *           lat/lon at zero height, interleaved with the real fixes;
  *         - the same bogus source winning the start-up race (first fixes);
@@ -25,7 +26,8 @@
  *         - a GNSS outage during which the odometry heading drifts, so the
  *           returning fixes are far from the estimate (must be reacquired);
  *         - the bogus source alone after the real receiver goes silent (must
- *           never be reacquired while the vehicle moves);
+ *           never be reacquired while the vehicle moves), also before the
+ *           geo-reference converges;
  *         - malformed readings and quality filters;
  *         - the optional height band and redescending kernels;
  *         - a fixed geo-reference (relocalization).
@@ -33,6 +35,7 @@
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
+#include <mrpt/core/format.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
@@ -76,8 +79,6 @@ params:
     sigma_random_walk_acceleration_angular: 1.0
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
-    convergence_max_position_sigma: 1.0
-    convergence_max_orientation_sigma_deg: 5.0
     async_backend: false
 )###";
 
@@ -96,12 +97,14 @@ struct Scenario
 {
     std::string name;
     std::string extraParams;  //!< appended to BASE_PARAMS (indented 4)
-    bool        estimateGeoref = true;
-    double      duration       = 40.0;  // [s]
-    double      stillTime      = 2.0;  // [s]
-    double      speed          = 3.0;  // [m/s]
-    double      gnssSigma      = 0.03;  // [m] (horizontal; vertical is 2x)
-    int         fixQuality     = 4;
+    double      convergencePosSigma = 1.0;  // [m]
+    double      convergenceOriSigma = 5.0;  // [deg]
+    bool        estimateGeoref      = true;
+    double      duration            = 40.0;  // [s]
+    double      stillTime           = 2.0;  // [s]
+    double      speed               = 3.0;  // [m/s]
+    double      gnssSigma           = 0.03;  // [m] (horizontal; vertical is 2x)
+    int         fixQuality          = 4;
 
     /// Odometry heading bias [rad/s] as a function of time (default none).
     std::function<double(double)>       odomYawBias = [](double) { return 0.0; };
@@ -192,6 +195,10 @@ Result run(const Scenario& sc, double checkFrom)
                                   "        latitude_deg: 36.8281\n"
                                   "        longitude_deg: -2.4074\n"
                                   "        altitude: 130.0\n";
+    params += mrpt::format(
+        "    convergence_max_position_sigma: %f\n"
+        "    convergence_max_orientation_sigma_deg: %f\n",
+        sc.convergencePosSigma, sc.convergenceOriSigma);
     params += sc.extraParams;
     est.initialize(mrpt::containers::yaml::FromText(params));
 
@@ -335,17 +342,27 @@ void test_nominal_rtk()
     ASSERT_LT_(r.maxVertErr, 0.5);
 }
 
+void test_nominal_rtk_fast()
+{
+    Scenario sc;
+    sc.name      = "Nominal RTK at 20 m/s: a lagging prediction would reject good fixes";
+    sc.speed     = 20.0;
+    const auto r = run(sc, 15.0);
+    ASSERT_EQUAL_(r.stats.rejected, 0U);
+    ASSERT_GT_(r.stats.accepted, 150U);
+    ASSERT_LT_(r.maxHorizErr, 0.3);
+}
+
 void test_nominal_single_point()
 {
     Scenario sc;
-    sc.name       = "Nominal single-point GNSS (sigma 2 m): almost nothing rejected";
-    sc.gnssSigma  = 2.0;
-    sc.fixQuality = 1;
-    sc.duration   = 60.0;
-    sc.extraParams =
-        "    convergence_max_position_sigma: 3.0\n"
-        "    convergence_max_orientation_sigma_deg: 10.0\n";
-    const auto r = run(sc, 40.0);
+    sc.name                = "Nominal single-point GNSS (sigma 2 m): almost nothing rejected";
+    sc.gnssSigma           = 2.0;
+    sc.fixQuality          = 1;
+    sc.duration            = 60.0;
+    sc.convergencePosSigma = 3.0;
+    sc.convergenceOriSigma = 10.0;
+    const auto r           = run(sc, 40.0);
     // chi2 25 with 3 DOF: ~2e-5 false rejections per fix.
     ASSERT_LT_(r.stats.rejected, 3U);
 }
@@ -431,6 +448,22 @@ void test_impostor_alone_never_reacquired()
     ASSERT_LT_(r.maxVertErr, 1.0);
 }
 
+void test_impostor_alone_before_convergence()
+{
+    Scenario sc;
+    sc.name = "Before convergence: receiver silent for 15 s, only the bogus source; then back";
+    // Thresholds no estimate reaches: there is never a prediction to gate against.
+    sc.convergencePosSigma = 1e-4;
+    sc.convergenceOriSigma = 1e-4;
+    sc.fixKind             = [](double t, int)
+    { return (t > 10.0 && t < 25.0) ? FixKind::Impostor : FixKind::Real; };
+    const auto r = run(sc, 1e9);
+    // The bogus source never takes over, and the real fixes are accepted again:
+    ASSERT_EQUAL_(r.stats.reacquired, 0U);
+    ASSERT_GT_(r.stats.rejected_innovation, 70U);
+    ASSERT_EQUAL_(r.stats.consecutive_rejected, 0U);
+}
+
 void test_malformed_and_quality()
 {
     Scenario sc;
@@ -512,6 +545,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     try
     {
         test_nominal_rtk();
+        test_nominal_rtk_fast();
         test_nominal_single_point();
         test_impostor_interleaved();
         test_impostor_at_startup();
@@ -519,6 +553,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_outage_with_heading_drift();
         test_large_drift_is_reacquired();
         test_impostor_alone_never_reacquired();
+        test_impostor_alone_before_convergence();
         test_malformed_and_quality();
         test_height_band_before_convergence();
         test_redescending_kernels();

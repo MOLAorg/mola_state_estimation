@@ -143,7 +143,8 @@ Sensor inputs:
   `gnss_gate_locked()`: admission tests (fix qualities, finite positive variances,
   `gnss_max_horizontal_sigma`, `gnss_max_height_deviation`); the datum only after
   `gnss_datum_min_consistent_fixes` consistent fixes; fix-to-fix consistency while
-  there is no prediction; once converged (or relocalized), a chi2 innovation gate
+  there is no prediction (bounded by the odometry's antenna motion when there is any,
+  else by `gnss_max_plausible_speed`); predictions only from solved keyframes; once converged (or relocalized), a chi2 innovation gate
   against the predicted antenna, whose sigma grows with the path since the last
   accepted fix; a run of `gnss_gate_reacquire_after` rejected fixes that move like
   the prediction over `gnss_gate_reacquire_min_path` is reacquired. Counters in

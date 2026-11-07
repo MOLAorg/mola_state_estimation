@@ -679,7 +679,9 @@ class Parameters
      *  warning. 0 = never. Agreeing means, with a prediction, that the fixes
      *  moved like the predicted antenna (within half the predicted path, which
      *  allows heading errors up to ~30 deg) over at least
-     *  gnss_gate_reacquire_min_path; without one, mutually consistent positions.
+     *  gnss_gate_reacquire_min_path; without one, mutually consistent positions
+     *  whose displacement matches the odometry's over that same distance (or,
+     *  with no odometry at all, just mutually consistent positions).
      *  A source at a fixed wrong position does not move with the vehicle. */
     int gnss_gate_reacquire_after = 10;
 

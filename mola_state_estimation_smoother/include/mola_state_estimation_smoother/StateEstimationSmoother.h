@@ -551,9 +551,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
                 mrpt::topography::TGeodeticCoords geo;
             };
             std::optional<Fix> lastAccepted;  //!< used before there is a prediction
-            std::vector<Fix>   datumCandidates;  //!< consecutive consistent fixes
-            std::optional<Fix> lastRejected;  //!< last of the current rejected run
-            size_t             rejectedRunLength = 0;  //!< mutually consistent rejections
+            std::optional<mrpt::math::TPoint3D> lastAcceptedAntennaMap;  //!< odometry at it
+            std::vector<Fix>                    datumCandidates;  //!< consecutive consistent fixes
+            std::optional<Fix>                  lastRejected;  //!< last of the current rejected run
+            size_t rejectedRunLength = 0;  //!< mutually consistent rejections
+
+            /// Without a prediction: first fix of the current rejected run, and the
+            /// antenna position in {map} at that time, if any (odometry evidence).
+            std::optional<Fix>                  runStartFix;
+            std::optional<mrpt::math::TPoint3D> runStartAntennaMap;
 
             /// First fix of the current rejected run and its prediction (ENU).
             std::optional<mrpt::math::TPoint3D> runStartFixEnu;
@@ -765,10 +771,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Geo-reference from the current graph state (datum + T_enu_to_map).
     [[nodiscard]] std::optional<mola::Georeferencing> compute_geo_reference_locked() const;
 
-    /// Solved antenna position in {map} at time t: the solved keyframe closest in
-    /// time (within maxDt), moved by its twist to t.
+    /// Solved antenna position in {map} at time t: the keyframe closest in time
+    /// (within maxDt), moved by its twist to t. With solvedOnly, keyframes not
+    /// solved yet (seeded with a neighbor's pose) are skipped.
     [[nodiscard]] std::optional<mrpt::math::TPoint3D> predicted_antenna_in_map_locked(
-        const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt);
+        const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt,
+        bool solvedOnly);
 
     /// Admission tests and innovation gate of a GNSS fix (see Parameters.h).
     /// Returns false if it must not be fused. Updates state_.gnssGate.
