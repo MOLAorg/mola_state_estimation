@@ -482,10 +482,17 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
      - Angular velocity (``sigma_imu_angular_velocity``). Optionally, inertial propagation
        between pose updates (``imu_propagation``).
    * - ``sensor_msgs/NavSatFix``, ``gps_msgs/GPSFix``
-     - ENU position factor with a Huber kernel (``gnss_huber_threshold``), on the closest keyframe
+     - ENU position factor with a robust kernel (``gnss_robust_kernel``: Huber by default, or
+       Cauchy, Geman-McClure, DCS; scale ``gnss_huber_threshold``), on the closest keyframe
        moved to the fix time with its twist. Sigmas are floored at ``gnss_min_sigma_floor_xy``
        and ``gnss_min_sigma_floor_z`` (``MOLA_NAVSTATE_GNSS_MIN_SIGMA_XY`` / ``_Z``, 0.10 m and
-       0.30 m by default, as in the simple estimator). Requires a geo-reference:
+       0.30 m by default, as in the simple estimator). Each fix must first pass admission tests
+       (accepted fix qualities, valid covariance, maximum horizontal sigma, optional height band
+       around the datum) and an innovation gate against the predicted antenna position
+       (``gnss_gate_chi2``, 0 disables it); rejected fixes are logged and counted, and a run of
+       fixes that keep moving like the vehicle is reacquired after a drift. With
+       ``estimate_geo_reference``, the datum is only set after a few mutually consistent fixes.
+       Requires a geo-reference:
        either estimated (``estimate_geo_reference: true``) or fixed (``fixed_geo_reference``,
        or given by a geo-referenced map). The final one can be written to a YAML file with
        ``save_final_georef_to_file`` (``MOLA_SE_SAVE_GEOREF_FILE``), and poses can be queried

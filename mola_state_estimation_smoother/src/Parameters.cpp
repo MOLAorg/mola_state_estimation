@@ -165,6 +165,33 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // Geo-referencing
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, gnss_huber_threshold);
+    MCP_LOAD_OPT(cfg, gnss_robust_kernel);
+    ASSERTMSG_(
+        gnss_robust_kernel == "huber" || gnss_robust_kernel == "cauchy" ||
+            gnss_robust_kernel == "geman_mcclure" || gnss_robust_kernel == "dcs",
+        "gnss_robust_kernel must be one of: huber, cauchy, geman_mcclure, dcs");
+    MCP_LOAD_OPT(cfg, gnss_accepted_fix_qualities);
+    ASSERTMSG_(
+        gnss_accepted_fix_qualities.find_first_not_of("0123456789 ,\t") == std::string::npos,
+        "gnss_accepted_fix_qualities must be a list of integers, e.g. \"4 5\"");
+    MCP_LOAD_OPT(cfg, gnss_max_horizontal_sigma);
+    MCP_LOAD_OPT(cfg, gnss_max_height_deviation);
+    MCP_LOAD_OPT(cfg, gnss_gate_chi2);
+    MCP_LOAD_OPT(cfg, gnss_gate_prediction_sigma);
+    MCP_LOAD_OPT(cfg, gnss_gate_drift_per_meter);
+    MCP_LOAD_OPT(cfg, gnss_gate_reacquire_after);
+    MCP_LOAD_OPT(cfg, gnss_gate_reacquire_min_path);
+    ASSERT_GE_(gnss_gate_reacquire_min_path, 0.0);
+    MCP_LOAD_OPT(cfg, gnss_max_plausible_speed);
+    MCP_LOAD_OPT(cfg, gnss_datum_min_consistent_fixes);
+    ASSERT_GE_(gnss_max_horizontal_sigma, 0.0);
+    ASSERT_GE_(gnss_max_height_deviation, 0.0);
+    ASSERT_GE_(gnss_gate_chi2, 0.0);
+    ASSERT_GT_(gnss_gate_prediction_sigma, 0.0);
+    ASSERT_GE_(gnss_gate_drift_per_meter, 0.0);
+    ASSERT_GE_(gnss_gate_reacquire_after, 0);
+    ASSERT_GT_(gnss_max_plausible_speed, 0.0);
+    ASSERT_GE_(gnss_datum_min_consistent_fixes, 1);
     MCP_LOAD_OPT(cfg, gnss_min_sigma_floor_xy);
     MCP_LOAD_OPT(cfg, gnss_min_sigma_floor_z);
     ASSERT_GE_(gnss_min_sigma_floor_xy, 0.0);

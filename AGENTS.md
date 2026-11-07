@@ -137,8 +137,18 @@ Sensor inputs:
 - `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
   covariance is a future; with `async_backend` the backend waits for it before
   taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.
-- `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`), sigmas floored
-  at `gnss_min_sigma_floor_xy` / `_z` (also for the azimuth baselines). The fix goes
+- `fuse_gnss()`: ENU position, robust kernel `gnss_robust_kernel` (Huber by default;
+  Cauchy, Geman-McClure, DCS) scaled by `gnss_huber_threshold`, sigmas floored
+  at `gnss_min_sigma_floor_xy` / `_z` (also for the azimuth baselines). Before that,
+  `gnss_gate_locked()`: admission tests (fix qualities, finite positive variances,
+  `gnss_max_horizontal_sigma`, `gnss_max_height_deviation`); the datum only after
+  `gnss_datum_min_consistent_fixes` consistent fixes; fix-to-fix consistency while
+  there is no prediction (bounded by the odometry's antenna motion when there is any;
+  a short gap in it rejects; else `gnss_max_plausible_speed`); predictions only from solved keyframes; once converged (or relocalized), a chi2 innovation gate
+  against the predicted antenna, whose sigma grows with the path since the last
+  accepted fix; a run of `gnss_gate_reacquire_after` rejected fixes that move like
+  the prediction over `gnss_gate_reacquire_min_path` is reacquired. Counters in
+  `gnss_gate_stats()` (kept across resets), throttled warnings. The fix goes
   to the closest keyframe within
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
   `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
