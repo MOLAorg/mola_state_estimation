@@ -5459,6 +5459,19 @@ bool StateEstimationSmoother::gnss_gate_locked(
     const auto antennaMapNow = predicted_antenna_in_map_locked(
         gps.timestamp, gps.sensorPose.translation(), params_.gnss_nearby_keyframe_stamp_tolerance,
         true);
+    if (antennaMapNow)
+    {
+        gg.lastOdometryEvidence = gps.timestamp;
+    }
+    // Odometry seen recently but not now (a gap in the solved keyframes): the
+    // motion since the last accepted fix is unknown, which must not fall back to
+    // the speed bound meant for setups without odometry. A long enough gap is
+    // taken as odometry gone, so GNSS is not locked out forever.
+    const double odometryGapTolerance =
+        std::max(5.0, 5.0 * params_.gnss_nearby_keyframe_stamp_tolerance);
+    const bool odometryGap = !antennaMapNow && gg.lastOdometryEvidence &&
+                             std::abs(mrpt::system::timeDifference(
+                                 *gg.lastOdometryEvidence, gps.timestamp)) <= odometryGapTolerance;
 
     const auto accept = [&]()
     {
@@ -5554,6 +5567,10 @@ bool StateEstimationSmoother::gnss_gate_locked(
         if (!gg.lastAccepted)
         {
             return true;
+        }
+        if (odometryGap)
+        {
+            return false;
         }
         if (!gg.lastAcceptedAntennaMap || !antennaMapNow)
         {
@@ -5658,7 +5675,7 @@ bool StateEstimationSmoother::gnss_gate_locked(
             gg.runStartFix        = fix;
             gg.runStartAntennaMap = antennaMap;
         }
-        bool movedLikeOdometry = true;
+        bool movedLikeOdometry = !odometryGap;
         if (gg.runStartAntennaMap && antennaMap)
         {
             const double odoMove = (*antennaMap - *gg.runStartAntennaMap).norm();

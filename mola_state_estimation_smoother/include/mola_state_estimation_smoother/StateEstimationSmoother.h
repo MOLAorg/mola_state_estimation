@@ -552,9 +552,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             };
             std::optional<Fix> lastAccepted;  //!< used before there is a prediction
             std::optional<mrpt::math::TPoint3D> lastAcceptedAntennaMap;  //!< odometry at it
-            std::vector<Fix>                    datumCandidates;  //!< consecutive consistent fixes
-            std::optional<Fix>                  lastRejected;  //!< last of the current rejected run
-            size_t rejectedRunLength = 0;  //!< mutually consistent rejections
+            /// Last fix time with a solved antenna position (odometry evidence).
+            std::optional<mrpt::Clock::time_point> lastOdometryEvidence;
+            std::vector<Fix>   datumCandidates;  //!< consecutive consistent fixes
+            std::optional<Fix> lastRejected;  //!< last of the current rejected run
+            size_t             rejectedRunLength = 0;  //!< mutually consistent rejections
 
             /// Without a prediction: first fix of the current rejected run, and the
             /// antenna position in {map} at that time, if any (odometry evidence).

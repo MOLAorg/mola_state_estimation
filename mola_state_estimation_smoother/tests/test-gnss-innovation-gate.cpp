@@ -111,6 +111,8 @@ struct Scenario
     /// Odometry heading bias [rad/s] as a function of time (default none).
     std::function<double(double)>       odomYawBias = [](double) { return 0.0; };
     std::function<FixKind(double, int)> fixKind     = [](double, int) { return FixKind::Real; };
+    /// Odometry and IMU are published at time t (default: always).
+    std::function<bool(double)> sensorsOn = [](double) { return true; };
 };
 
 struct Result
@@ -227,7 +229,10 @@ Result run(const Scenario& sc, double checkFrom)
         imu.set(mrpt::obs::IMU_X_ACC, rng.drawGaussian1D(0, 0.05));
         imu.set(mrpt::obs::IMU_Y_ACC, rng.drawGaussian1D(0, 0.05));
         imu.set(mrpt::obs::IMU_Z_ACC, 9.81 + rng.drawGaussian1D(0, 0.05));
-        est.fuse_imu(imu);
+        if (sc.sensorsOn(t))
+        {
+            est.fuse_imu(imu);
+        }
 
         if (i % nGnssSteps == 0)
         {
@@ -286,7 +291,10 @@ Result run(const Scenario& sc, double checkFrom)
                               rng.drawGaussian1D(0, 0.0005), 0, 0);
         pdf.cov.setIdentity();
         pdf.cov *= mrpt::square(0.002);
-        est.fuse_pose(stamp, pdf, "odom");
+        if (sc.sensorsOn(t))
+        {
+            est.fuse_pose(stamp, pdf, "odom");
+        }
 
         (void)est.estimated_navstate(stamp, "map");  // runs the (synchronous) solve
 
@@ -494,6 +502,23 @@ void test_impostor_alone_before_convergence()
     ASSERT_EQUAL_(r.stats.consecutive_rejected, 0U);
 }
 
+void test_impostor_during_odometry_gap()
+{
+    Scenario sc;
+    sc.name = "Before convergence: odometry and IMU stop for 4 s, only the bogus source then";
+    sc.convergencePosSigma = 1e-4;
+    sc.convergenceOriSigma = 1e-4;
+    sc.sensorsOn           = [](double t) { return t < 10.0 || t > 14.0; };
+    sc.fixKind             = [](double t, int)
+    { return (t > 10.0 && t < 14.0) ? FixKind::Impostor : FixKind::Real; };
+    const auto r = run(sc, 1e9);
+    // Unknown motion during the gap must not open the speed bound to the bogus
+    // source; the real fixes after it are accepted again directly:
+    ASSERT_EQUAL_(r.stats.reacquired, 0U);
+    ASSERT_GE_(r.stats.rejected_innovation, 18U);
+    ASSERT_EQUAL_(r.stats.consecutive_rejected, 0U);
+}
+
 void test_malformed_and_quality()
 {
     Scenario sc;
@@ -585,6 +610,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_large_drift_is_reacquired();
         test_impostor_alone_never_reacquired();
         test_impostor_alone_before_convergence();
+        test_impostor_during_odometry_gap();
         test_malformed_and_quality();
         test_height_band_before_convergence();
         test_redescending_kernels();
