@@ -178,8 +178,9 @@ Other behavior:
 - Extrapolation (`extrapolate_pose_pdf()`) propagates covariance: anchor
   covariance through the composition plus velocity and acceleration noise.
 - Predict-twist low-pass (`predict_twist_filter_enabled`,
-  `predict_twist_filter_time_const`): the extrapolation velocity is a dt-aware
-  EMA of the newest keyframe's twist.
+  `predict_twist_filter_time_const`, 0.1 s): the extrapolation velocity is a
+  dt-aware EMA of the newest keyframe's twist. Longer constants lag at turn
+  exits and the front end follows the prior into a heading error.
 - Prediction covariance in an odometry source's frame
   (`predict_covariance_from_residuals`, default on): twist covariance from the
   running mean (`predict_residual_time_const`) of that source's squared

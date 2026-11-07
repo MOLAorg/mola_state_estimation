@@ -351,8 +351,9 @@ class Parameters
 
     /** [s] Time constant of the predict-twist low-pass
      * (predict_twist_filter_enabled). Larger = smoother prior but more lag
-     * behind genuine acceleration. */
-    double predict_twist_filter_time_const = 0.3;
+     * behind genuine acceleration: a lagging prior at the end of a turn can
+     * pull the registration into a heading error. */
+    double predict_twist_filter_time_const = 0.1;
 
     /** If true, the covariance of a prediction in an odometry source's own
      * frame (the motion prior a front end such as a LiDAR odometry receives)
