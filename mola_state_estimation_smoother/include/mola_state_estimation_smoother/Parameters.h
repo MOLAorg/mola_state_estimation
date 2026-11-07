@@ -587,6 +587,15 @@ class Parameters
      * bound. Default off. */
     bool relative_pose_increment_from_source_covariance = false;
 
+    /** Only with relative_pose_increment_from_source_covariance: if true, an
+     * increment takes just the translation block of the reading's covariance,
+     * and keeps relative_pose_increment_sigma_ang (plus its growth term) for
+     * the rotation, uncorrelated with the translation. For a source whose
+     * reported rotation uncertainty is much looser than its real accuracy,
+     * which would otherwise let other factors override its attitude. Default
+     * off. */
+    bool relative_pose_increment_source_covariance_translation_only = false;
+
     /** @} */
 
     /** @name Geo-referencing

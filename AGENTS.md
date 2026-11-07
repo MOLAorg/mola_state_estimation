@@ -132,7 +132,10 @@ Sensor inputs:
   The per-keyframe gravity and angular-velocity factors stay on with it.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
-  `relative_pose_increment_sigma_*`.
+  `relative_pose_increment_sigma_*`. With
+  `relative_pose_increment_source_covariance_translation_only`, only its
+  translation block; the rotation keeps `relative_pose_increment_sigma_ang`
+  (`test-relative-pose-source-cov-translation`).
 - `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
   covariance is a future; with `async_backend` the backend waits for it before
   taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.

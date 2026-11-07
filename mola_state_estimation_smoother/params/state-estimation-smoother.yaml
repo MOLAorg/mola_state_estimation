@@ -462,6 +462,10 @@ params:
   # relative_pose_increment_sigma_* values above.
   relative_pose_increment_from_source_covariance: ${MOLA_REL_POSE_INCR_FROM_SOURCE_COV|false}
 
+  # With the option above: take only the translation block of each reading's
+  # covariance, and keep relative_pose_increment_sigma_ang for the rotation.
+  relative_pose_increment_source_covariance_translation_only: ${MOLA_REL_POSE_INCR_SOURCE_COV_TRANSLATION_ONLY|false}
+
   # Huber m-estimator threshold for fuse_pose() factors ("map" priors and
   # odometry increments alike), in whitened units (sigmas of the covariance given for each factor,
   # so only meaningful with calibrated covariances). A dead-reckoning source

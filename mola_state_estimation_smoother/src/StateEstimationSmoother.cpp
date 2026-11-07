@@ -2173,7 +2173,15 @@ void StateEstimationSmoother::fuse_pose_locked(
                     // The covariance of the reading, in the right tangent of the
                     // current pose: with the previous pose held fixed, that is
                     // also the right tangent of the increment.
-                    incrCov_out = cov_out;
+                    if (params_.relative_pose_increment_source_covariance_translation_only)
+                    {
+                        // Rotation keeps the configured sigma, uncorrelated:
+                        incrCov_out.block<3, 3>(3, 3) = cov_out.block<3, 3>(3, 3);
+                    }
+                    else
+                    {
+                        incrCov_out = cov_out;
+                    }
                 }
 
                 state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(

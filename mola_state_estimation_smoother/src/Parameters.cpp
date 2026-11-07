@@ -210,6 +210,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_rad);
     MCP_LOAD_OPT(cfg, pose_robust_huber_threshold);
     MCP_LOAD_OPT(cfg, relative_pose_increment_from_source_covariance);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_source_covariance_translation_only);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
