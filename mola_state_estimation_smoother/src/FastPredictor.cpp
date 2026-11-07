@@ -140,6 +140,24 @@ std::optional<NavState> FastPredictor::predict(
             return ret;
         }
 
+        // ENU frame: the {map} prediction through the current T_enu_to_map.
+        if (frame_id == params.enu_frame_name)
+        {
+            if (!snap->currentGeoReference ||
+                (!params.estimate_geo_reference && !snap->mapPositionObserved))
+            {
+                return std::nullopt;  // not geo-referenced (yet)
+            }
+            mrpt::poses::CPose3DPDFGaussian anchorPose;
+            anchorPose.copyFrom(ret.pose);
+            const auto mapPdf =
+                extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+            auto enuPdf = snap->currentGeoReference->T_enu_to_map + mapPdf;
+            apply_pose_sigma_floor(params, enuPdf);
+            ret.pose.copyFrom(enuPdf);
+            return ret;
+        }
+
         // Odometry frame {odom_i}: resolve its numeric id.
         const auto& str2id = snap->frameNames.getDirectMap();
         const auto  itName = str2id.find(frame_id);

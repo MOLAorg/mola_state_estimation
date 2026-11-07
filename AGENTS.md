@@ -92,7 +92,8 @@ Structure:
   With `imu_preintegration.enabled`, also IMU biases `Z(k)`
   (`imuBias::ConstantBias`), chained by a random walk on every link.
 - Keyframes are created per timestamp, reusing an existing one closer than
-  `min_time_difference_to_create_new_frame`; consecutive keyframes are linked
+  `min_time_difference_to_create_new_frame` (the first neighbor found; GNSS asks
+  for the closest one); consecutive keyframes are linked
   by kinematic factors (`ConstantVelocity` or `Tricycle` model).
 - Window length `sliding_window_length` [s].
 - YAML supports `${ENV_VAR|default}` substitution.
@@ -136,7 +137,12 @@ Sensor inputs:
 - `fuse_pose_deferred()` (needs the mola_kernel with it): a pose whose
   covariance is a future; with `async_backend` the backend waits for it before
   taking `stateMutex_` (`deferredCovs_`), otherwise it is awaited at once.
-- `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`).
+- `fuse_gnss()`: ENU position, Huber-robust (`gnss_huber_threshold`), sigmas floored
+  at `gnss_min_sigma_floor_xy` / `_z` (also for the azimuth baselines). The fix goes
+  to the closest keyframe within
+  `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
+  `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
+  keyframe's `V`/`W`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -233,6 +239,15 @@ Georeferencing and relocalization:
   pinned azimuth (standing still longer than the window), they biased it for good.
   The fix completing the baseline replaces the anchor with a prior at the azimuth
   measured by the GNSS vs. {map} antenna displacement.
+- `get_geo_reference()`: the fixed one, or the datum (first fix) plus
+  `T_enu_to_map` as of the last solve (`lastSolvedGeoref`) once its azimuth is
+  unpinned, converged or not. It also serves the `enu` frame in
+  `estimated_navstate()` (T of that solve, causal) and `estimated_trajectory()`
+  (each keyframe through the T it was finalized with once the georef converged,
+  `finalizedTrajectoryEnu_`, cleared on reset; latest T for the rest). {map} moves with respect to ENU
+  while T is refined, so a {map} trajectory is not rigidly related to ENU.
+  `save_final_georef_to_file` (`MOLA_SE_SAVE_GEOREF_FILE`) writes it on
+  destruction, as mp2p_icp YAML.
 - `set_geo_reference()` / `fixed_geo_reference`: fixes `T_enu_to_map` and
   resets the estimator. Zero variances are floored to 1e-6 (singular otherwise).
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once
@@ -288,6 +303,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `FactorTricycleKinematic` | `NoiseModelFactor4` | Ackermann / tricycle kinematics |
 | `FactorGnssEnu` | `ExpressionFactorN` | GNSS position in ENU |
 | `FactorGnssMapEnu` | `ExpressionFactorN` | GNSS with explicit `T_enu_to_map` |
+| `FactorGnssMapEnuConstVel` | `ExpressionFactorN` | Same, fix time offset from its keyframe (uses `V`, `W`) |
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |

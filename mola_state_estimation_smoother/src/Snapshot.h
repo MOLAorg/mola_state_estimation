@@ -78,6 +78,11 @@ struct Snapshot
     /// Current georeference (fixed or estimated), if any.
     std::optional<mola::Georeferencing> geoReference;
 
+    /// The geo-reference served by get_geo_reference(): like geoReference, but
+    /// with the latest T_enu_to_map estimate even while not "converged". Used
+    /// to serve poses in the ENU frame.
+    std::optional<mola::Georeferencing> currentGeoReference;
+
     /// Whether localization has converged (mode-aware, mirrors
     /// has_converged_localization()).
     bool localizationConverged = false;

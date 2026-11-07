@@ -56,6 +56,7 @@
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
+#include <mola_gtsam_factors/FactorGnssMapEnuConstVel.h>
 #include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
@@ -86,6 +87,7 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -532,6 +534,24 @@ StateEstimationSmoother::~StateEstimationSmoother()
 {
     // Join the backend thread before any member it touches is destroyed.
     stop_backend_thread();
+
+    if (!params_.save_final_georef_to_file.empty())
+    {
+        try
+        {
+            if (!save_geo_reference_to_file(params_.save_final_georef_to_file))
+            {
+                std::cerr << "[StateEstimationSmoother] No geo-reference written to '"
+                          << params_.save_final_georef_to_file
+                          << "': none available or the file could not be written.\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[StateEstimationSmoother] Error saving the geo-reference: " << e.what()
+                      << "\n";
+        }
+    }
 }
 
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
@@ -1010,6 +1030,9 @@ void StateEstimationSmoother::reset()
 void StateEstimationSmoother::reset_locked()
 {
     state_ = State();
+    // The datum goes with the state, so ENU poses recorded so far may refer to
+    // another one: keep only the {map} history.
+    finalizedTrajectoryEnu_.clear();
     {
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_.reset();
@@ -1762,6 +1785,18 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
 
+    // Receiver covariance with the configured floors, used for everything below
+    // (factor noise and azimuth baselines alike):
+    Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
+    {
+        const double minVarXY = mrpt::square(params_.gnss_min_sigma_floor_xy);
+        const double minVarZ  = mrpt::square(params_.gnss_min_sigma_floor_z);
+        enuCov(0, 0) += std::max(0.0, minVarXY - enuCov(0, 0));
+        enuCov(1, 1) += std::max(0.0, minVarXY - enuCov(1, 1));
+        enuCov(2, 2) += std::max(0.0, minVarZ - enuCov(2, 2));
+    }
+    const double sigmaXY = std::sqrt(std::max(enuCov(0, 0), enuCov(1, 1)));
+
     // The azimuth of T_enu_to_map becomes observable only once the fixes span a
     // horizontal baseline long enough for the configured convergence accuracy.
     // Until then (no attitude source) it is pinned by its gauge anchor at an
@@ -1819,8 +1854,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
             g.firstGnssMapXY = antennaMapXY;
             return;
         }
-        const auto&  cov          = *gps.covariance_enu;
-        const double sigmaXY      = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
         const auto   enuBaseline  = xy - *g.firstGnssEnuXY;
         const auto   mapBaseline  = *antennaMapXY - *g.firstGnssMapXY;
         const double baselineNorm = enuBaseline.norm();
@@ -1878,7 +1911,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(
-        gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance);
+        gps.timestamp, params_.gnss_nearby_keyframe_stamp_tolerance, true /*pickClosest*/);
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_gnss]: t=%f this_kf_id=%zu ENU=%s", mrpt::Clock::toDouble(gps.timestamp),
@@ -1887,7 +1920,8 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     // Add geo-ref factor:
     const auto sensorOnVehicle = mrpt::gtsam_wrappers::toPoint3(gps.sensorPose.translation());
     const auto observedEnu     = mrpt::gtsam_wrappers::toPoint3(ENU_point);
-    const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(gps.covariance_enu->asEigen());
+
+    const auto enuNoise = gtsam::noiseModel::Gaussian::Covariance(enuCov);
 
     gtsam::SharedNoiseModel enuNoiseModel;
     if (params_.gnss_huber_threshold > 0)
@@ -1900,8 +1934,22 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         enuNoiseModel = enuNoise;
     }
 
-    state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
-        symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseModel);
+    // The fix may be up to gnss_nearby_keyframe_stamp_tolerance away from its
+    // keyframe: move the antenna to the fix time with the keyframe's twist, or a
+    // moving vehicle would be pulled by speed * dt towards where it was not.
+    const double fixDt =
+        mrpt::system::timeDifference(state_.stamp2frame_index.inverse(this_kf_id), gps.timestamp);
+    if (std::abs(fixDt) > 1e-6)
+    {
+        state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuConstVel>(
+            symbol_T_enu_to_map, T(this_kf_id), V(this_kf_id), W(this_kf_id), sensorOnVehicle,
+            fixDt, observedEnu, enuNoiseModel);
+    }
+    else
+    {
+        state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnu>(
+            symbol_T_enu_to_map, T(this_kf_id), sensorOnVehicle, observedEnu, enuNoiseModel);
+    }
 
     // Through a fixed T_enu_to_map, GNSS observes where {map} is:
     if (params_.fixed_geo_reference.has_value())
@@ -1922,8 +1970,6 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         }
         else
         {
-            const auto&  cov     = *gps.covariance_enu;
-            const double sigmaXY = std::sqrt(std::max(cov(0, 0), cov(1, 1)));
             const double minBaseline =
                 std::sqrt(2.0) * sigmaXY / mrpt::DEG2RAD(YAW_FROM_BASELINE_ACCURACY_DEG);
             if ((xy - *state_.gtsam->firstGnssXYForYaw).norm() >= minBaseline)
@@ -2419,6 +2465,25 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             return ret;
         }
 
+        // ENU frame: the {map} prediction through the current T_enu_to_map.
+        if (frame_id == params_.enu_frame_name)
+        {
+            const auto georef = georef_for_enu_poses_locked();
+            if (!georef)
+            {
+                return {};  // not geo-referenced (yet)
+            }
+            mrpt::poses::CPose3DPDFGaussian anchorPose;
+            anchorPose.copyFrom(retKf.pose);
+            const auto mapPdf = extrapolate_pose_pdf(
+                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+            auto enuPdf = georef->T_enu_to_map + mapPdf;
+            apply_pose_sigma_floor(params_, enuPdf);
+            ret.pose.copyFrom(enuPdf);
+            navstate_dump_row(timestamp, closestFrameDtSigned, ret);
+            return ret;
+        }
+
         // The requested odometry frame may not have been registered yet (e.g.
         // the very first query of a brand-new frame_id, before any fuse_pose()/
         // fuse_odometry() call has registered it). Treat that as "not ready yet".
@@ -2522,7 +2587,19 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
     // two frames coincide, which is the case of an offline odometry run, and
     // the best available answer otherwise, since no per-keyframe anchor is kept.
     std::optional<mrpt::poses::CPose3D> T_frame_wrt_map;
-    if (frame_id != params_.reference_frame_name)
+    // In the ENU frame, keyframes without a pose recorded in ENU when they were
+    // finalized go through the latest T_enu_to_map:
+    std::optional<mrpt::poses::CPose3D> T_enu_to_map;
+    if (frame_id == params_.enu_frame_name)
+    {
+        const auto georef = georef_for_enu_poses_locked();
+        if (!georef)
+        {
+            return {};
+        }
+        T_enu_to_map = georef->T_enu_to_map.mean;
+    }
+    else if (frame_id != params_.reference_frame_name)
     {
         const auto itId = state_.known_odom_frames.find_key(frame_id);
         if (itId == state_.known_odom_frames.getDirectMap().end())
@@ -2544,14 +2621,30 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
     { return t >= start_time && t <= end_time; };
 
     const auto toRequestedFrame = [&](const mrpt::poses::CPose3D& pInMap)
-    { return T_frame_wrt_map ? (pInMap - *T_frame_wrt_map).asTPose() : pInMap.asTPose(); };
+    {
+        if (T_enu_to_map)
+        {
+            return (*T_enu_to_map + pInMap).asTPose();
+        }
+        return T_frame_wrt_map ? (pInMap - *T_frame_wrt_map).asTPose() : pInMap.asTPose();
+    };
 
     for (const auto& [t, p] : finalizedTrajectory_)
     {
-        if (inRange(t))
+        if (!inRange(t))
         {
-            ret.insert(t, toRequestedFrame(mrpt::poses::CPose3D(p)));
+            continue;
         }
+        if (T_enu_to_map)
+        {
+            if (const auto itEnu = finalizedTrajectoryEnu_.find(t);
+                itEnu != finalizedTrajectoryEnu_.end())
+            {
+                ret.insert(t, itEnu->second);
+                continue;
+            }
+        }
+        ret.insert(t, toRequestedFrame(mrpt::poses::CPose3D(p)));
     }
     for (const auto& [t, frame_idx] : state_.stamp2frame_index)
     {
@@ -2932,6 +3025,14 @@ void StateEstimationSmoother::delete_too_old_entries()
     // smoothed trajectory instead of the front end's registered poses.
     if (params_.keep_finalized_trajectory)
     {
+        // Recorded in ENU only once an estimated geo-reference has converged:
+        // until then T_enu_to_map is still far from its final value, and the
+        // latest one is the better choice for those keyframes.
+        std::optional<mola::Georeferencing> georef;
+        if (!params_.estimate_geo_reference || state_.geo_reference.has_value())
+        {
+            georef = georef_for_enu_poses_locked();
+        }
         for (const auto& [t_erase, frame_idx] : stamp2erasedFrame)
         {
             const auto it = state_.last_estimated_states.find(frame_idx);
@@ -2940,6 +3041,11 @@ void StateEstimationSmoother::delete_too_old_entries()
                 continue;
             }
             finalizedTrajectory_.insert(t_erase, it->second.pose.asTPose());
+            if (georef)
+            {
+                finalizedTrajectoryEnu_.insert(
+                    t_erase, (georef->T_enu_to_map.mean + it->second.pose).asTPose());
+            }
         }
     }
 
@@ -2990,15 +3096,20 @@ StateEstimationSmoother::frame_index_t StateEstimationSmoother::create_or_get_ke
 
 StateEstimationSmoother::frame_index_t
     StateEstimationSmoother::create_or_get_keyframe_by_timestamp_locked(
-        const mrpt::Clock::time_point& t, const std::optional<double>& overrideCloseEnough)
+        const mrpt::Clock::time_point& t, const std::optional<double>& overrideCloseEnough,
+        bool pickClosest)
 {
     const auto tle = mola::ProfilerEntry(profiler_, "create_or_get_keyframe_by_timestamp");
 
     const double threshold = overrideCloseEnough ? *overrideCloseEnough
                                                  : params_.min_time_difference_to_create_new_frame;
 
-    // See if we have an existing frame index close enough to t:
-    const auto closestPrior = find_before_after(t, true);
+    // See if we have an existing frame index close enough to t: the first one
+    // found, or the closest one if requested (with a permissive threshold both
+    // neighbors may qualify):
+    const auto                   closestPrior = find_before_after(t, true);
+    std::optional<frame_index_t> best;
+    double                       bestDt = threshold;
     for (const auto& it : {closestPrior.first, closestPrior.second})
     {
         if (it == state_.stamp2frame_index.getDirectMap().end())
@@ -3009,10 +3120,19 @@ StateEstimationSmoother::frame_index_t
 
         const double dt = std::abs(mrpt::system::timeDifference(existing_t, t));
 
-        if (dt < threshold)
+        if (dt < bestDt)
         {
-            return frame_idx;
+            bestDt = dt;
+            best   = frame_idx;
+            if (!pickClosest)
+            {
+                break;
+            }
         }
+    }
+    if (best)
+    {
+        return *best;
     }
 
     // Create a new one:
@@ -3440,7 +3560,9 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
                 ++nImuAttitude;
             else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
                 ++nImuGravity;
-            else if (dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p))
+            else if (
+                dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p) ||
+                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVel*>(p))
                 ++nGnss;
             else if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(p))
                 ++nConstVel;
@@ -3777,6 +3899,14 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
     state_.gtsam->newFactors.resize(0);
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
+
+    // Geo-reference as of this solve. Keyframes finalized above came from the
+    // previous one, so delete_too_old_entries() paired them with the previous
+    // value of this field:
+    if (params_.estimate_geo_reference)
+    {
+        state_.lastSolvedGeoref = compute_geo_reference_locked();
+    }
 
     // Publish an immutable snapshot for the lock-free read path. Only built in
     // async mode: the synchronous path reads state_ directly and building the
@@ -4382,7 +4512,8 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
         }
     }
 
-    snap->geoReference = state_.geo_reference;
+    snap->geoReference        = state_.geo_reference;
+    snap->currentGeoReference = get_geo_reference_locked();
 
     // Convergence flag, mode-aware, mirroring has_converged_localization().
     bool converged = false;
@@ -4581,6 +4712,112 @@ std::optional<std::pair<double, double>> StateEstimationSmoother::estimated_imu_
 {
     std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
     return lastYawBias_;
+}
+
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
+std::optional<mola::Georeferencing> StateEstimationSmoother::get_geo_reference() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+    return get_geo_reference_locked();
+}
+#endif
+
+std::optional<mola::Georeferencing> StateEstimationSmoother::get_geo_reference_locked() const
+{
+    // Called with stateMutex_ already held by the caller.
+    if (!params_.estimate_geo_reference)
+    {
+        return state_.geo_reference;  // the fixed one, if any
+    }
+    // Estimated: as of the last solve, so the gate and T_enu_to_map always come
+    // from the same one, and match the keyframe poses of that solve.
+    return state_.lastSolvedGeoref;
+}
+
+std::optional<mola::Georeferencing> StateEstimationSmoother::georef_for_enu_poses_locked() const
+{
+    // With a fixed geo-reference, {map} poses mean nothing until something
+    // observes the {map} position (it is the first odometry frame until then):
+    if (!params_.estimate_geo_reference && !state_.gtsam->mapPositionObservedSolved)
+    {
+        return {};
+    }
+    return get_geo_reference_locked();
+}
+
+std::optional<mola::Georeferencing> StateEstimationSmoother::compute_geo_reference_locked() const
+{
+    // Estimated: the datum is the first GNSS fix; T_enu_to_map is meaningful
+    // only once its azimuth is observed (not held by the gauge anchor).
+    std::optional<mrpt::topography::TGeodeticCoords> datum;
+    if (state_.geo_reference.has_value())
+    {
+        datum = state_.geo_reference->geo_coord;
+    }
+    else
+    {
+        datum = state_.tentative_geo_coord_reference;
+    }
+    if (!datum || state_.gtsam->enuYawAnchor)
+    {
+        return {};
+    }
+    const auto T_enu_to_map = estimated_T_enu_to_map_locked();
+    if (!T_enu_to_map)
+    {
+        return {};
+    }
+    mola::Georeferencing g;
+    g.geo_coord    = *datum;
+    g.T_enu_to_map = *T_enu_to_map;
+    return g;
+}
+
+bool StateEstimationSmoother::save_geo_reference_to_file(const std::string& yamlFile) const
+{
+    std::optional<mola::Georeferencing> g;
+    {
+        auto lck = mrpt::lockHelper(stateMutex_);
+        g        = get_geo_reference_locked();
+    }
+    if (!g)
+    {
+        return false;
+    }
+
+    // Same schema as mp2p_icp::ToYAML(), so the mp2p_icp/mola tools read it:
+    mrpt::containers::yaml d = mrpt::containers::yaml::Map();
+    d["type"]                = "mp2p_icp::Georeferencing";
+    d["defined"]             = true;
+
+    mrpt::containers::yaml geo = mrpt::containers::yaml::Map();
+    geo["lon"]                 = g->geo_coord.lon.decimal_value;
+    geo["lat"]                 = g->geo_coord.lat.decimal_value;
+    geo["altitude"]            = g->geo_coord.height;
+    d["geo_coord"]             = geo;
+
+    const auto&            p    = g->T_enu_to_map.mean;
+    mrpt::containers::yaml mean = mrpt::containers::yaml::Map();
+    mean["x"]                   = p.x();
+    mean["y"]                   = p.y();
+    mean["z"]                   = p.z();
+    mean["yaw_deg"]             = mrpt::RAD2DEG(p.yaw());
+    mean["pitch_deg"]           = mrpt::RAD2DEG(p.pitch());
+    mean["roll_deg"]            = mrpt::RAD2DEG(p.roll());
+
+    mrpt::containers::yaml pose = mrpt::containers::yaml::Map();
+    pose["mean"]                = mean;
+    pose["cov"]                 = mrpt::containers::yaml::FromMatrix(g->T_enu_to_map.cov);
+    d["T_enu_to_map"]           = pose;
+
+    std::ofstream f(yamlFile);
+    if (!f.is_open())
+    {
+        return false;
+    }
+    f << d;
+    f.close();
+    return !f.fail();
 }
 
 std::optional<mrpt::poses::CPose3DPDFGaussian>

@@ -233,7 +233,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
     void set_geo_reference(const mola::Georeferencing& georef) override;
+
+    /** Implements NavStateFilter::get_geo_reference(): the fixed geo-reference,
+     *  or, when `estimate_geo_reference` is enabled, the datum (first GNSS fix)
+     *  with the latest estimate of T_enu_to_map, once its azimuth is observable.
+     *  std::nullopt otherwise.
+     */
+    [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference() const override;
 #endif
+
+    /** Writes the current geo-reference (see get_geo_reference()) to a YAML
+     *  file, in the mp2p_icp georeferencing format. Returns false if there is
+     *  none yet or the file cannot be written. Done automatically on destruction
+     *  if the `save_final_georef_to_file` parameter is set.
+     */
+    bool save_geo_reference_to_file(const std::string& yamlFile) const;
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
@@ -259,7 +273,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *
      *  Requires `keep_finalized_trajectory` (off by default). An odometry
      *  frame is served through the latest estimate of that frame's transform,
-     *  held constant over the trajectory.
+     *  held constant over the trajectory. In the ENU frame, each keyframe goes
+     *  through the T_enu_to_map estimated when it left the window, since
+     *  {map} itself moves with respect to ENU while that estimate is refined;
+     *  keyframes finalized before the geo-reference converged, and those still
+     *  in the window, use the latest one.
      */
     [[nodiscard]] std::optional<mrpt::poses::CPose3DInterpolator> estimated_trajectory(
         const mrpt::Clock::time_point& start_time, const mrpt::Clock::time_point& end_time,
@@ -504,6 +522,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Will be populated with the first GNSS coords when in active estimation mode.
         std::optional<mrpt::topography::TGeodeticCoords> tentative_geo_coord_reference;
 
+        /// Estimated geo-reference (datum + T_enu_to_map) as of the last solve.
+        std::optional<mola::Georeferencing> lastSolvedGeoref;
+
         /// Flag to track if we've already published the estimated geo-ref
         bool estimated_georef_published = false;
 
@@ -582,6 +603,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
     /// of the factor graph does not discard the history already collected.
     mrpt::poses::CPose3DInterpolator finalizedTrajectory_;
+    /// Same keyframes in ENU, through the T_enu_to_map estimated when each one
+    /// left the window (the one it was optimized against). Only those finalized
+    /// once the geo-reference was fixed or had converged.
+    mrpt::poses::CPose3DInterpolator finalizedTrajectoryEnu_;
     bool                             params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
@@ -681,8 +706,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const mrpt::math::CMatrixDouble66& twistCov);
     [[nodiscard]] frame_index_t create_or_get_keyframe_by_timestamp_locked(
         const mrpt::Clock::time_point& t,
-        const std::optional<double>&   overrideCloseEnough = std::nullopt);
-    void process_pending_gtsam_updates_locked();
+        const std::optional<double>& overrideCloseEnough = std::nullopt, bool pickClosest = false);
+    void                                              process_pending_gtsam_updates_locked();
+    [[nodiscard]] std::optional<mola::Georeferencing> get_geo_reference_locked() const;
+    /// Geo-reference to express {map} poses in ENU, or empty if they cannot be.
+    [[nodiscard]] std::optional<mola::Georeferencing> georef_for_enu_poses_locked() const;
+    /// Geo-reference from the current graph state (datum + T_enu_to_map).
+    [[nodiscard]] std::optional<mola::Georeferencing> compute_geo_reference_locked() const;
+
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map_locked()
         const;
 
