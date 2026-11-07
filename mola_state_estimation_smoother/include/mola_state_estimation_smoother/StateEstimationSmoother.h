@@ -55,6 +55,7 @@
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 #include <mrpt/system/COutputLogger.h>
 #include <mrpt/system/CTimeLogger.h>
+#include <mrpt/topography/data_types.h>
 
 // std:
 #include <array>
@@ -248,6 +249,19 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  if the `save_final_georef_to_file` parameter is set.
      */
     bool save_geo_reference_to_file(const std::string& yamlFile) const;
+
+    /// Counters of the GNSS admission tests and innovation gate.
+    struct GnssGateStats
+    {
+        size_t accepted             = 0;  //!< fixes that passed every test
+        size_t rejected             = 0;  //!< by any test below
+        size_t rejected_admission   = 0;  //!< quality, covariance, sigma, height
+        size_t rejected_innovation  = 0;  //!< innovation gate or fix-to-fix consistency
+        size_t consecutive_rejected = 0;  //!< current run of rejections
+        size_t reacquired           = 0;  //!< runs accepted after gnss_gate_reacquire_after
+        size_t datum_restarts       = 0;  //!< datum candidates dropped as inconsistent
+    };
+    [[nodiscard]] GnssGateStats gnss_gate_stats() const;
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
@@ -525,6 +539,41 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// Estimated geo-reference (datum + T_enu_to_map) as of the last solve.
         std::optional<mola::Georeferencing> lastSolvedGeoref;
 
+        /// GNSS gate bookkeeping.
+        struct GnssGate
+        {
+            /// A fix as a geocentric point, for fix-to-fix consistency tests.
+            struct Fix
+            {
+                mrpt::math::TPoint3D              ecef;
+                double                            sigma = 0;  //!< isotropic [m]
+                mrpt::Clock::time_point           t;
+                mrpt::topography::TGeodeticCoords geo;
+            };
+            std::optional<Fix> lastAccepted;  //!< used before there is a prediction
+            std::vector<Fix>   datumCandidates;  //!< consecutive consistent fixes
+            std::optional<Fix> lastRejected;  //!< last of the current rejected run
+            size_t             rejectedRunLength = 0;  //!< mutually consistent rejections
+
+            /// First fix of the current rejected run and its prediction (ENU).
+            std::optional<mrpt::math::TPoint3D> runStartFixEnu;
+            std::optional<mrpt::math::TPoint3D> runStartPredEnu;
+
+            // Prediction uncertainty model:
+            double                              postSigma         = -1;  //!< < 0: not initialized
+            double                              pathSinceAccepted = 0;  //!< [m]
+            std::optional<mrpt::math::TPoint3D> lastPredictedAntenna;  //!< in {map}
+
+            /// With a fixed geo-reference: the vehicle position has converged
+            /// (sticky), so there is a prediction worth gating against.
+            bool relocalized = false;
+
+            /// After a reacquisition, the gate stays open while the estimate
+            /// catches up with the fixes.
+            bool reacquiring = false;
+        };
+        GnssGate gnssGate;
+
         /// Flag to track if we've already published the estimated geo-ref
         bool estimated_georef_published = false;
 
@@ -607,7 +656,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// left the window (the one it was optimized against). Only those finalized
     /// once the geo-reference was fixed or had converged.
     mrpt::poses::CPose3DInterpolator finalizedTrajectoryEnu_;
-    bool                             params_loaded_ = false;
+    /// GNSS gate counters; kept outside State so a reset does not clear them.
+    GnssGateStats gnssGateStats_;
+    bool          params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
@@ -713,6 +764,17 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     [[nodiscard]] std::optional<mola::Georeferencing> georef_for_enu_poses_locked() const;
     /// Geo-reference from the current graph state (datum + T_enu_to_map).
     [[nodiscard]] std::optional<mola::Georeferencing> compute_geo_reference_locked() const;
+
+    /// Solved antenna position in {map} at time t: the solved keyframe closest in
+    /// time (within maxDt), moved by its twist to t.
+    [[nodiscard]] std::optional<mrpt::math::TPoint3D> predicted_antenna_in_map_locked(
+        const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt);
+
+    /// Admission tests and innovation gate of a GNSS fix (see Parameters.h).
+    /// Returns false if it must not be fused. Updates state_.gnssGate.
+    [[nodiscard]] bool gnss_gate_locked(
+        const mrpt::obs::CObservationGPS& gps, const mrpt::topography::TGeodeticCoords& geo,
+        const std::array<double, 3>& enuVarFloored);
 
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_enu_to_map_locked()
         const;

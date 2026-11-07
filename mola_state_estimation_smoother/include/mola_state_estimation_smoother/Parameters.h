@@ -629,9 +629,76 @@ class Parameters
      *  Applied in whitened (normalized) residual space, so units are
      *  standard deviations, not meters. Suitable values: ~1.5 (switch to
      *  linear loss beyond 1.5σ). Set to 0 to disable robust cost (plain
-     *  Gaussian).
+     *  Gaussian). It is also the scale of the other kernels in
+     *  gnss_robust_kernel.
      */
     double gnss_huber_threshold = 1.5;  // [sigmas]
+
+    /** Robust kernel of the GNSS factors: "huber" (default), or a redescending
+     *  one, whose influence fades for large residuals: "cauchy",
+     *  "geman_mcclure" or "dcs". Scale: gnss_huber_threshold. Kernels with zero
+     *  influence beyond a cutoff (e.g. Tukey) are not offered: they leave the
+     *  geo-reference unobserved while the estimate is still far off. */
+    std::string gnss_robust_kernel = "huber";
+
+    /** \name GNSS admission tests and innovation gate
+     *  A fix must pass these before it becomes a factor. Rejections are counted
+     *  (gnss_gate_stats()) and logged as throttled warnings.
+     * @{ */
+
+    /** GGA fix qualities accepted, separated by spaces or commas (e.g. "4 5" for
+     *  RTK fixed and float only; 1: single point, 2: DGPS, 4: RTK fixed, 5: RTK
+     *  float). Empty = any valid fix (quality 0 is always discarded). */
+    std::string gnss_accepted_fix_qualities;
+
+    /** Fixes whose receiver horizontal sigma exceeds this are discarded [m].
+     *  0 = no limit. The simple estimator uses 0.20 to keep RTK-fixed only. */
+    double gnss_max_horizontal_sigma = 0.0;  // [m]
+
+    /** Fixes whose height differs from the datum height by more than this are
+     *  discarded [m]. 0 = no limit. A cheap guard against fabricated fixes,
+     *  e.g. a datum position with zero height. */
+    double gnss_max_height_deviation = 0.0;  // [m]
+
+    /** Innovation gate: a fix is rejected if the squared Mahalanobis distance
+     *  of its ENU position to the predicted antenna position exceeds this
+     *  (chi-squared, 3 DOF; 25 is ~99.998%). 0 disables the gate. */
+    double gnss_gate_chi2 = 25.0;
+
+    /** Uncertainty of the predicted antenna position right after a good fix,
+     *  besides the fix's own [m]: extrapolation, lever arm, time-stamping. */
+    double gnss_gate_prediction_sigma = 0.5;  // [m]
+
+    /** Growth of the predicted position sigma with the distance traveled since
+     *  the last accepted fix [m/m], so that the gate opens up during a GNSS
+     *  outage instead of locking out the fixes after it. */
+    double gnss_gate_drift_per_meter = 0.02;
+
+    /** After this many consecutive rejected fixes that agree with each other,
+     *  the estimate is the one deemed wrong: they are accepted again, with a
+     *  warning. 0 = never. Agreeing means, with a prediction, that the fixes
+     *  moved like the predicted antenna (within half the predicted path, which
+     *  allows heading errors up to ~30 deg) over at least
+     *  gnss_gate_reacquire_min_path; without one, mutually consistent positions.
+     *  A source at a fixed wrong position does not move with the vehicle. */
+    int gnss_gate_reacquire_after = 10;
+
+    /** Predicted displacement the vehicle must cover during a rejected run before
+     *  it can be reacquired [m]: standing still, a drifted estimate and a source at a
+     *  fixed wrong position look alike. */
+    double gnss_gate_reacquire_min_path = 5.0;  // [m]
+
+    /** Before the geo-reference converges, consecutive fixes are compared with
+     *  each other: they may not be farther apart than this speed allows, plus
+     *  their uncertainty [m/s]. */
+    double gnss_max_plausible_speed = 50.0;  // [m/s]
+
+    /** With estimate_geo_reference, the datum is defined only after this many
+     *  consecutive, mutually consistent fixes (the first of them), so a single
+     *  bogus fix at start-up cannot define the whole map frame. */
+    int gnss_datum_min_consistent_fixes = 3;
+
+    /** @} */
 
     /** Lower bound [m] on the horizontal (East, North) standard deviation of a
      *  GNSS fix: a receiver variance below it is raised to it. RTK fixes often

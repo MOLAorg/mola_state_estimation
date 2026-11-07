@@ -279,3 +279,10 @@ mola_add_test(
   LINK_LIBRARIES
     mola::mola_state_estimation_smoother
 )
+
+mola_add_test(
+  TARGET  test-gnss-innovation-gate
+  SOURCES test-gnss-innovation-gate.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)

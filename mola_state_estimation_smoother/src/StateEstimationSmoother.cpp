@@ -313,6 +313,46 @@ mrpt::poses::CPose3DPDFGaussian odometry_increment_pdf(
     return incrementPdf;
 }
 
+gtsam::noiseModel::mEstimator::Base::shared_ptr make_gnss_kernel(
+    const std::string& name, double scale)
+{
+    using namespace gtsam::noiseModel::mEstimator;
+    if (name == "cauchy")
+    {
+        return Cauchy::Create(scale);
+    }
+    if (name == "geman_mcclure")
+    {
+        return GemanMcClure::Create(scale);
+    }
+    if (name == "dcs")
+    {
+        return DCS::Create(scale);
+    }
+    return Huber::Create(scale);
+}
+
+// Accepted GGA qualities from a "4 5" or "4,5" list; empty = any.
+std::set<int> parse_fix_qualities(const std::string& s)
+{
+    std::set<int> ret;
+    std::string   tok;
+    for (const char c : s + " ")
+    {
+        if (c == ' ' || c == ',' || c == '\t')
+        {
+            if (!tok.empty())
+            {
+                ret.insert(std::stoi(tok));
+                tok.clear();
+            }
+            continue;
+        }
+        tok += c;
+    }
+    return ret;
+}
+
 }  // namespace
 
 namespace mola::state_estimation_smoother
@@ -1745,6 +1785,30 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
 
     const auto geoCoords = gga.getAsStruct<mrpt::topography::TGeodeticCoords>();
 
+    if (!gps.covariance_enu.has_value())
+    {
+        MRPT_LOG_THROTTLE_WARN(
+            5.0, "Discarding GNSS (GPS) reading since it does not have ENU covariance.");
+        return;
+    }
+
+    // Receiver covariance with the configured floors, used for everything below
+    // (gate, factor noise and azimuth baselines alike):
+    Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
+    {
+        const double minVarXY = mrpt::square(params_.gnss_min_sigma_floor_xy);
+        const double minVarZ  = mrpt::square(params_.gnss_min_sigma_floor_z);
+        enuCov(0, 0) += std::max(0.0, minVarXY - enuCov(0, 0));
+        enuCov(1, 1) += std::max(0.0, minVarXY - enuCov(1, 1));
+        enuCov(2, 2) += std::max(0.0, minVarZ - enuCov(2, 2));
+    }
+    const double sigmaXY = std::sqrt(std::max(enuCov(0, 0), enuCov(1, 1)));
+
+    if (!gnss_gate_locked(gps, geoCoords, {enuCov(0, 0), enuCov(1, 1), enuCov(2, 2)}))
+    {
+        return;
+    }
+
     std::optional<mrpt::topography::TGeodeticCoords> refGeoCoords;
 
     // Determine the reference to use
@@ -1775,27 +1839,8 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         return;
     }
 
-    if (!gps.covariance_enu.has_value())
-    {
-        MRPT_LOG_THROTTLE_WARN(
-            5.0, "Discarding GNSS (GPS) reading since it does not have ENU covariance.");
-        return;
-    }
-
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
-
-    // Receiver covariance with the configured floors, used for everything below
-    // (factor noise and azimuth baselines alike):
-    Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
-    {
-        const double minVarXY = mrpt::square(params_.gnss_min_sigma_floor_xy);
-        const double minVarZ  = mrpt::square(params_.gnss_min_sigma_floor_z);
-        enuCov(0, 0) += std::max(0.0, minVarXY - enuCov(0, 0));
-        enuCov(1, 1) += std::max(0.0, minVarXY - enuCov(1, 1));
-        enuCov(2, 2) += std::max(0.0, minVarZ - enuCov(2, 2));
-    }
-    const double sigmaXY = std::sqrt(std::max(enuCov(0, 0), enuCov(1, 1)));
 
     // The azimuth of T_enu_to_map becomes observable only once the fixes span a
     // horizontal baseline long enough for the configured convergence accuracy.
@@ -1813,32 +1858,12 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         // closest in time, moved by its twist to that time.
         std::optional<gtsam::Point2> antennaMapXY;
         {
-            constexpr double      MAX_DT = 0.25;  // [s]
-            const auto            nearby = find_before_after(gps.timestamp, true);
-            std::optional<double> bestDt;
-            for (const auto& it : {nearby.first, nearby.second})
+            constexpr double MAX_DT = 0.25;  // [s]
+            if (const auto p = predicted_antenna_in_map_locked(
+                    gps.timestamp, gps.sensorPose.translation(), MAX_DT);
+                p)
             {
-                if (it == state_.stamp2frame_index.getDirectMap().end())
-                {
-                    continue;
-                }
-                const auto st = state_.last_estimated_states.find(it->second);
-                if (st == state_.last_estimated_states.end())
-                {
-                    continue;
-                }
-                const double dt = mrpt::system::timeDifference(it->first, gps.timestamp);
-                if (std::abs(dt) > MAX_DT || (bestDt && std::abs(dt) >= std::abs(*bestDt)))
-                {
-                    continue;
-                }
-                bestDt         = dt;
-                const auto& fs = st->second;
-                const auto  v  = fs.twist;
-                const auto  at = fs.pose + mrpt::poses::CPose3D::FromXYZYawPitchRoll(
-                                               v.vx * dt, v.vy * dt, v.vz * dt, v.wz * dt, 0, 0);
-                const auto p = at.composePoint(gps.sensorPose.translation());
-                antennaMapXY = gtsam::Point2(p.x, p.y);
+                antennaMapXY = gtsam::Point2(p->x, p->y);
             }
         }
         if (!antennaMapXY)
@@ -1927,7 +1952,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     if (params_.gnss_huber_threshold > 0)
     {
         enuNoiseModel = gtsam::noiseModel::Robust::Create(
-            gtsam::noiseModel::mEstimator::Huber::Create(params_.gnss_huber_threshold), enuNoise);
+            make_gnss_kernel(params_.gnss_robust_kernel, params_.gnss_huber_threshold), enuNoise);
     }
     else
     {
@@ -3908,6 +3933,32 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         state_.lastSolvedGeoref = compute_geo_reference_locked();
     }
 
+    // With a fixed geo-reference, the GNSS gate waits until the vehicle is
+    // localized, with the same criteria as has_converged_localization():
+    if (!params_.estimate_geo_reference && params_.gnss_gate_chi2 > 0 &&
+        !state_.gnssGate.relocalized && state_.geo_reference.has_value() &&
+        state_.gtsam->mapObservedSolved && !state_.stamp2frame_index.empty())
+    {
+        try
+        {
+            const auto ns = get_latest_state_and_covariance(
+                state_.stamp2frame_index.getDirectMap().rbegin()->second);
+            mrpt::math::CMatrixDouble66 poseCov = ns.pose.cov_inv.inverse_LLt();
+            inflate_pinned_orientation_cov_locked(poseCov);
+            const double maxPos =
+                std::sqrt(std::max({poseCov(0, 0), poseCov(1, 1), poseCov(2, 2)}));
+            const double maxOriDeg =
+                mrpt::RAD2DEG(std::sqrt(std::max({poseCov(3, 3), poseCov(4, 4), poseCov(5, 5)})));
+            state_.gnssGate.relocalized =
+                maxPos <= params_.convergence_max_position_sigma &&
+                maxOriDeg <= params_.convergence_max_orientation_sigma_deg;
+        }
+        catch (const std::exception&)
+        {
+            // Not solvable yet: try again after the next solve.
+        }
+    }
+
     // Publish an immutable snapshot for the lock-free read path. Only built in
     // async mode: the synchronous path reads state_ directly and building the
     // snapshot would add marginals to every solve for no benefit.
@@ -5283,5 +5334,339 @@ void StateEstimationSmoother::publish_imu_bias_diagnostics() {}
 void StateEstimationSmoother::advertise_imu_biases() {}
 
 #endif
+
+std::optional<mrpt::math::TPoint3D> StateEstimationSmoother::predicted_antenna_in_map_locked(
+    const mrpt::Clock::time_point& t, const mrpt::math::TPoint3D& lever, double maxDt)
+{
+    const auto                          nearby = find_before_after(t, true);
+    std::optional<double>               bestDt;
+    std::optional<mrpt::math::TPoint3D> ret;
+    for (const auto& it : {nearby.first, nearby.second})
+    {
+        if (it == state_.stamp2frame_index.getDirectMap().end())
+        {
+            continue;
+        }
+        const auto st = state_.last_estimated_states.find(it->second);
+        if (st == state_.last_estimated_states.end())
+        {
+            continue;
+        }
+        const double dt = mrpt::system::timeDifference(it->first, t);
+        if (std::abs(dt) > maxDt || (bestDt && std::abs(dt) >= std::abs(*bestDt)))
+        {
+            continue;
+        }
+        bestDt         = dt;
+        const auto& fs = st->second;
+        const auto  v  = fs.twist;
+        const auto  at = fs.pose + mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                                       v.vx * dt, v.vy * dt, v.vz * dt, v.wz * dt, 0, 0);
+        ret = at.composePoint(lever);
+    }
+    return ret;
+}
+
+StateEstimationSmoother::GnssGateStats StateEstimationSmoother::gnss_gate_stats() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+    return gnssGateStats_;
+}
+
+bool StateEstimationSmoother::gnss_gate_locked(
+    const mrpt::obs::CObservationGPS& gps, const mrpt::topography::TGeodeticCoords& geo,
+    const std::array<double, 3>& enuVarFloored)
+{
+    auto& gg = state_.gnssGate;
+    auto& st = gnssGateStats_;
+
+    const size_t loudAfter = params_.gnss_gate_reacquire_after > 0
+                                 ? static_cast<size_t>(params_.gnss_gate_reacquire_after)
+                                 : 10U;
+
+    const auto reject = [&](bool admission, const std::string& why)
+    {
+        st.rejected++;
+        if (admission)
+        {
+            st.rejected_admission++;
+        }
+        else
+        {
+            st.rejected_innovation++;
+        }
+        st.consecutive_rejected++;
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            2.0, "[fuse_gnss] GNSS fix rejected (%zu in total, %zu in a row): %s", st.rejected,
+            st.consecutive_rejected, why.c_str());
+        if (st.consecutive_rejected >= loudAfter)
+        {
+            MRPT_LOG_THROTTLE_ERROR_FMT(
+                5.0,
+                "[fuse_gnss] %zu consecutive GNSS fixes rejected: a broken receiver, a bogus "
+                "source on the same input, or a drifted estimate.",
+                st.consecutive_rejected);
+        }
+        return false;
+    };
+
+    const auto accept = [&]()
+    {
+        st.accepted++;
+        st.consecutive_rejected = 0;
+        gg.rejectedRunLength    = 0;
+        gg.lastRejected.reset();
+        gg.runStartFixEnu.reset();
+        gg.runStartPredEnu.reset();
+        return true;
+    };
+
+    // --- Admission tests ---
+    const auto& gga = gps.getMsgByClass<mrpt::obs::gnss::Message_NMEA_GGA>();
+    if (!params_.gnss_accepted_fix_qualities.empty())
+    {
+        const auto ok = parse_fix_qualities(params_.gnss_accepted_fix_qualities);
+        if (ok.count(static_cast<int>(gga.fields.fix_quality)) == 0)
+        {
+            return reject(
+                true, mrpt::format(
+                          "fix quality %d not in '%s'", static_cast<int>(gga.fields.fix_quality),
+                          params_.gnss_accepted_fix_qualities.c_str()));
+        }
+    }
+
+    const auto& rawCov = *gps.covariance_enu;
+    for (int i = 0; i < 3; i++)
+    {
+        if (!std::isfinite(rawCov(i, i)) || rawCov(i, i) <= 0)
+        {
+            return reject(true, mrpt::format("invalid ENU variance %g", rawCov(i, i)));
+        }
+    }
+    if (!std::isfinite(geo.lat.decimal_value) || !std::isfinite(geo.lon.decimal_value) ||
+        !std::isfinite(geo.height))
+    {
+        return reject(true, "non-finite coordinates");
+    }
+
+    const double rawSigmaXY = std::sqrt(std::max(rawCov(0, 0), rawCov(1, 1)));
+    if (params_.gnss_max_horizontal_sigma > 0 && rawSigmaXY > params_.gnss_max_horizontal_sigma)
+    {
+        return reject(
+            true,
+            mrpt::format(
+                "horizontal sigma %.3f m > %.3f m", rawSigmaXY, params_.gnss_max_horizontal_sigma));
+    }
+
+    std::optional<mrpt::topography::TGeodeticCoords> datum;
+    if (state_.geo_reference.has_value())
+    {
+        datum = state_.geo_reference->geo_coord;
+    }
+    else if (state_.tentative_geo_coord_reference.has_value())
+    {
+        datum = state_.tentative_geo_coord_reference;
+    }
+    if (params_.gnss_max_height_deviation > 0 && datum &&
+        std::abs(geo.height - datum->height) > params_.gnss_max_height_deviation)
+    {
+        return reject(
+            true, mrpt::format(
+                      "height %.2f m is %.2f m away from the datum height (max %.2f m)", geo.height,
+                      geo.height - datum->height, params_.gnss_max_height_deviation));
+    }
+
+    // --- Consistency between fixes, used while there is no prediction ---
+    State::GnssGate::Fix fix;
+    mrpt::topography::geodeticToGeocentric_WGS84(geo, fix.ecef);
+    fix.sigma = std::sqrt(*std::max_element(enuVarFloored.begin(), enuVarFloored.end()));
+    fix.t     = gps.timestamp;
+    fix.geo   = geo;
+
+    const double kSigma     = params_.gnss_gate_chi2 > 0 ? std::sqrt(params_.gnss_gate_chi2) : 5.0;
+    const auto   consistent = [&](const State::GnssGate::Fix& a, const State::GnssGate::Fix& b)
+    {
+        const double dist = (a.ecef - b.ecef).norm();
+        const double dt   = std::abs(mrpt::system::timeDifference(a.t, b.t));
+        return dist <= kSigma * std::sqrt(mrpt::square(a.sigma) + mrpt::square(b.sigma)) +
+                           params_.gnss_max_plausible_speed * dt;
+    };
+
+    // --- Datum: only after a few mutually consistent fixes ---
+    if (params_.estimate_geo_reference && !datum)
+    {
+        auto& cand = gg.datumCandidates;
+        if (!cand.empty() && !consistent(cand.back(), fix))
+        {
+            st.datum_restarts++;
+            MRPT_LOG_THROTTLE_WARN_FMT(
+                2.0,
+                "[fuse_gnss] GNSS fix %.2f m away from the previous one: restarting the datum "
+                "candidate (%zu restarts so far)",
+                (cand.back().ecef - fix.ecef).norm(), st.datum_restarts);
+            cand.clear();
+        }
+        cand.push_back(fix);
+        if (cand.size() < static_cast<size_t>(params_.gnss_datum_min_consistent_fixes))
+        {
+            return false;  // waiting for confirmation, not a rejection
+        }
+        state_.tentative_geo_coord_reference = cand.front().geo;
+        MRPT_LOG_DEBUG_FMT("[fuse_gnss] Datum defined after %zu consistent fixes", cand.size());
+        cand.clear();
+        gg.lastAccepted = fix;
+        return accept();
+    }
+
+    if (params_.gnss_gate_chi2 <= 0)
+    {
+        gg.lastAccepted = fix;
+        return accept();
+    }
+
+    // --- Innovation gate, against the predicted antenna position ---
+    std::optional<mrpt::poses::CPose3D> T_enu_to_map;
+    if (!params_.estimate_geo_reference)
+    {
+        if (state_.geo_reference.has_value() && state_.gnssGate.relocalized)
+        {
+            T_enu_to_map = state_.geo_reference->T_enu_to_map.mean;
+        }
+    }
+    else if (state_.geo_reference.has_value() && state_.lastSolvedGeoref.has_value())
+    {
+        // Only once converged: before that, T_enu_to_map is not good enough.
+        T_enu_to_map = state_.lastSolvedGeoref->T_enu_to_map.mean;
+    }
+    std::optional<mrpt::math::TPoint3D> predMap;
+    if (T_enu_to_map)
+    {
+        predMap = predicted_antenna_in_map_locked(
+            gps.timestamp, gps.sensorPose.translation(),
+            params_.gnss_nearby_keyframe_stamp_tolerance);
+    }
+
+    const auto runOrReacquire = [&](bool sameRun, bool movedEnough, const std::string& why)
+    {
+        gg.rejectedRunLength = sameRun ? gg.rejectedRunLength + 1 : 1;
+        gg.lastRejected      = fix;
+        if (params_.gnss_gate_reacquire_after > 0 && movedEnough &&
+            gg.rejectedRunLength >= static_cast<size_t>(params_.gnss_gate_reacquire_after))
+        {
+            st.reacquired++;
+            MRPT_LOG_WARN_FMT(
+                "[fuse_gnss] Accepting GNSS again after %zu consistent rejected fixes (%s): "
+                "the estimate is deemed to have drifted.",
+                gg.rejectedRunLength, why.c_str());
+            return true;
+        }
+        return reject(false, why);
+    };
+
+    if (!predMap)
+    {
+        // No prediction (not converged, or {map} not observed yet): fixes must
+        // at least be consistent with the previous accepted one.
+        if (!gg.lastAccepted || consistent(*gg.lastAccepted, fix))
+        {
+            gg.lastAccepted = fix;
+            return accept();
+        }
+        const bool sameRun = gg.lastRejected.has_value() && consistent(*gg.lastRejected, fix);
+        const auto why     = mrpt::format(
+                "%.2f m from the previous accepted fix, %.2f s apart",
+                (gg.lastAccepted->ecef - fix.ecef).norm(),
+                std::abs(mrpt::system::timeDifference(gg.lastAccepted->t, fix.t)));
+        if (runOrReacquire(sameRun, true, why))
+        {
+            gg.lastAccepted = fix;
+            return accept();
+        }
+        return false;
+    }
+
+    mrpt::math::TPoint3D fixEnu;
+    mrpt::topography::geodeticToENU_WGS84(geo, fixEnu, *datum);
+    const auto predEnu = T_enu_to_map->composePoint(*predMap);
+    const auto r       = fixEnu - predEnu;
+
+    // Predicted position uncertainty: base, plus what may have drifted since
+    // the last accepted fix.
+    if (gg.postSigma < 0)
+    {
+        gg.postSigma = params_.estimate_geo_reference ? params_.convergence_max_position_sigma : 0;
+    }
+    if (gg.lastPredictedAntenna)
+    {
+        gg.pathSinceAccepted += (*predMap - *gg.lastPredictedAntenna).norm();
+    }
+    gg.lastPredictedAntenna = *predMap;
+    const double driftSigma =
+        gg.postSigma + params_.gnss_gate_drift_per_meter * gg.pathSinceAccepted;
+    const double predVar =
+        mrpt::square(params_.gnss_gate_prediction_sigma) + mrpt::square(driftSigma);
+
+    const double d2 = mrpt::square(r.x) / (enuVarFloored[0] + predVar) +
+                      mrpt::square(r.y) / (enuVarFloored[1] + predVar) +
+                      mrpt::square(r.z) / (enuVarFloored[2] + predVar);
+
+    const auto onAccepted = [&]()
+    {
+        const double fixVar = mrpt::square(fix.sigma);
+        gg.postSigma =
+            driftSigma > 0 ? std::sqrt(1.0 / (1.0 / mrpt::square(driftSigma) + 1.0 / fixVar)) : 0.0;
+        if (gg.reacquiring)
+        {
+            // Keep the gate open until the estimate is back within the nominal one:
+            const double nominal =
+                kSigma * std::sqrt(mrpt::square(params_.gnss_gate_prediction_sigma) + fixVar);
+            if (r.norm() > nominal)
+            {
+                gg.postSigma = std::max(gg.postSigma, r.norm());
+            }
+            else
+            {
+                gg.reacquiring = false;
+            }
+        }
+        gg.pathSinceAccepted = 0;
+        gg.lastAccepted      = fix;
+        return accept();
+    };
+
+    if (d2 <= params_.gnss_gate_chi2)
+    {
+        return onAccepted();
+    }
+
+    // Rejected. Fixes that move like the predicted antenna mean the estimate is
+    // the one off (a heading error only rotates the offset slowly); a source at
+    // a fixed wrong place does not move with the vehicle at all:
+    bool sameRun = false;
+    if (gg.runStartFixEnu && gg.runStartPredEnu)
+    {
+        const auto   fixMove  = fixEnu - *gg.runStartFixEnu;
+        const auto   predMove = predEnu - *gg.runStartPredEnu;
+        const double noise    = 3.0 * std::sqrt(2.0) * fix.sigma;
+        sameRun               = (fixMove - predMove).norm() <= noise + 0.5 * predMove.norm();
+    }
+    if (!sameRun)
+    {
+        gg.runStartFixEnu  = fixEnu;
+        gg.runStartPredEnu = predEnu;
+    }
+    const bool movedEnough =
+        (predEnu - *gg.runStartPredEnu).norm() >= params_.gnss_gate_reacquire_min_path;
+    const auto why = mrpt::format(
+        "%.2f m from the prediction (E %.2f, N %.2f, U %.2f), chi2 %.1f > %.1f", r.norm(), r.x, r.y,
+        r.z, d2, params_.gnss_gate_chi2);
+    if (runOrReacquire(sameRun, movedEnough, why))
+    {
+        // Let the following fixes in, until the estimate has moved there:
+        gg.reacquiring = true;
+        return onAccepted();
+    }
+    return false;
+}
 
 }  // namespace mola::state_estimation_smoother

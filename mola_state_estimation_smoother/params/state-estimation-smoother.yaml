@@ -381,6 +381,23 @@ params:
   gnss_min_sigma_floor_xy: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA_XY|0.10}
   gnss_min_sigma_floor_z: ${MOLA_NAVSTATE_GNSS_MIN_SIGMA_Z|0.30}
 
+  # GNSS robust kernel: huber, or redescending cauchy, geman_mcclure, dcs
+  # (scale: gnss_huber_threshold).
+  gnss_robust_kernel: ${MOLA_NAVSTATE_GNSS_ROBUST_KERNEL|huber}
+
+  # GNSS admission tests and innovation gate (see Parameters.h). Rejected fixes
+  # are logged and counted.
+  gnss_accepted_fix_qualities: "${MOLA_NAVSTATE_GNSS_FIX_QUALITIES|}"  # e.g. "4 5"; empty = any
+  gnss_max_horizontal_sigma: ${MOLA_NAVSTATE_GNSS_MAX_HORIZ_SIGMA|0.0}  # [m], 0 = no limit
+  gnss_max_height_deviation: ${MOLA_NAVSTATE_GNSS_MAX_HEIGHT_DEV|0.0}  # [m] from the datum, 0 = no limit
+  gnss_gate_chi2: ${MOLA_NAVSTATE_GNSS_GATE_CHI2|25.0}  # 0 = no innovation gate
+  gnss_gate_prediction_sigma: ${MOLA_NAVSTATE_GNSS_GATE_PRED_SIGMA|0.5}  # [m]
+  gnss_gate_drift_per_meter: ${MOLA_NAVSTATE_GNSS_GATE_DRIFT|0.02}  # [m/m]
+  gnss_gate_reacquire_after: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE|10}  # fixes, 0 = never
+  gnss_gate_reacquire_min_path: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE_PATH|5.0}  # [m]
+  gnss_max_plausible_speed: ${MOLA_NAVSTATE_GNSS_MAX_SPEED|50.0}  # [m/s]
+  gnss_datum_min_consistent_fixes: ${MOLA_NAVSTATE_GNSS_DATUM_MIN_FIXES|3}
+
   # If set, the final geo-reference (datum + T_enu_to_map) is written to this YAML
   # file (mp2p_icp georeferencing format) when the estimator is destroyed.
   save_final_georef_to_file: "${MOLA_SE_SAVE_GEOREF_FILE|}"
