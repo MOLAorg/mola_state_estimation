@@ -156,12 +156,12 @@ class Parameters
     /// Time to keep past observations in the filter
     double sliding_window_length = 5.0;  // [s]
 
-    /** Keep the pose of every keyframe as it leaves the sliding window, i.e.
-     *  its final optimized value, and serve them through
-     *  estimated_trajectory(). Off by default: in a live system nothing reads
-     *  them and the container would grow without bound. Intended for offline
-     *  runs that want the smoothed trajectory instead of the front end's own
-     *  registered poses.
+    /** Keep the pose of every keyframe with a pose or odometry observation as
+     *  it leaves the sliding window, i.e. its final optimized value, and
+     *  serve them through estimated_trajectory(). Off by default: in a live
+     *  system nothing reads them and the container would grow without bound.
+     *  Intended for offline runs that want the smoothed trajectory instead of
+     *  the front end's own registered poses.
      */
     bool keep_finalized_trajectory = false;
 

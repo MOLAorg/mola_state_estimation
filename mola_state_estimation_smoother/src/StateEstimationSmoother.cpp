@@ -1344,6 +1344,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 {
     const auto frame_id_idx = add_or_get_odom_frame_id(wheels_odometry_frame_locked(odomName));
     const auto this_kf_id   = create_or_get_keyframe_by_timestamp_locked(odom.timestamp);
+    state_.pose_keyframes.insert(this_kf_id);
 
     // Unconditional, and independent of which factor is added below: this is the
     // anchor estimated_navstate() extrapolates from when a front end asks for a
@@ -2146,6 +2147,7 @@ void StateEstimationSmoother::fuse_pose_locked(
         mark_map_observed_locked();
         state_.gtsam->mapPositionObserved = true;
         mark_orientation_observed_locked(true, true);
+        state_.pose_keyframes.insert(this_kf_id);
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out,
             with_huber(
@@ -2174,6 +2176,7 @@ void StateEstimationSmoother::fuse_pose_locked(
                 mrpt::Clock::toDouble(*chain.last_stamp));
             return;
         }
+        state_.pose_keyframes.insert(this_kf_id);
 
         if (!chain.anchor_kf.has_value())
         {
@@ -2674,7 +2677,8 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
     for (const auto& [t, frame_idx] : state_.stamp2frame_index)
     {
         const auto it = state_.last_estimated_states.find(frame_idx);
-        if (it == state_.last_estimated_states.end() || !inRange(t))
+        if (it == state_.last_estimated_states.end() || !inRange(t) ||
+            state_.pose_keyframes.count(frame_idx) == 0)
         {
             continue;
         }
@@ -3061,7 +3065,8 @@ void StateEstimationSmoother::delete_too_old_entries()
         for (const auto& [t_erase, frame_idx] : stamp2erasedFrame)
         {
             const auto it = state_.last_estimated_states.find(frame_idx);
-            if (it == state_.last_estimated_states.end())
+            if (it == state_.last_estimated_states.end() ||
+                state_.pose_keyframes.count(frame_idx) == 0)
             {
                 continue;
             }
@@ -3081,6 +3086,7 @@ void StateEstimationSmoother::delete_too_old_entries()
     for (const auto& idx : ids_to_erase)
     {
         state_.last_estimated_states.erase(idx);
+        state_.pose_keyframes.erase(idx);
     }
 
     // Forget the kinematic bookkeeping of links touching a marginalized keyframe.

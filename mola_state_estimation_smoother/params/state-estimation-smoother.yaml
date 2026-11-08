@@ -82,7 +82,8 @@ params:
   sliding_window_length: ${MOLA_NAVSTATE_SLIDING_WINDOW_SEC|6.0}
 
   # Keep each keyframe's pose as it leaves the window (its final optimized
-  # value) and serve them via estimated_trajectory(). Offline instrumentation:
+  # value) and serve them via estimated_trajectory(). Only keyframes with a pose or
+  # odometry observation (not IMU, twist or GNSS only). Offline instrumentation:
   # the container grows with the run, so it stays off in a live system.
   keep_finalized_trajectory: ${MOLA_SMOOTHER_KEEP_TRAJECTORY|false}
 

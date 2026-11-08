@@ -217,6 +217,9 @@ Other behavior:
 - `async_backend` (C++ default false): solve in a backend thread;
   `estimated_navstate()` served lock-free by `FastPredictor` from the latest
   `Snapshot`. The synchronous path is deterministic.
+- `estimated_trajectory()` (`keep_finalized_trajectory`): keyframes' final values,
+  only those holding a pose or odometry observation (`State::pose_keyframes`);
+  IMU-, twist- or GNSS-only keyframes are left out, their attitude is poorly observed.
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
   cannot be solved yet. Any exception in the solve (`solve_locked()`: update,
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
