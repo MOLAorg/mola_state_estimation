@@ -190,7 +190,10 @@ Other behavior:
   source's first reading.
 - Estimated `T_map_to_odom_i` of an odometry source is computed as
   `X(chain tail kf) (+) pose_in_odom(tail)^-1`, not read from the graph
-  variable (which only the anchor factor constrains).
+  variable (which only the anchor factor constrains). Its covariance (the
+  graph variable's marginal) is computed on first use after each solve
+  (`complete_odom_frame_covariance_locked()`); the async `Snapshot` carries
+  it only for sources without a raw pose yet.
 - Extrapolation (`extrapolate_pose_pdf()`) propagates covariance: anchor
   covariance through the composition plus velocity and acceleration noise.
 - Predict-twist low-pass (`predict_twist_filter_enabled`,

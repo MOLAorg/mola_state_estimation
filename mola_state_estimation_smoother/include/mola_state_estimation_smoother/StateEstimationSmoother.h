@@ -408,8 +408,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         std::optional<mrpt::math::TTwist3D>    filtered_predict_twist;
         std::optional<mrpt::Clock::time_point> filtered_predict_twist_stamp;
 
-        /// The latest values from the estimator; updated in process_pending_gtsam_updates()
-        std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
+        /// The latest values from the estimator; updated in process_pending_gtsam_updates().
+        /// The covariances of odometry frames are filled in on first use, see
+        /// complete_odom_frame_covariance_locked().
+        mutable std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
 
         /// The last raw pose received from each odometry source, expressed in
         /// that source's OWN frame {odom_i} (NOT in {map}), with its timestamp.
@@ -876,6 +878,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian>
         get_estimated_T_map_to_odometry_frame(const frame_index_t idx) const;
+
+    /// Fills in the covariance of odometry frame `idx` in `last_estimated_frames`
+    /// if the latest solve left it pending. Call before reading it. Returns false
+    /// if its marginal cannot be computed (an under-constrained graph).
+    [[nodiscard]] bool complete_odom_frame_covariance_locked(odometry_frameid_t idx) const;
 
     /** Abstract representation of a constant-velocity kinematic motion model factor
      * between two key frames.
