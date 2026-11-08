@@ -857,6 +857,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// IMU preintegration: keeps the raw readings of the IMU in use.
     void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
 
+    /// IMU preintegration: before T_enu_to_map reaches the solver, sets its
+    /// roll and pitch from the accelerometer, so a tilted {map} starts right.
+    void level_enu_to_map_locked();
+
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.
     void attach_imu_factors_locked();

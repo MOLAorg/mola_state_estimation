@@ -232,6 +232,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-imu-preintegration-leveling
+  SOURCES test-imu-preintegration-leveling.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-gauge-anchors
   SOURCES test-gauge-anchors.cpp
   LINK_LIBRARIES

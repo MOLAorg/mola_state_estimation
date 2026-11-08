@@ -128,7 +128,9 @@ Sensor inputs:
   are buffered before decimation; each kinematic link gets a
   `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
   velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may
-  be tilted) once the readings cover it (`attach_imu_factors_locked()`), with a
+  be tilted; before its first solve, `level_enu_to_map_locked()` sets the roll and
+  pitch of `T_enu_to_map` from the accelerometer at the pinned first pose or the
+  first pose reading) once the readings cover it (`attach_imu_factors_locked()`), with a
   covariance floor (`min_sigma_*`); the constant-velocity linear factors stay,
   weaker (`linear_kinematics_sigma_scale`).
   The per-keyframe gravity and angular-velocity factors stay on with it.
