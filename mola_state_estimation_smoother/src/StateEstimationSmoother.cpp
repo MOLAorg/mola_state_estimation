@@ -79,6 +79,7 @@
 #endif
 
 #include "FastPredictor.h"
+#include "NewestLastFixedLagSmoother.h"
 #include "Snapshot.h"
 #include "extrapolation.h"
 
@@ -396,7 +397,7 @@ struct StateEstimationSmoother::GtsamImpl
     }
 
     // This is initialized in initialize(), once we have the parameters
-    std::optional<gtsam::IncrementalFixedLagSmoother> smoother;
+    std::optional<NewestLastFixedLagSmoother> smoother;
 
     /** Odometry frames whose covariance in State::last_estimated_frames is not
      *  computed yet for the latest solve, with the value of their graph
@@ -740,7 +741,12 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
     isam2Params.relinearizeSkip = 1;
     // isam2Params.optimizationParams    = gtsam::ISAM2DoglegParams();
 
+#if GTSAM_USES_BOOST
+    state_.gtsam->smoother.emplace(
+        params_.sliding_window_length, isam2Params, params_.isam2_newest_keys_last);
+#else
     state_.gtsam->smoother.emplace(params_.sliding_window_length, isam2Params);
+#endif
     state_.gtsam->odomFrameCovPending.clear();
 
     // Initialize georeference-related gtsam variables:

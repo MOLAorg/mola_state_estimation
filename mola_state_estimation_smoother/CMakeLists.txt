@@ -53,10 +53,12 @@ mola_add_library(
     src/Parameters.cpp
     src/StateEstimationSmoother.cpp
     src/FastPredictor.cpp
+    src/NewestLastFixedLagSmoother.cpp
     src/pose_pdf_to_string_with_sigmas.cpp
     src/register.cpp
     src/Snapshot.h
     src/FastPredictor.h
+    src/NewestLastFixedLagSmoother.h
     src/extrapolation.h
     include/mola_state_estimation_smoother/Parameters.h
     include/mola_state_estimation_smoother/StateEstimationSmoother.h

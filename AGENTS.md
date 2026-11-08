@@ -74,11 +74,12 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | Parameters | `include/mola_state_estimation_smoother/Parameters.h` |
 | Implementation | `src/StateEstimationSmoother.cpp` |
 | Async serving | `src/FastPredictor.{h,cpp}`, `src/Snapshot.h`, `src/extrapolation.h` |
+| GTSAM 4.2 smoother ordering | `src/NewestLastFixedLagSmoother.{h,cpp}` |
 | Default config | `params/state-estimation-smoother.yaml` |
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (36) | `tests/test-*.cpp` |
+| Unit tests (42) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -214,6 +215,13 @@ Other behavior:
 - iSAM2 relinearization: per variable type, `isam2_relinearize_threshold`
   (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B`
   (`test-imu-gyro-solver-stability`).
+- iSAM2 ordering (`isam2_newest_keys_last`, default on, GTSAM 4.2 only):
+  `NewestLastFixedLagSmoother` re-implements 4.2's fixed-lag `update()` so the
+  keys of new factors and those at the newest stamp are eliminated last (root
+  of the Bayes tree), and the cliques of marginalized keys are re-eliminated
+  (4.2's `marginalizeLeaves()` needs those keys first in their cliques). A third
+  constraint group only with >= 3 new-factor keys: 4.2's CCOLAMD overflows if a
+  group number reaches the reordered size.
 - The angular constant-velocity factor sigma is
   `sigma_random_walk_acceleration_angular * dt` combined in quadrature with
   `sqrt(2) * imu_angular_velocity_sigma` (`angular_const_vel_sigma()`).
