@@ -173,6 +173,10 @@ constexpr double GYRO_HUBER_K = 1.345;
 // normalized to g stay well below it, so terms in m/s^2 must not touch them.
 constexpr double ACC_NORM_MIN_FOR_SI_UNITS = 3.0;
 
+// Span of the first readings whose mean norm decides the units of an IMU's
+// accelerometer, when imu_preintegration.accel_scale is automatic.
+constexpr double ACC_UNITS_DETECTION_PERIOD = 0.5;  // [s]
+
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
     p.z(0);
@@ -628,6 +632,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params_.loadFrom(cfg["params"]);
+    accScale_ = params_.imu_preintegration.accel_scale;
 
     if (params_.imu_bias_tracking)
     {
@@ -1380,6 +1385,17 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         gtsam::Pose3   pose_out;
         gtsam::Matrix6 cov_out;
         mola::gtsam_compat::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
+
+#if !GTSAM_USES_BOOST
+        // This odometry frame defines {map} (no rotation between them), as the
+        // first fuse_pose() source does otherwise:
+        if (!state_.gtsam->enuLevelRef && state_.gtsam->mapAnchor &&
+            state_.gtsam->mapAnchorFrame == frame_id_idx)
+        {
+            state_.gtsam->enuLevelRef.emplace(
+                key_stamp_seconds(odom.timestamp), pose_out.rotation());
+        }
+#endif
 
         seed_odom_frame_locked(frame_id_idx, this_kf_id, absolutePoseInOdom.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -4532,6 +4548,28 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     r.gyr = {imu.get(IMU_WX), imu.get(IMU_WY), imu.get(IMU_WZ)};
     g.rawImu.push_back(r);
 
+    if (accScale_ == 0)
+    {
+        // Some drivers publish the acceleration in units of g: over a short span,
+        // the mean norm is about 1 then, and near 9.8 for readings in m/s^2.
+        if (accNormCount_ == 0)
+        {
+            accFirstStamp_ = t;
+        }
+        accNormSum_ += r.acc.norm();
+        accNormCount_++;
+        if (t - accFirstStamp_ >= ACC_UNITS_DETECTION_PERIOD)
+        {
+            const double meanNorm = accNormSum_ / static_cast<double>(accNormCount_);
+            const bool   inG      = meanNorm < ACC_NORM_MIN_FOR_SI_UNITS;
+            accScale_             = inG ? ip.gravity : 1.0;
+            MRPT_LOG_INFO_FMT(
+                "[imu_preintegration] Accelerometer readings taken in %s (mean norm %.3f over "
+                "%zu readings)",
+                inG ? "units of g" : "m/s^2", meanNorm, accNormCount_);
+        }
+    }
+
     if (recentAccel_.empty() || t > recentAccel_.back().first)
     {
         const gtsam::Vector3 aVehicle = g.rawImuRotation * r.acc;
@@ -4558,7 +4596,8 @@ void StateEstimationSmoother::attach_imu_factors_locked()
 {
 #if !GTSAM_USES_BOOST
     auto& g = *state_.gtsam;
-    if (!g.pimParams || g.rawImu.empty())
+    // Links wait (in imuLinksAwaiting) until the accelerometer units are known:
+    if (!g.pimParams || g.rawImu.empty() || accScale_ == 0)
     {
         return;
     }
@@ -4632,7 +4671,7 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             }
             if (tNext > tc)
             {
-                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+                pim.integrateMeasurement(accScale_ * k->acc, k->gyr, tNext - tc);
             }
             tc = tNext;
         }

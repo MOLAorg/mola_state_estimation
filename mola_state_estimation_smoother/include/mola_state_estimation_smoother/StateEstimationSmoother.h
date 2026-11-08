@@ -679,6 +679,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// State: a front end that levels itself from the IMU resets the estimator
     /// right after averaging it, and those readings are still valid.
     std::deque<std::pair<double, mrpt::math::TVector3D>> recentAccel_;
+    /// Takes the preintegrated IMU's accelerometer readings to m/s^2 (0 while
+    /// undecided), from imu_preintegration.accel_scale or the mean norm of the
+    /// first readings (accNormSum_ over accNormCount_, since accFirstStamp_).
+    /// Kept outside State, as recentAccel_: the units do not change on a reset.
+    double accScale_      = 0;
+    double accNormSum_    = 0;
+    size_t accNormCount_  = 0;
+    double accFirstStamp_ = 0;
     /// Same keyframes in ENU, through the T_enu_to_map estimated when each one
     /// left the window (the one it was optimized against). Only those finalized
     /// once the geo-reference was fixed or had converged.

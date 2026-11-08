@@ -253,6 +253,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-imu-preintegration-accel-units
+  SOURCES test-imu-preintegration-accel-units.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-gauge-anchors
   SOURCES test-gauge-anchors.cpp
   LINK_LIBRARIES

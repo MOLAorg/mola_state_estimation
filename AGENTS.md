@@ -129,13 +129,17 @@ Sensor inputs:
   `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
   velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may
   be tilted; before its first solve, `level_enu_to_map_locked()` sets the roll and
-  pitch of `T_enu_to_map` from the accelerometer at the pinned first pose or the
-  first pose reading) once the readings cover it (`attach_imu_factors_locked()`), with a
+  pitch of `T_enu_to_map` from the accelerometer at the pinned first pose, the
+  first pose reading, or the first reading of a wheel odometry that defines `{map}`)
+  once the readings cover it (`attach_imu_factors_locked()`), with a
   covariance floor (`min_sigma_*`); while an estimated geo-reference still has its
   azimuth pinned by the gauge anchor, links get the plain factor with gravity
   fixed in `{map}` at the leveled tilt instead. The constant-velocity linear
   factors stay, weaker (`linear_kinematics_sigma_scale`) once an IMU has been seen,
   so without any IMU the estimates are those with preintegration off.
+  Accelerometer units: `accel_scale` (0 = automatic: units of g if the mean norm of
+  the first 0.5 s of readings is below 3, kept across resets like `recentAccel_`);
+  links wait in `imuLinksAwaiting` until it is known.
   The per-keyframe gravity and angular-velocity factors stay on with it.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of

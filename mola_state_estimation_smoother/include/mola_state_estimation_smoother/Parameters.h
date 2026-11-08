@@ -562,6 +562,11 @@ class Parameters
         double integration_sigma      = 1e-4;  //!< position integration noise
         double gravity                = 9.80665;  //!< [m/s^2]
 
+        /** Multiplier taking the accelerometer readings to m/s^2. 0 (default):
+         * automatic, decided once from their mean norm over the first readings,
+         * since some drivers publish them in units of g. */
+        double accel_scale = 0;
+
         double initial_gyro_bias_sigma  = 0.02;  //!< [rad/s]
         double initial_accel_bias_sigma = 0.2;  //!< [m/s^2]
 

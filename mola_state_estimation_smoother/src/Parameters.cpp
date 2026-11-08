@@ -145,6 +145,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
             c.getOrDefault("accel_bias_random_walk", ip.accel_bias_random_walk);
         ip.integration_sigma = c.getOrDefault("integration_sigma", ip.integration_sigma);
         ip.gravity           = c.getOrDefault("gravity", ip.gravity);
+        ip.accel_scale       = c.getOrDefault("accel_scale", ip.accel_scale);
         ip.initial_gyro_bias_sigma =
             c.getOrDefault("initial_gyro_bias_sigma", ip.initial_gyro_bias_sigma);
         ip.initial_accel_bias_sigma =
@@ -161,6 +162,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
         ASSERT_GT_(ip.accel_bias_random_walk, 0.0);
         ASSERT_GE_(ip.linear_kinematics_sigma_scale, 1.0);
+        ASSERT_GE_(ip.accel_scale, 0.0);
     }
 
     // Geo-referencing

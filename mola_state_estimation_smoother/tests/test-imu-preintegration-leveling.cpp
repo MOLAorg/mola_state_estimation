@@ -22,6 +22,7 @@
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/obs/CObservationIMU.h>
+#include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3D.h>
 
 #include <Eigen/Dense>  // required by mrpt's matrix accessors
@@ -34,7 +35,9 @@
 
 namespace
 {
-const char* PARAMS = R"###(
+std::string params(bool pinFirstPose)
+{
+    return std::string(R"###(
 params:
     vehicle_frame_name: "base_link"
     reference_frame_name: "map"
@@ -44,22 +47,23 @@ params:
     relative_pose_increment_sigma_lin: 0.02
     relative_pose_increment_sigma_ang: 1e-5
     min_time_difference_to_create_new_frame: 0.01
-    link_first_pose_to_reference_origin_sigma: 1e-6
     estimate_geo_reference: false
     imu_preintegration:
         enabled: true
-)###";
+)###") + (pinFirstPose ? "    link_first_pose_to_reference_origin_sigma: 1e-6\n" : "");
+}
 
 // A vehicle standing still for 5 s with the given attitude in ENU: an
 // odometry source reports it at the origin of its frame (which, with the
 // first pose pinned, is also {map}), and an IMU on the vehicle reads gravity.
-// Returns the largest distance from the origin and the largest speed of the
-// estimate over the run.
+// With `wheels`, the source is a planar wheel odometry and nothing pins the
+// first pose: its frame defines {map}. Returns the largest distance from the
+// origin and the largest speed of the estimate over the run.
 std::pair<double, double> run_static(
-    const mrpt::poses::CPose3D& vehicleInEnu, bool resetFirst, unsigned firstPoseK)
+    const mrpt::poses::CPose3D& vehicleInEnu, bool resetFirst, unsigned firstPoseK, bool wheels)
 {
     mola::state_estimation_smoother::StateEstimationSmoother nav;
-    nav.initialize(mrpt::containers::yaml::FromText(PARAMS));
+    nav.initialize(mrpt::containers::yaml::FromText(params(!wheels)));
 
     const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-6);
     const auto g_body =
@@ -97,8 +101,19 @@ std::pair<double, double> run_static(
         {
             continue;
         }
-        nav.fuse_pose(
-            imu.timestamp, mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(), cov), "odom");
+        if (wheels)
+        {
+            mrpt::obs::CObservationOdometry odom;
+            odom.timestamp = imu.timestamp;
+            odom.odometry  = mrpt::poses::CPose2D(0, 0, 0);
+            nav.fuse_odometry(odom, "wheels_odom");
+        }
+        else
+        {
+            nav.fuse_pose(
+                imu.timestamp, mrpt::poses::CPose3DPDFGaussian(mrpt::poses::CPose3D(), cov),
+                "odom");
+        }
         const auto ns = nav.estimated_navstate(imu.timestamp, "map");
         if (!ns)
         {
@@ -117,11 +132,11 @@ std::pair<double, double> run_static(
 // {map}, a vehicle at rest would be estimated as falling.
 void check(
     double yawDeg, double pitchDeg, double rollDeg, bool resetFirst = false,
-    unsigned firstPoseK = 5)
+    unsigned firstPoseK = 5, bool wheels = false)
 {
     const auto vehicle = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
         0, 0, 0, mrpt::DEG2RAD(yawDeg), mrpt::DEG2RAD(pitchDeg), mrpt::DEG2RAD(rollDeg));
-    const auto [dist, speed] = run_static(vehicle, resetFirst, firstPoseK);
+    const auto [dist, speed] = run_static(vehicle, resetFirst, firstPoseK, wheels);
     std::cout << "  max distance " << dist << " m, max speed " << speed << " m/s\n";
     ASSERT_LT_(dist, 0.05);
     ASSERT_LT_(speed, 0.05);
@@ -136,6 +151,8 @@ void test_upside_down() { check(0, 180, 0); }
 // T_enu_to_map in the first solve.
 void test_upside_down_first_pose_with_imu() { check(0, 0, 179, false, 0); }
 void test_upside_down_after_reset() { check(0, 0, 179, true, 101); }
+// A planar wheel odometry defining {map} (nothing pins the first pose):
+void test_nearly_upside_down_wheel_odometry() { check(0, 0, 150, false, 5, true); }
 
 int main(int argc, char** argv)
 {
@@ -146,6 +163,7 @@ int main(int argc, char** argv)
         {"upside_down", &test_upside_down},
         {"upside_down_after_reset", &test_upside_down_after_reset},
         {"upside_down_first_pose_with_imu", &test_upside_down_first_pose_with_imu},
+        {"nearly_upside_down_wheel_odometry", &test_nearly_upside_down_wheel_odometry},
     };
 
     bool anyFail = false;

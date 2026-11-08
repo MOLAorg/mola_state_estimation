@@ -360,6 +360,9 @@ params:
     accel_noise_density: ${MOLA_IMU_ACC_NOISE_DENSITY|1.6e-3}  # [m/s^2/sqrt(Hz)]
     gyro_bias_random_walk: ${MOLA_IMU_GYRO_BIAS_RW|2e-5}  # [rad/s^2/sqrt(Hz)]
     accel_bias_random_walk: ${MOLA_IMU_ACC_BIAS_RW|3e-4}  # [m/s^3/sqrt(Hz)]
+    # Multiplier taking the accelerometer readings to m/s^2. 0 = automatic: some
+    # drivers publish them in units of g, told apart once by their mean norm.
+    accel_scale: ${MOLA_IMU_ACC_SCALE|0}
     # Constant-velocity linear factors are kept, this much weaker, on every link:
     linear_kinematics_sigma_scale: ${MOLA_SMOOTHER_IMU_PREINT_KIN_SCALE|10.0}
 
@@ -476,7 +479,8 @@ params:
   # chain of increments between consecutive keyframes, plus one absolute
   # factor on the first reading. The covariance such a source publishes is that
   # of its absolute dead-reckoned pose, which says nothing about one increment,
-  # so the accuracy of ONE INCREMENT is set here instead (required, > 0).
+  # so the accuracy of ONE INCREMENT is set here instead (sigma_lin >= 0,
+  # sigma_ang > 0).
   # It describes one increment, whatever it spans; put motion-dependent error
   # in the *_per_sqrt_* growth terms below, which scale with the increment.
   # The defaults suit LiDAR odometry; wheel or visual odometry needs its own
