@@ -175,6 +175,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         gnss_accepted_fix_qualities.find_first_not_of("0123456789 ,\t") == std::string::npos,
         "gnss_accepted_fix_qualities must be a list of integers, e.g. \"4 5\"");
     MCP_LOAD_OPT(cfg, gnss_max_horizontal_sigma);
+    MCP_LOAD_OPT(cfg, gnss_max_sigma_ratio);
+    MCP_LOAD_OPT(cfg, gnss_sigma_ratio_window);
     MCP_LOAD_OPT(cfg, gnss_max_height_deviation);
     MCP_LOAD_OPT(cfg, gnss_gate_chi2);
     MCP_LOAD_OPT(cfg, gnss_gate_prediction_sigma);
@@ -185,6 +187,10 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gnss_max_plausible_speed);
     MCP_LOAD_OPT(cfg, gnss_datum_min_consistent_fixes);
     ASSERT_GE_(gnss_max_horizontal_sigma, 0.0);
+    ASSERTMSG_(
+        gnss_max_sigma_ratio == 0.0 || gnss_max_sigma_ratio >= 1.0,
+        "gnss_max_sigma_ratio must be 0 (disabled) or >= 1");
+    ASSERT_GT_(gnss_sigma_ratio_window, 0.0);
     ASSERT_GE_(gnss_max_height_deviation, 0.0);
     ASSERT_GE_(gnss_gate_chi2, 0.0);
     ASSERT_GT_(gnss_gate_prediction_sigma, 0.0);

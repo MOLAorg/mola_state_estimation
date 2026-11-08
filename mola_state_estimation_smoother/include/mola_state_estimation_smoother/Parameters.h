@@ -655,6 +655,24 @@ class Parameters
      *  0 = no limit. The simple estimator uses 0.20 to keep RTK-fixed only. */
     double gnss_max_horizontal_sigma = 0.0;  // [m]
 
+    /** Fixes whose receiver horizontal sigma exceeds this many times the lowest
+     *  one received in the last `gnss_sigma_ratio_window` seconds are discarded.
+     *  Receivers that keep reporting a fixed solution while it degrades (e.g.
+     *  multipath) raise their sigma: this catches it without a receiver-specific
+     *  absolute threshold. Sigmas below `gnss_min_sigma_floor_xy` never trigger
+     *  it, since the floor makes them equivalent. 0 = disabled.
+     *
+     *  Use it only when the odometry is better than the degraded fixes: rejected
+     *  fixes no longer bound its drift. With good LiDAR-inertial odometry, 2
+     *  with floors of 0.02 / 0.05 m works well; the floors must be that low for
+     *  it to catch fixes just a few cm worse than the best ones. */
+    double gnss_max_sigma_ratio = 0.0;
+
+    /** Time window [s] for the reference sigma of `gnss_max_sigma_ratio`. It
+     *  must outlast the degraded stretches: a short one makes the degraded
+     *  fixes their own reference. */
+    double gnss_sigma_ratio_window = 300.0;  // [s]
+
     /** Fixes whose height differs from the datum height by more than this are
      *  discarded [m]. 0 = no limit. A cheap guard against fabricated fixes,
      *  e.g. a datum position with zero height. */

@@ -389,6 +389,8 @@ params:
   # are logged and counted.
   gnss_accepted_fix_qualities: "${MOLA_NAVSTATE_GNSS_FIX_QUALITIES|}"  # e.g. "4 5"; empty = any
   gnss_max_horizontal_sigma: ${MOLA_NAVSTATE_GNSS_MAX_HORIZ_SIGMA|0.0}  # [m], 0 = no limit
+  gnss_max_sigma_ratio: ${MOLA_NAVSTATE_GNSS_MAX_SIGMA_RATIO|0.0}  # vs. the lowest recent sigma, 0 = off
+  gnss_sigma_ratio_window: ${MOLA_NAVSTATE_GNSS_SIGMA_RATIO_WINDOW|300.0}  # [s]
   gnss_max_height_deviation: ${MOLA_NAVSTATE_GNSS_MAX_HEIGHT_DEV|0.0}  # [m] from the datum, 0 = no limit
   gnss_gate_chi2: ${MOLA_NAVSTATE_GNSS_GATE_CHI2|25.0}  # 0 = no innovation gate
   gnss_gate_prediction_sigma: ${MOLA_NAVSTATE_GNSS_GATE_PRED_SIGMA|0.5}  # [m]

@@ -558,6 +558,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             std::optional<Fix> lastRejected;  //!< last of the current rejected run
             size_t             rejectedRunLength = 0;  //!< mutually consistent rejections
 
+            /// Receiver horizontal sigmas of recent fixes, for gnss_max_sigma_ratio.
+            std::deque<std::pair<mrpt::Clock::time_point, double>> recentSigmaXY;
+
             /// Without a prediction: first fix of the current rejected run, and the
             /// antenna position in {map} at that time, if any (odometry evidence).
             std::optional<Fix>                  runStartFix;

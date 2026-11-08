@@ -29,6 +29,9 @@
  *           never be reacquired while the vehicle moves), also before the
  *           geo-reference converges;
  *         - malformed readings and quality filters;
+ *         - after RTK, a stretch of degraded (float) fixes, biased by meters
+ *           while reporting 0.5 m: rejected by their sigma relative to the
+ *           best one seen;
  *         - the optional height band and redescending kernels;
  *         - a fixed geo-reference (relocalization).
  * @author Jose Luis Blanco Claraco
@@ -90,6 +93,7 @@ enum class FixKind
     None,  //!< outage
     Impostor,  //!< datum lat/lon at zero height
     Spike,  //!< multipath jump
+    Degraded,  //!< biased by meters, reporting a moderate sigma (RTK float)
     NaNCov,
     ZeroCov,
 };
@@ -260,6 +264,10 @@ Result run(const Scenario& sc, double checkFrom)
                     est.fuse_gnss(makeFix(
                         toGeodetic({p.x + 15.0, p.y - 12.0, p.z + 4.0}), t, sc.gnssSigma,
                         sc.fixQuality));
+                    break;
+                case FixKind::Degraded:
+                    est.fuse_gnss(makeFix(
+                        toGeodetic({p.x + 2.0, p.y - 1.5, p.z + 2.5}), t, 0.5, sc.fixQuality));
                     break;
                 case FixKind::NaNCov:
                     est.fuse_gnss(makeFix(
@@ -581,6 +589,48 @@ void test_redescending_kernels()
     }
 }
 
+Scenario degraded_after_rtk()
+{
+    Scenario sc;
+    sc.duration = 45.0;
+    sc.fixKind  = [](double t, int)
+    { return (t > 20.0 && t < 32.0) ? FixKind::Degraded : FixKind::Real; };
+    return sc;
+}
+
+void test_degraded_after_rtk()
+{
+    // Control: without the ratio test the degraded fixes pass the innovation
+    // gate (their 0.5 m sigma widens it) and pull the estimate.
+    Scenario ctrl    = degraded_after_rtk();
+    ctrl.name        = "RTK, then 12 s of fixes biased by 3.5 m reporting 0.5 m (ratio test off)";
+    ctrl.extraParams = "    gnss_max_sigma_ratio: 0.0\n";
+    const auto rc    = run(ctrl, 15.0);
+    ASSERT_GT_(rc.maxHorizErr + rc.maxVertErr, 0.6);
+
+    Scenario sc    = degraded_after_rtk();
+    sc.name        = "Same, rejected by their sigma relative to the best one seen";
+    sc.extraParams = "    gnss_max_sigma_ratio: 2.0\n    gnss_sigma_ratio_window: 300.0\n";
+    const auto r   = run(sc, 15.0);
+    ASSERT_GE_(r.stats.rejected_admission, 55U);
+    ASSERT_LT_(r.maxHorizErr, 0.3);
+    ASSERT_LT_(r.maxVertErr, 0.5);
+}
+
+void test_single_point_with_ratio_test()
+{
+    Scenario sc;
+    sc.name                = "Single-point GNSS (sigma 2 m) with the ratio test: nothing rejected";
+    sc.gnssSigma           = 2.0;
+    sc.fixQuality          = 1;
+    sc.duration            = 60.0;
+    sc.convergencePosSigma = 3.0;
+    sc.convergenceOriSigma = 10.0;
+    sc.extraParams         = "    gnss_max_sigma_ratio: 2.0\n    gnss_sigma_ratio_window: 300.0\n";
+    const auto r           = run(sc, 40.0);
+    ASSERT_EQUAL_(r.stats.rejected_admission, 0U);
+}
+
 void test_relocalization_impostor()
 {
     Scenario sc;
@@ -615,6 +665,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_height_band_before_convergence();
         test_redescending_kernels();
         test_relocalization_impostor();
+        test_degraded_after_rtk();
+        test_single_point_with_ratio_test();
         std::cout << "All tests passed." << std::endl;
         return 0;
     }
