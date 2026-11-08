@@ -4393,10 +4393,11 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     }
 
     // Readings just before the reference instant count too: a front end that
-    // levels itself averages the IMU first, then resets the estimator.
-    constexpr double   LEVEL_BEFORE       = 1.0;  // [s]
-    constexpr double   LEVEL_AFTER        = 0.5;  // [s]
-    constexpr unsigned LEVEL_MIN_READINGS = 5;
+    // levels itself averages the IMU first, then resets the estimator. Even a
+    // single reading is far better than nothing: off by the vehicle's own
+    // acceleration at most, a few degrees, against up to 180 deg.
+    constexpr double LEVEL_BEFORE = 1.0;  // [s]
+    constexpr double LEVEL_AFTER  = 0.5;  // [s]
 
     const auto& [tRef, R_map_vehicle] = *g.enuLevelRef;
     gtsam::Vector3 sum                = gtsam::Vector3::Zero();
@@ -4409,7 +4410,7 @@ void StateEstimationSmoother::level_enu_to_map_locked()
             count++;
         }
     }
-    if (count < LEVEL_MIN_READINGS || sum.norm() < 1e-6)
+    if (count == 0 || sum.norm() < 1e-6)
     {
         return;  // not yet: try again on the next update
     }
@@ -4432,8 +4433,24 @@ void StateEstimationSmoother::level_enu_to_map_locked()
         R_enu_map = gtsam::Rot3::Rx(M_PI);
     }
 
-    const auto prev = g.newValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
-    g.newValues.update(symbol_T_enu_to_map, gtsam::Pose3(R_enu_map, prev.translation()));
+    const auto         prev = g.newValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
+    const gtsam::Pose3 leveled(R_enu_map, prev.translation());
+    g.newValues.update(symbol_T_enu_to_map, leveled);
+
+    // Its weak priors (and azimuth anchor, tracked by index) are centered at the
+    // old value: a solve in which nothing else observes T_enu_to_map yet would
+    // put it right back there.
+    for (size_t i = 0; i < g.newFactors.size(); i++)
+    {
+        const auto prior =
+            std::dynamic_pointer_cast<gtsam::PriorFactor<gtsam::Pose3>>(g.newFactors.at(i));
+        if (prior && prior->key() == symbol_T_enu_to_map)
+        {
+            g.newFactors.replace(
+                i, std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                       symbol_T_enu_to_map, leveled, prior->noiseModel()));
+        }
+    }
     g.enuLevelDone = true;
 
     MRPT_LOG_INFO_FMT(

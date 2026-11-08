@@ -55,7 +55,8 @@ params:
 // first pose pinned, is also {map}), and an IMU on the vehicle reads gravity.
 // Returns the largest distance from the origin and the largest speed of the
 // estimate over the run.
-std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu, bool resetFirst)
+std::pair<double, double> run_static(
+    const mrpt::poses::CPose3D& vehicleInEnu, bool resetFirst, unsigned firstPoseK)
 {
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(PARAMS));
@@ -92,7 +93,6 @@ std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu, b
         {
             nav.reset();
         }
-        const unsigned firstPoseK = resetFirst ? 101 : 5;
         if (k < firstPoseK || (k - firstPoseK) % READINGS_PER_KF != 0)
         {
             continue;
@@ -115,11 +115,13 @@ std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu, b
 
 // With the gravity of the preintegration factors as wrong as the attitude of
 // {map}, a vehicle at rest would be estimated as falling.
-void check(double yawDeg, double pitchDeg, double rollDeg, bool resetFirst = false)
+void check(
+    double yawDeg, double pitchDeg, double rollDeg, bool resetFirst = false,
+    unsigned firstPoseK = 5)
 {
     const auto vehicle = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
         0, 0, 0, mrpt::DEG2RAD(yawDeg), mrpt::DEG2RAD(pitchDeg), mrpt::DEG2RAD(rollDeg));
-    const auto [dist, speed] = run_static(vehicle, resetFirst);
+    const auto [dist, speed] = run_static(vehicle, resetFirst, firstPoseK);
     std::cout << "  max distance " << dist << " m, max speed " << speed << " m/s\n";
     ASSERT_LT_(dist, 0.05);
     ASSERT_LT_(speed, 0.05);
@@ -130,7 +132,10 @@ void test_level() { check(0, 0, 0); }
 void test_tilted() { check(40, 0, 30); }
 void test_nearly_upside_down() { check(0, 0, 150); }
 void test_upside_down() { check(0, 180, 0); }
-void test_upside_down_after_reset() { check(0, 0, 179, true); }
+// The first pose on the keyframe of the first IMU reading: nothing else observes
+// T_enu_to_map in the first solve.
+void test_upside_down_first_pose_with_imu() { check(0, 0, 179, false, 0); }
+void test_upside_down_after_reset() { check(0, 0, 179, true, 101); }
 
 int main(int argc, char** argv)
 {
@@ -140,6 +145,7 @@ int main(int argc, char** argv)
         {"nearly_upside_down", &test_nearly_upside_down},
         {"upside_down", &test_upside_down},
         {"upside_down_after_reset", &test_upside_down_after_reset},
+        {"upside_down_first_pose_with_imu", &test_upside_down_first_pose_with_imu},
     };
 
     bool anyFail = false;
