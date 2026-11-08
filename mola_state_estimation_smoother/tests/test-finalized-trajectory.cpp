@@ -206,14 +206,16 @@ void test_imu_keyframes_left_out()
         (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
     }
 
+    // Exactly the pose keyframes, all of them:
     const auto traj = nav.estimated_trajectory(
         mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
     ASSERT_(traj.has_value());
-    ASSERT_GT_(traj->size(), N_POSES / 2);
+    ASSERT_EQUAL_(traj->size(), N_POSES);
+    unsigned i = 0;
     for (const auto& [t, p] : *traj)
     {
-        const double k = mrpt::Clock::toDouble(t) / DT;
-        ASSERT_NEAR_(k, std::round(k), 1e-6);
+        ASSERT_NEAR_(mrpt::Clock::toDouble(t), i * DT, 1e-6);
+        i++;
     }
 }
 
@@ -257,14 +259,16 @@ void test_reused_imu_keyframes_kept()
         (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
     }
 
+    // Every pose, at the stamp of the IMU keyframe it reused:
     const auto traj = nav.estimated_trajectory(
         mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
     ASSERT_(traj.has_value());
-    ASSERT_GT_(traj->size(), N_POSES / 2);
+    ASSERT_EQUAL_(traj->size(), N_POSES);
+    unsigned i = 0;
     for (const auto& [t, p] : *traj)
     {
-        const double k = (mrpt::Clock::toDouble(t) - T0 + IMU_DT) / DT;
-        ASSERT_NEAR_(k, std::round(k), 1e-6);
+        ASSERT_NEAR_(mrpt::Clock::toDouble(t), T0 + i * DT - IMU_DT, 1e-6);
+        i++;
     }
 }
 
