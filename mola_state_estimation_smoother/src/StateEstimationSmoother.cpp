@@ -1344,7 +1344,6 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 {
     const auto frame_id_idx = add_or_get_odom_frame_id(wheels_odometry_frame_locked(odomName));
     const auto this_kf_id   = create_or_get_keyframe_by_timestamp_locked(odom.timestamp);
-    state_.pose_keyframes.insert(this_kf_id);
 
     // Unconditional, and independent of which factor is added below: this is the
     // anchor estimated_navstate() extrapolates from when a front end asks for a
@@ -1363,6 +1362,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
             gtsam::noiseModel::Gaussian::Covariance(cov_out));
+        state_.pose_keyframes.insert(this_kf_id);
 
         state_.wheels_odometry_anchor_kf = this_kf_id;
 
@@ -1418,6 +1418,8 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 
     state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
         T(*prev), T(this_kf_id), incr_out, gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
+    state_.pose_keyframes.insert(*prev);
+    state_.pose_keyframes.insert(this_kf_id);
 }
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -2176,7 +2178,6 @@ void StateEstimationSmoother::fuse_pose_locked(
                 mrpt::Clock::toDouble(*chain.last_stamp));
             return;
         }
-        state_.pose_keyframes.insert(this_kf_id);
 
         if (!chain.anchor_kf.has_value())
         {
@@ -2184,6 +2185,7 @@ void StateEstimationSmoother::fuse_pose_locked(
             state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
                 gtsam::noiseModel::Gaussian::Covariance(cov_out));
+            state_.pose_keyframes.insert(this_kf_id);
             chain.anchor_kf = this_kf_id;
 
             MRPT_LOG_DEBUG_FMT(
@@ -2255,6 +2257,8 @@ void StateEstimationSmoother::fuse_pose_locked(
                     with_huber(
                         gtsam::noiseModel::Gaussian::Covariance(incrCov_out),
                         params_.pose_robust_huber_threshold));
+                state_.pose_keyframes.insert(*chain.last_kf);
+                state_.pose_keyframes.insert(this_kf_id);
             }
         }
 

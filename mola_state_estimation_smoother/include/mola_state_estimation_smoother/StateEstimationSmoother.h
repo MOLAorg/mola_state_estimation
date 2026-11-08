@@ -395,8 +395,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<frame_index_t, FrameState> last_estimated_states;
 
-        /// Keyframes holding a pose or odometry observation. The others (e.g.
-        /// IMU, twist or GNSS readings only) are left out of estimated_trajectory().
+        /// Keyframes with a pose or odometry factor (marked when it is added).
+        /// The others (e.g. IMU, twist or GNSS readings only) are left out of
+        /// estimated_trajectory().
         std::set<frame_index_t> pose_keyframes;
 
         /// Low-pass-filtered twist of the newest keyframe, used as the
