@@ -218,8 +218,10 @@ Other behavior:
 - iSAM2 ordering (`isam2_newest_keys_last`, default on, GTSAM 4.2 only):
   `NewestLastFixedLagSmoother` re-implements 4.2's fixed-lag `update()` so the
   keys of new factors and those at the newest stamp are eliminated last (root
-  of the Bayes tree). A third constraint group only with >= 3 new-factor keys:
-  4.2's CCOLAMD overflows if a group number reaches the reordered size.
+  of the Bayes tree), and the cliques of marginalized keys are re-eliminated
+  (4.2's `marginalizeLeaves()` needs those keys first in their cliques). A third
+  constraint group only with >= 3 new-factor keys: 4.2's CCOLAMD overflows if a
+  group number reaches the reordered size.
 - The angular constant-velocity factor sigma is
   `sigma_random_walk_acceleration_angular * dt` combined in quadrature with
   `sqrt(2) * imu_angular_velocity_sigma` (`angular_const_vel_sigma()`).

@@ -739,8 +739,7 @@ class Parameters
 
     /** Eliminate the newest states last, so they stay at the root of the iSAM2
      * Bayes tree: each update and each query of the current state then only
-     * touches a short path of the tree. Only used with GTSAM 4.2; newer
-     * versions do it by themselves. */
+     * touches a short path of the tree. Only has an effect with GTSAM 4.2. */
     bool isam2_newest_keys_last = true;
 
     /** @} */

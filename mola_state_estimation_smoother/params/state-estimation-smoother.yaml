@@ -441,7 +441,7 @@ params:
 
   # Eliminate the newest states last, so they stay at the root of the iSAM2
   # Bayes tree and each update and query of the current state stays cheap.
-  # Only used with GTSAM 4.2; newer versions do it by themselves.
+  # Only has an effect with GTSAM 4.2.
   isam2_newest_keys_last: ${MOLA_SMOOTHER_ISAM2_NEWEST_KEYS_LAST|true}
 
   # --------------------------------------------------------------------------

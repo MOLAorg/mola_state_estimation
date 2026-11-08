@@ -36,7 +36,8 @@ namespace mola::state_estimation_smoother
  *  The base class only constrains the marginalizable keys to go first, which
  *  can leave the newest states deep in the Bayes tree, so that each update
  *  re-eliminates, and each marginal of the current state crosses, a long path
- *  of it. Newer GTSAM versions do this themselves.
+ *  of it. It also re-eliminates the cliques of the marginalized keys, which
+ *  4.2's marginalization needs first among the frontals of their cliques.
  */
 class NewestLastFixedLagSmoother : public gtsam::IncrementalFixedLagSmoother
 {
@@ -55,15 +56,18 @@ class NewestLastFixedLagSmoother : public gtsam::IncrementalFixedLagSmoother
         const KeyTimestampMap&             timestamps      = KeyTimestampMap(),
         const gtsam::FactorIndices&        factorsToRemove = gtsam::FactorIndices()) override;
 
-   private:
-    bool newestKeysLast_;
-
+   protected:
+    /** The constraint groups of an update with these marginalizable keys and
+     * new-factor keys, at this current timestamp. */
     boost::optional<gtsam::FastMap<gtsam::Key, int>> orderingConstraints(
         const gtsam::KeyVector& marginalizableKeys, const gtsam::KeySet& newFactorKeys,
         double currentTimestamp) const;
+
+   private:
+    bool newestKeysLast_;
 };
 #else
-// Newer GTSAM versions order the newest keys last by themselves.
+// Other GTSAM versions keep their own ordering.
 using NewestLastFixedLagSmoother = gtsam::IncrementalFixedLagSmoother;
 #endif
 

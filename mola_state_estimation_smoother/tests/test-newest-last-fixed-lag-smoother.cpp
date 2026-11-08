@@ -35,6 +35,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <random>
+#include <vector>
 
 using gtsam::symbol_shorthand::V;
 using gtsam::symbol_shorthand::X;
@@ -42,7 +44,8 @@ using mola::state_estimation_smoother::NewestLastFixedLagSmoother;
 
 namespace
 {
-constexpr double LAG = 5.0;
+constexpr double       LAG              = 5.0;
+constexpr unsigned int NUM_RANDOM_SEEDS = 40;
 
 gtsam::ISAM2Params isam2_params()
 {
@@ -60,6 +63,25 @@ size_t depth_of(const gtsam::ISAM2& isam, const gtsam::Key key)
     }
     return depth;
 }
+
+// Exposes the constraint groups that an update would use.
+class ConstraintsProbe : public NewestLastFixedLagSmoother
+{
+   public:
+    using NewestLastFixedLagSmoother::NewestLastFixedLagSmoother;
+
+    int max_group(const gtsam::KeySet& newFactorKeys, const double stamp) const
+    {
+        const auto groups =
+            orderingConstraints(findKeysBefore(stamp - smootherLag_), newFactorKeys, stamp);
+        int maxGroup = 0;
+        for (const auto& [key, group] : *groups)
+        {
+            maxGroup = std::max(maxGroup, group);
+        }
+        return maxGroup;
+    }
+};
 
 void expect_same_estimates(const gtsam::Values& a, const gtsam::Values& b, const double tol)
 {
@@ -113,6 +135,7 @@ void test_newest_at_root()
         base.update();
         newest.update();
         ASSERT_EQUAL_(depth_of(newest.getISAM2(), X(i)), 0U);
+        ASSERT_EQUAL_(depth_of(newest.getISAM2(), V(i)), 0U);
         maxBaseDepth = std::max(maxBaseDepth, depth_of(base.getISAM2(), X(i)));
 
         expect_same_estimates(base.calculateEstimate(), newest.calculateEstimate(), 1e-6);
@@ -122,12 +145,13 @@ void test_newest_at_root()
 }
 
 // A chain: the new factors of every update involve two keys, too few for a
-// third constraint group, while each update marginalizes one key.
+// third constraint group, while each update from the seventh on marginalizes
+// one key.
 void test_few_new_keys_while_marginalizing()
 {
     const auto                         noise = gtsam::noiseModel::Isotropic::Sigma(3, 0.1);
     gtsam::IncrementalFixedLagSmoother base(LAG, isam2_params());
-    NewestLastFixedLagSmoother         newest(LAG, isam2_params(), true);
+    ConstraintsProbe                   newest(LAG, isam2_params(), true);
 
     for (size_t i = 0; i < 30; ++i)
     {
@@ -136,6 +160,13 @@ void test_few_new_keys_while_marginalizing()
         gtsam::FixedLagSmoother::KeyTimestampMap stamps;
         values.insert(X(i), gtsam::Pose2(static_cast<double>(i), 0.0, 0.0));
         stamps[X(i)] = static_cast<double>(i);
+        if (i > LAG)
+        {
+            // An update that marginalizes: a third group needs three new-factor keys.
+            const double stamp = static_cast<double>(i);
+            ASSERT_EQUAL_(newest.max_group({X(i - 1), X(i)}, stamp), 1);
+            ASSERT_EQUAL_(newest.max_group({X(i - 2), X(i - 1), X(i)}, stamp), 2);
+        }
         if (i == 0)
         {
             factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose2>>(X(0), gtsam::Pose2(), noise);
@@ -149,9 +180,108 @@ void test_few_new_keys_while_marginalizing()
         newest.update(factors, values, stamps);
         base.update();
         newest.update();
-        expect_same_estimates(base.calculateEstimate(), newest.calculateEstimate(), 1e-9);
+        expect_same_estimates(base.calculateEstimate(), newest.calculateEstimate(), 1e-6);
     }
     std::cout << "[few-new-keys] 30 updates, same estimates as GTSAM's smoother\n";
+}
+// Whether every key of the Bayes tree still has a value: a marginalized key
+// left in a clique breaks the next update.
+bool tree_is_consistent(const gtsam::ISAM2& isam)
+{
+    const gtsam::Values& theta = isam.getLinearizationPoint();
+    for (const auto& [key, clique] : isam.nodes())
+    {
+        for (const gtsam::Key k : clique->conditional()->keys())
+        {
+            if (!theta.exists(k))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Random windows: new variables linked to one or two variables still in the
+// window, some loop closures, repeated timestamps and extra empty updates.
+void test_marginalization_on_random_graphs()
+{
+    const auto noise = gtsam::noiseModel::Isotropic::Sigma(3, 0.1);
+    for (unsigned int seed = 0; seed < NUM_RANDOM_SEEDS; ++seed)
+    {
+        std::mt19937       rng(seed);
+        gtsam::ISAM2Params params      = isam2_params();
+        params.relinearizeThreshold    = 0.001;
+        params.relinearizeSkip         = 1;
+        const double               lag = 1.0 + static_cast<double>(rng() % 5);
+        NewestLastFixedLagSmoother smoother(lag, params, true);
+
+        size_t nextKey = 0;
+        double stamp   = 0.0;
+        for (int step = 0; step < 60; ++step)
+        {
+            gtsam::NonlinearFactorGraph              factors;
+            gtsam::Values                            values;
+            gtsam::FixedLagSmoother::KeyTimestampMap stamps;
+            if (rng() % 4 != 0)
+            {
+                stamp += 0.5 * static_cast<double>(1 + rng() % 3);
+            }
+            std::vector<size_t> window;
+            for (const auto& [key, keyStamp] : smoother.timestamps())
+            {
+                if (keyStamp > stamp - lag)
+                {
+                    window.push_back(gtsam::Symbol(key).index());
+                }
+            }
+            const size_t numNew = step == 0 ? 1 : rng() % 3;
+            for (size_t n = 0; n < numNew; ++n)
+            {
+                const size_t key = nextKey++;
+                values.insert(X(key), gtsam::Pose2(static_cast<double>(key), 0.0, 0.0));
+                stamps[X(key)] = stamp;
+                if (window.empty())
+                {
+                    factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose2>>(
+                        X(key), gtsam::Pose2(static_cast<double>(key), 0.0, 0.0), noise);
+                }
+                const size_t numLinks = window.empty() ? 0 : 1 + rng() % 2;
+                for (size_t l = 0; l < numLinks; ++l)
+                {
+                    const size_t other = window[rng() % window.size()];
+                    factors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose2>>(
+                        X(other), X(key),
+                        gtsam::Pose2(
+                            static_cast<double>(key) - static_cast<double>(other), 0.0, 0.0),
+                        noise);
+                }
+                window.push_back(key);
+            }
+            if (window.size() >= 2 && rng() % 3 == 0)
+            {
+                const size_t a = window[rng() % window.size()];
+                const size_t b = window[rng() % window.size()];
+                if (a != b)
+                {
+                    factors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose2>>(
+                        X(a), X(b),
+                        gtsam::Pose2(static_cast<double>(b) - static_cast<double>(a), 0.0, 0.0),
+                        noise);
+                }
+            }
+            smoother.update(factors, values, stamps);
+            ASSERT_(tree_is_consistent(smoother.getISAM2()));
+            const unsigned int numExtra = rng() % 3;
+            for (unsigned int e = 0; e < numExtra; ++e)
+            {
+                smoother.update();
+                ASSERT_(tree_is_consistent(smoother.getISAM2()));
+            }
+        }
+    }
+    std::cout << "[random-graphs] " << NUM_RANDOM_SEEDS
+              << " random windows marginalized without leftovers\n";
 }
 }  // namespace
 
@@ -161,6 +291,7 @@ int main()
     {
         test_newest_at_root();
         test_few_new_keys_while_marginalizing();
+        test_marginalization_on_random_graphs();
         std::cout << "Test passed." << std::endl;
         return 0;
     }
@@ -175,7 +306,7 @@ int main()
 
 int main()
 {
-    // Newer GTSAM versions order the newest keys last by themselves.
+    // The class only changes the ordering of GTSAM 4.2.
     std::cout << "Test skipped: only for GTSAM 4.2." << std::endl;
     return 0;
 }

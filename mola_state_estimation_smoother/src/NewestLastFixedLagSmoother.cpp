@@ -72,6 +72,9 @@ NewestLastFixedLagSmoother::Result NewestLastFixedLagSmoother::update(
     std::set<gtsam::Key> additionalKeys;
     for (const gtsam::Key key : marginalizableKeys)
     {
+        // GTSAM 4.2's marginalizeLeaves() only removes the marginalized frontals
+        // at the front of a clique: re-eliminate each one, so they go first.
+        additionalKeys.insert(key);
         for (const auto& child : isam_[key]->children)
         {
             recursiveMarkAffectedKeys(key, child, additionalKeys);
@@ -129,13 +132,13 @@ boost::optional<gtsam::FastMap<gtsam::Key, int>> NewestLastFixedLagSmoother::ord
     // GTSAM 4.2's CCOLAMD overflows a buffer if a group number is not below the
     // number of variables ISAM2 reorders. The keys of the new factors are always
     // among those, so the newest keys get their own third group only if there
-    // are at least three of them; otherwise, this update orders as GTSAM 4.2.
+    // are at least three of them; otherwise, they share group 1 in this update.
     const bool newestGroup = newFactorKeys.size() >= 3;
     for (const auto& [stamp, key] : timestampKeyMap_)
     {
         if (isActive(key))
         {
-            groups[key] = newestGroup && stamp >= currentTimestamp ? 2 : 1;
+            groups[key] = (newestGroup && stamp >= currentTimestamp) ? 2 : 1;
         }
     }
     if (newestGroup)
