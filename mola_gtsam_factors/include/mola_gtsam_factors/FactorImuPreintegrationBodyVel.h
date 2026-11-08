@@ -122,6 +122,102 @@ class FactorImuPreintegrationBodyVel
     const gtsam::ImuFactor& imuFactor() const { return imu_; }
 };
 
+/** The same factor for keyframe poses in a frame {map} that need not be
+ *  gravity-aligned: gravity is along -z of {enu}, and T_enu_to_map (the pose
+ *  of {map} in {enu}) is one more variable. Only its roll and pitch change the
+ *  residual, not its azimuth or translation.
+ *
+ *  Keys: T_enu_to_map (Pose3), T_i (Pose3, in {map}), V_i (Point3, body), T_j,
+ *  V_j, B_i (imuBias::ConstantBias).
+ */
+class FactorImuPreintegrationBodyVelEnu
+    : public gtsam::NoiseModelFactorN<
+          gtsam::Pose3, gtsam::Pose3, gtsam::Point3, gtsam::Pose3, gtsam::Point3,
+          gtsam::imuBias::ConstantBias>
+{
+   private:
+    using This = FactorImuPreintegrationBodyVelEnu;
+    using Base = gtsam::NoiseModelFactorN<
+        gtsam::Pose3, gtsam::Pose3, gtsam::Point3, gtsam::Pose3, gtsam::Point3,
+        gtsam::imuBias::ConstantBias>;
+
+    FactorImuPreintegrationBodyVel inEnu_;
+
+   public:
+    using Base::evaluateError;  // the overloads without Jacobians
+
+    FactorImuPreintegrationBodyVelEnu() = default;
+
+    /** `covFloor` as in FactorImuPreintegrationBodyVel. */
+    FactorImuPreintegrationBodyVelEnu(
+        gtsam::Key kEnuToMap, gtsam::Key kTi, gtsam::Key kVi, gtsam::Key kTj, gtsam::Key kVj,
+        gtsam::Key kBi, const gtsam::PreintegratedImuMeasurements& pim,
+        const gtsam::Matrix9& covFloor = gtsam::Matrix9::Zero())
+        : Base(
+              gtsam::noiseModel::Gaussian::Covariance(pim.preintMeasCov() + covFloor), kEnuToMap,
+              kTi, kVi, kTj, kVj, kBi),
+          inEnu_(kTi, kVi, kTj, kVj, kBi, pim, covFloor)
+    {
+    }
+
+    gtsam::NonlinearFactor::shared_ptr clone() const override
+    {
+        return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+    }
+
+    gtsam::Vector evaluateError(
+        const gtsam::Pose3& T_enu_to_map, const gtsam::Pose3& Ti, const gtsam::Point3& vbi,
+        const gtsam::Pose3& Tj, const gtsam::Point3& vbj, const gtsam::imuBias::ConstantBias& bi,
+        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3,
+        gtsam::OptionalMatrixType H4, gtsam::OptionalMatrixType H5,
+        gtsam::OptionalMatrixType H6) const override
+    {
+        // Body velocities are the same in both frames; only the poses move.
+        gtsam::Matrix6     dEi_dF;
+        gtsam::Matrix6     dEi_dTi;
+        gtsam::Matrix6     dEj_dF;
+        gtsam::Matrix6     dEj_dTj;
+        const gtsam::Pose3 Ei = T_enu_to_map.compose(Ti, dEi_dF, dEi_dTi);
+        const gtsam::Pose3 Ej = T_enu_to_map.compose(Tj, dEj_dF, dEj_dTj);
+
+        gtsam::Matrix       Hei;
+        gtsam::Matrix       Hvi;
+        gtsam::Matrix       Hej;
+        gtsam::Matrix       Hvj;
+        gtsam::Matrix       Hb;
+        const gtsam::Vector e =
+            inEnu_.evaluateError(Ei, vbi, Ej, vbj, bi, &Hei, &Hvi, &Hej, &Hvj, &Hb);
+
+        if (H1)
+        {
+            *H1 = Hei * dEi_dF + Hej * dEj_dF;
+        }
+        if (H2)
+        {
+            *H2 = Hei * dEi_dTi;
+        }
+        if (H3)
+        {
+            *H3 = Hvi;
+        }
+        if (H4)
+        {
+            *H4 = Hej * dEj_dTj;
+        }
+        if (H5)
+        {
+            *H5 = Hvj;
+        }
+        if (H6)
+        {
+            *H6 = Hb;
+        }
+        return e;
+    }
+
+    const FactorImuPreintegrationBodyVel& inEnuFactor() const { return inEnu_; }
+};
+
 }  // namespace mola::factors
 
 #endif

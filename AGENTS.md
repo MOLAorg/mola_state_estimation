@@ -126,11 +126,11 @@ Sensor inputs:
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
 - IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
   are buffered before decimation; each kinematic link gets a
-  `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with body-frame velocities)
-  once the readings cover it (`attach_imu_factors_locked()`), with a covariance
-  floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
-  (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
-  `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
+  `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
+  velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may
+  be tilted) once the readings cover it (`attach_imu_factors_locked()`), with a
+  covariance floor (`min_sigma_*`); the constant-velocity linear factors stay,
+  weaker (`linear_kinematics_sigma_scale`).
   The per-keyframe gravity and angular-velocity factors stay on with it.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of

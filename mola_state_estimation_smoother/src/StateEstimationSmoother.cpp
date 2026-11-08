@@ -4485,8 +4485,10 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;
             floor.block<3, 3>(3, 3) = mrpt::square(ip.min_sigma_position) * gtsam::I_3x3;
             floor.block<3, 3>(6, 6) = mrpt::square(ip.min_sigma_velocity) * gtsam::I_3x3;
-            g.pendingKinematic[*it].emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
-                T(i), V(i), T(j), V(j), Z(i), pim, floor);
+            // Gravity is along -z of {enu}, so {map} need not be level:
+            g.pendingKinematic[*it]
+                .emplace_shared<mola::factors::FactorImuPreintegrationBodyVelEnu>(
+                    symbol_T_enu_to_map, T(i), V(i), T(j), V(j), Z(i), pim, floor);
         }
         it = g.imuLinksAwaiting.erase(it);
     }

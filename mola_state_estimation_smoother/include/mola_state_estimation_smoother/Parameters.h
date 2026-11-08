@@ -541,8 +541,9 @@ class Parameters
      * whose interval is covered by raw readings gets an on-manifold
      * preintegration factor (gtsam::ImuFactor on the raw accelerometer and
      * gyroscope readings), and every keyframe gets a gyroscope and
-     * accelerometer bias variable, chained by a random walk. The reference
-     * frame is assumed gravity-aligned (z up). Default off. */
+     * accelerometer bias variable, chained by a random walk. Gravity is along
+     * -z of {enu}: the factors include T_enu_to_map, so {map} may be tilted.
+     * Default off. */
     struct ImuPreintegration
     {
         bool        enabled         = false;
