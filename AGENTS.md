@@ -124,7 +124,7 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
-- IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
+- IMU preintegration (`imu_preintegration`, default on; compiled out for GTSAM < 4.3): raw readings of one IMU
   are buffered before decimation; each kinematic link gets a
   `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
   velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may
@@ -177,10 +177,11 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 - Readings landing on an existing keyframe hold the chain anchor at the first
   of them, so their motion goes into the next increment.
 - A factor whose previous keyframe was already marginalized is skipped.
-- For `fuse_pose()` sources, the increment covariance is diagonal, from the
-  required `relative_pose_increment_sigma_lin`/`_ang` (> 0; `loadFrom()`
-  throws otherwise); the supplied covariance is only used by the anchor
-  factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
+- For `fuse_pose()` sources, the increment covariance is diagonal, from
+  `relative_pose_increment_sigma_lin`/`_ang` (defaults tuned for LiDAR odometry:
+  `_ang` 1e-5 rad; `_lin` 0 = automatic, resolved by `loadFrom()` to 0.1 mm with
+  preintegration on and available, 2 cm otherwise); the supplied covariance is
+  only used by the anchor factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
   a variance growing linearly with the increment size (random walk).
 
 Other behavior:

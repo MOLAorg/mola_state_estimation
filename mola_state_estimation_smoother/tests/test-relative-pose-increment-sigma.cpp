@@ -20,6 +20,7 @@
  * @author Jose Luis Blanco Claraco
  */
 
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/CMatrixFixed.h>
@@ -138,6 +139,13 @@ bool initialize_throws(const std::string& incrementSigmaLines)
     return false;
 }
 
+double loaded_sigma_lin(const std::string& extraLines)
+{
+    mola::state_estimation_smoother::StateEstimationSmoother est;
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(extraLines)));
+    return est.parameters().relative_pose_increment_sigma_lin;
+}
+
 void run_test()
 {
     // The source covariance is that of its absolute pose, irrelevant to one
@@ -170,11 +178,27 @@ void run_test()
     ASSERT_(std::isfinite(sigmaCorrelated));
     ASSERT_LT_(std::abs(sigmaCorrelated - sigmaLooseSource), 0.5 * sigmaLooseSource);
 
-    // The per-increment sigmas are required, and must be > 0:
-    ASSERT_(initialize_throws(""));
-    ASSERT_(initialize_throws("    relative_pose_increment_sigma_lin: 0.01\n"));
-    ASSERT_(initialize_throws(sigma_lines(0.0)));
+    // The per-increment sigmas have defaults; the linear one may be 0 (automatic),
+    // but neither may be negative, nor the angular one 0:
+    ASSERT_(!initialize_throws(""));
+    ASSERT_(!initialize_throws("    relative_pose_increment_sigma_lin: 0.01\n"));
+    ASSERT_(!initialize_throws(sigma_lines(0.0)));
+    ASSERT_(initialize_throws(sigma_lines(-0.01)));
+    ASSERT_(initialize_throws("    relative_pose_increment_sigma_ang: 0.0\n"));
     ASSERT_(!initialize_throws(sigma_lines(INCREMENT_SIGMA)));
+
+    // Automatic linear sigma: tight while IMU preintegration takes the motion
+    // between keyframes, looser otherwise. An explicit value is kept as given.
+    const double withPreint = loaded_sigma_lin("");
+    const double noPreint   = loaded_sigma_lin("    imu_preintegration:\n        enabled: false\n");
+    std::cout << "automatic sigma_lin: " << withPreint << " m with preintegration, " << noPreint
+              << " m without\n";
+#if GTSAM_USES_BOOST
+    ASSERT_EQUAL_(withPreint, noPreint);
+#else
+    ASSERT_LT_(withPreint, 0.1 * noPreint);
+#endif
+    ASSERT_EQUAL_(loaded_sigma_lin("    relative_pose_increment_sigma_lin: 0.03\n"), 0.03);
 }
 
 }  // namespace

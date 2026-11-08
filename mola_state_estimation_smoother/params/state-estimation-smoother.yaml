@@ -352,9 +352,9 @@ params:
   # IMU preintegration between consecutive keyframes (gtsam::ImuFactor on the raw
   # readings), with gyroscope and accelerometer biases as states. Gravity is along -z
   # of {enu} (through T_enu_to_map), so {map} need not be level. Noise densities are
-  # per sqrt(Hz).
+  # per sqrt(Hz). Inert without IMU readings; builds against GTSAM < 4.3 ignore it.
   imu_preintegration:
-    enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|false}
+    enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|true}
     sensor_label_re: "${MOLA_SMOOTHER_IMU_PREINT_LABELS|.*}"
     gyro_noise_density: ${MOLA_IMU_GYRO_NOISE_DENSITY|2.4e-4}  # [rad/s/sqrt(Hz)]
     accel_noise_density: ${MOLA_IMU_ACC_NOISE_DENSITY|1.6e-3}  # [m/s^2/sqrt(Hz)]
@@ -479,9 +479,12 @@ params:
   # so the accuracy of ONE INCREMENT is set here instead (required, > 0).
   # It describes one increment, whatever it spans; put motion-dependent error
   # in the *_per_sqrt_* growth terms below, which scale with the increment.
-  # Tune them for each platform.
-  relative_pose_increment_sigma_lin: ${MOLA_REL_POSE_INCR_SIGMA_LIN|0.02}  # [m]
-  relative_pose_increment_sigma_ang: ${MOLA_REL_POSE_INCR_SIGMA_ANG|0.005}  # [rad]
+  # The defaults suit LiDAR odometry; wheel or visual odometry needs its own
+  # (e.g. 0.02 m and 0.005 rad).
+  # sigma_lin 0 = automatic: 0.1 mm while imu_preintegration is on (and available
+  # in this build), 2 cm otherwise.
+  relative_pose_increment_sigma_lin: ${MOLA_REL_POSE_INCR_SIGMA_LIN|0}  # [m]
+  relative_pose_increment_sigma_ang: ${MOLA_REL_POSE_INCR_SIGMA_ANG|1e-5}  # [rad]
 
   # Growth of the per-increment uncertainty with the size of the increment,
   # as a random walk: variance = sigma_lin^2 + k^2 * distance (and likewise

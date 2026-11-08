@@ -281,16 +281,21 @@ class Parameters
      *  increments' uncertainty is defined here instead.
      *  @{ */
 
-    /** Linear sigma asserted for ONE increment, whatever it spans. Required,
-     * must be > 0. Motion-dependent error belongs in
+    /** Linear sigma asserted for ONE increment, whatever it spans.
+     * Motion-dependent error belongs in
      * relative_pose_increment_sigma_per_sqrt_meter, which scales with the
      * increment and so with pose_min_sample_period. [m]
+     *
+     * 0 (default) = automatic, set by loadFrom(): 0.1 mm while IMU preintegration
+     * is enabled and available in this build, 2 cm otherwise. Both values, and
+     * the default relative_pose_increment_sigma_ang, suit LiDAR odometry; wheel
+     * or visual odometry needs its own (e.g. 2 cm and 5 mrad).
      */
     double relative_pose_increment_sigma_lin = 0.0;  // [m]
 
-    /** Angular counterpart of relative_pose_increment_sigma_lin. Required, must
-     * be > 0. [rad] */
-    double relative_pose_increment_sigma_ang = 0.0;  // [rad]
+    /** Angular counterpart of relative_pose_increment_sigma_lin. Must be > 0.
+     * [rad] */
+    double relative_pose_increment_sigma_ang = 1e-5;  // [rad]
 
     /** Growth of the per-increment linear uncertainty with the distance the
      * increment spans, as a random walk: the asserted variance is
@@ -543,10 +548,11 @@ class Parameters
      * gyroscope readings), and every keyframe gets a gyroscope and
      * accelerometer bias variable, chained by a random walk. Gravity is along
      * -z of {enu}: the factors include T_enu_to_map, so {map} may be tilted.
-     * Default off. */
+     * Default on; inert without IMU readings, and ignored by builds against
+     * GTSAM older than 4.3. */
     struct ImuPreintegration
     {
-        bool        enabled         = false;
+        bool        enabled         = true;
         std::string sensor_label_re = ".*";  //!< IMUs used (regex of labels)
 
         double gyro_noise_density     = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
