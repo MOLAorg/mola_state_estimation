@@ -142,7 +142,9 @@ Sensor inputs:
   Cauchy, Geman-McClure, DCS) scaled by `gnss_huber_threshold`, sigmas floored
   at `gnss_min_sigma_floor_xy` / `_z` (also for the azimuth baselines). Before that,
   `gnss_gate_locked()`: admission tests (fix qualities, finite positive variances,
-  `gnss_max_horizontal_sigma`, `gnss_max_height_deviation`); the datum only after
+  `gnss_max_horizontal_sigma`, `gnss_max_sigma_ratio` against the lowest sigma in the last
+  `gnss_sigma_ratio_window` s (off by default: it only helps if the odometry beats the degraded
+  fixes), `gnss_max_height_deviation`); the datum only after
   `gnss_datum_min_consistent_fixes` consistent fixes; fix-to-fix consistency while
   there is no prediction (bounded by the odometry's antenna motion when there is any;
   a short gap in it rejects; else `gnss_max_plausible_speed`); predictions only from solved keyframes; once converged (or relocalized), a chi2 innovation gate

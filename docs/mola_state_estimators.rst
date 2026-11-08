@@ -488,7 +488,10 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        and ``gnss_min_sigma_floor_z`` (``MOLA_NAVSTATE_GNSS_MIN_SIGMA_XY`` / ``_Z``, 0.10 m and
        0.30 m by default, as in the simple estimator). Each fix must first pass admission tests
        (accepted fix qualities, valid covariance, maximum horizontal sigma, optional height band
-       around the datum) and an innovation gate against the predicted antenna position
+       around the datum, and optionally ``gnss_max_sigma_ratio``: a horizontal sigma at most
+       that many times the lowest one in the last ``gnss_sigma_ratio_window`` seconds, for
+       receivers that keep reporting a solution while it degrades; enable it only when the
+       odometry is better than those degraded fixes) and an innovation gate against the predicted antenna position
        (``gnss_gate_chi2``, 0 disables it); rejected fixes are logged and counted, and a run of
        fixes that keep moving like the vehicle is reacquired after a drift. With
        ``estimate_geo_reference``, the datum is only set after a few mutually consistent fixes.

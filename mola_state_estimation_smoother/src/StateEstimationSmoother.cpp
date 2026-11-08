@@ -5591,6 +5591,33 @@ bool StateEstimationSmoother::gnss_gate_locked(
                 "horizontal sigma %.3f m > %.3f m", rawSigmaXY, params_.gnss_max_horizontal_sigma));
     }
 
+    if (params_.gnss_max_sigma_ratio > 0)
+    {
+        auto& hist = gg.recentSigmaXY;
+        while (!hist.empty() && mrpt::system::timeDifference(hist.front().first, gps.timestamp) >
+                                    params_.gnss_sigma_ratio_window)
+        {
+            hist.pop_front();
+        }
+        hist.emplace_back(gps.timestamp, rawSigmaXY);
+
+        double lowest = rawSigmaXY;
+        for (const auto& [stamp, sigma] : hist)
+        {
+            lowest = std::min(lowest, sigma);
+        }
+        const double maxSigma =
+            std::max(params_.gnss_max_sigma_ratio * lowest, params_.gnss_min_sigma_floor_xy);
+        if (rawSigmaXY > maxSigma)
+        {
+            return reject(
+                true, mrpt::format(
+                          "horizontal sigma %.3f m > %.1f x %.3f m (lowest in the last %.0f s)",
+                          rawSigmaXY, params_.gnss_max_sigma_ratio, lowest,
+                          params_.gnss_sigma_ratio_window));
+        }
+    }
+
     std::optional<mrpt::topography::TGeodeticCoords> datum;
     if (state_.geo_reference.has_value())
     {
