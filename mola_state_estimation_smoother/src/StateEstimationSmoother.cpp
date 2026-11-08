@@ -4385,21 +4385,27 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     }
     if (!g.newValues.exists(symbol_T_enu_to_map))
     {
-        g.enuLevelDone = true;  // already in the solver
+        g.enuLevelDone = true;
+        MRPT_LOG_WARN(
+            "[imu_preintegration] T_enu_to_map reached the solver before it could be leveled "
+            "from the accelerometer: preintegration assumes a level {map} at start");
         return;
     }
 
-    constexpr double   LEVEL_WINDOW       = 0.5;  // [s]
+    // Readings just before the reference instant count too: a front end that
+    // levels itself averages the IMU first, then resets the estimator.
+    constexpr double   LEVEL_BEFORE       = 1.0;  // [s]
+    constexpr double   LEVEL_AFTER        = 0.5;  // [s]
     constexpr unsigned LEVEL_MIN_READINGS = 5;
 
     const auto& [tRef, R_map_vehicle] = *g.enuLevelRef;
     gtsam::Vector3 sum                = gtsam::Vector3::Zero();
     unsigned       count              = 0;
-    for (const auto& r : g.rawImu)
+    for (const auto& [t, acc] : recentAccel_)
     {
-        if (std::abs(r.t - tRef) <= LEVEL_WINDOW)
+        if (t >= tRef - LEVEL_BEFORE && t <= tRef + LEVEL_AFTER)
         {
-            sum += r.acc;
+            sum += gtsam::Vector3(acc.x, acc.y, acc.z);
             count++;
         }
     }
@@ -4408,7 +4414,7 @@ void StateEstimationSmoother::level_enu_to_map_locked()
         return;  // not yet: try again on the next update
     }
     // At rest the accelerometer points up:
-    const gtsam::Vector3 up = (R_map_vehicle * g.rawImuRotation * sum).normalized();
+    const gtsam::Vector3 up = (R_map_vehicle * sum).normalized();
 
     // Shortest rotation taking it to +z: about a horizontal axis, so the
     // azimuth gauge of T_enu_to_map is left as it was.
@@ -4484,6 +4490,17 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     r.acc = {imu.get(IMU_X_ACC), imu.get(IMU_Y_ACC), imu.get(IMU_Z_ACC)};
     r.gyr = {imu.get(IMU_WX), imu.get(IMU_WY), imu.get(IMU_WZ)};
     g.rawImu.push_back(r);
+
+    if (recentAccel_.empty() || t > recentAccel_.back().first)
+    {
+        const gtsam::Vector3 aVehicle = g.rawImuRotation * r.acc;
+        recentAccel_.emplace_back(
+            t, mrpt::math::TVector3D(aVehicle.x(), aVehicle.y(), aVehicle.z()));
+        while (recentAccel_.front().first < t - 2.0)
+        {
+            recentAccel_.pop_front();
+        }
+    }
 
     // Readings older than the window can no longer be part of any link.
     const double keepSince = t - params_.sliding_window_length - 2.0;

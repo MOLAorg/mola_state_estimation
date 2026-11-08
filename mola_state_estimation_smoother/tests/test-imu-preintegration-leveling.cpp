@@ -55,7 +55,7 @@ params:
 // first pose pinned, is also {map}), and an IMU on the vehicle reads gravity.
 // Returns the largest distance from the origin and the largest speed of the
 // estimate over the run.
-std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu)
+std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu, bool resetFirst)
 {
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(PARAMS));
@@ -86,7 +86,14 @@ std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu)
         imu.set(mrpt::obs::IMU_WZ, 0.0);
         nav.fuse_imu(imu);
 
-        if (k % READINGS_PER_KF != 5)
+        // A front end that levels itself from the IMU averages it first, then
+        // resets the estimator and sends its first pose right away:
+        if (resetFirst && k == 100)
+        {
+            nav.reset();
+        }
+        const unsigned firstPoseK = resetFirst ? 101 : 5;
+        if (k < firstPoseK || (k - firstPoseK) % READINGS_PER_KF != 0)
         {
             continue;
         }
@@ -108,11 +115,11 @@ std::pair<double, double> run_static(const mrpt::poses::CPose3D& vehicleInEnu)
 
 // With the gravity of the preintegration factors as wrong as the attitude of
 // {map}, a vehicle at rest would be estimated as falling.
-void check(double yawDeg, double pitchDeg, double rollDeg)
+void check(double yawDeg, double pitchDeg, double rollDeg, bool resetFirst = false)
 {
     const auto vehicle = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
         0, 0, 0, mrpt::DEG2RAD(yawDeg), mrpt::DEG2RAD(pitchDeg), mrpt::DEG2RAD(rollDeg));
-    const auto [dist, speed] = run_static(vehicle);
+    const auto [dist, speed] = run_static(vehicle, resetFirst);
     std::cout << "  max distance " << dist << " m, max speed " << speed << " m/s\n";
     ASSERT_LT_(dist, 0.05);
     ASSERT_LT_(speed, 0.05);
@@ -123,6 +130,7 @@ void test_level() { check(0, 0, 0); }
 void test_tilted() { check(40, 0, 30); }
 void test_nearly_upside_down() { check(0, 0, 150); }
 void test_upside_down() { check(0, 180, 0); }
+void test_upside_down_after_reset() { check(0, 0, 179, true); }
 
 int main(int argc, char** argv)
 {
@@ -131,6 +139,7 @@ int main(int argc, char** argv)
         {"tilted", &test_tilted},
         {"nearly_upside_down", &test_nearly_upside_down},
         {"upside_down", &test_upside_down},
+        {"upside_down_after_reset", &test_upside_down_after_reset},
     };
 
     bool anyFail = false;

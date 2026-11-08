@@ -674,6 +674,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
     /// of the factor graph does not discard the history already collected.
     mrpt::poses::CPose3DInterpolator finalizedTrajectory_;
+    /// Recent accelerometer readings of the preintegrated IMU (stamp [s], in
+    /// the vehicle frame), read by level_enu_to_map_locked(). Kept outside
+    /// State: a front end that levels itself from the IMU resets the estimator
+    /// right after averaging it, and those readings are still valid.
+    std::deque<std::pair<double, mrpt::math::TVector3D>> recentAccel_;
     /// Same keyframes in ENU, through the T_enu_to_map estimated when each one
     /// left the window (the one it was optimized against). Only those finalized
     /// once the geo-reference was fixed or had converged.
