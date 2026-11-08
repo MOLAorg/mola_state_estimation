@@ -229,6 +229,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     // -----------------------------------------------------
     MCP_LOAD_OPT(cfg, additional_isam2_update_steps);
     MCP_LOAD_OPT(cfg, isam2_relinearize_threshold);
+    MCP_LOAD_OPT(cfg, isam2_newest_keys_last);
 
     // name Sensor input names
     // -----------------------------------------------------

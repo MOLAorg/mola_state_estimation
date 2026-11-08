@@ -439,6 +439,11 @@ params:
   # accurate pose source's own error. Velocities and biases use 0.1.
   isam2_relinearize_threshold: ${MOLA_SMOOTHER_ISAM2_RELIN_THRESHOLD|0.01}
 
+  # Eliminate the newest states last, so they stay at the root of the iSAM2
+  # Bayes tree and each update and query of the current state stays cheap.
+  # Only used with GTSAM 4.2; newer versions do it by themselves.
+  isam2_newest_keys_last: ${MOLA_SMOOTHER_ISAM2_NEWEST_KEYS_LAST|true}
+
   # --------------------------------------------------------------------------
   # Sensor Input Filtering (Regex Patterns)
   # --------------------------------------------------------------------------

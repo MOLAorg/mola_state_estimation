@@ -737,6 +737,12 @@ class Parameters
      * and IMU biases use a fixed 0.1. */
     double isam2_relinearize_threshold = 0.01;
 
+    /** Eliminate the newest states last, so they stay at the root of the iSAM2
+     * Bayes tree: each update and each query of the current state then only
+     * touches a short path of the tree. Only used with GTSAM 4.2; newer
+     * versions do it by themselves. */
+    bool isam2_newest_keys_last = true;
+
     /** @} */
 
     /** @name Real-time async backend
