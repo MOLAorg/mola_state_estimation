@@ -144,9 +144,12 @@ std::vector<Reading> simulate()
     return out;
 }
 
-/// Estimated positions in {map} at the pose instants.
+/// Estimated positions in {map} at the pose instants. With `otherImuFirst`,
+/// another IMU (in m/s^2) is seen for 1 s before a reset, and the readings come
+/// from a new one after it.
 std::vector<mrpt::math::TPoint3D> run(
-    const std::vector<Reading>& readings, double accUnit, const std::string& accelScale)
+    const std::vector<Reading>& readings, double accUnit, const std::string& accelScale,
+    bool otherImuFirst = false)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     if (VERBOSE)
@@ -155,6 +158,24 @@ std::vector<mrpt::math::TPoint3D> run(
     }
     est.initialize(mrpt::containers::yaml::FromText(params_yaml(accelScale)));
 
+    if (otherImuFirst)
+    {
+        for (double t = readings.front().t - 1.0; t < readings.front().t; t += IMU_PERIOD)
+        {
+            mrpt::obs::CObservationIMU imu;
+            imu.timestamp   = mrpt::Clock::fromDouble(t);
+            imu.sensorLabel = "imu_other";
+            imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+            imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+            imu.set(mrpt::obs::IMU_Z_ACC, G);
+            imu.set(mrpt::obs::IMU_WX, 0.0);
+            imu.set(mrpt::obs::IMU_WY, 0.0);
+            imu.set(mrpt::obs::IMU_WZ, 0.0);
+            est.fuse_imu(imu);
+        }
+        est.reset();
+    }
+
     std::vector<mrpt::math::TPoint3D> positions;
     for (const auto& r : readings)
     {
@@ -162,7 +183,7 @@ std::vector<mrpt::math::TPoint3D> run(
 
         mrpt::obs::CObservationIMU imu;
         imu.timestamp   = stamp;
-        imu.sensorLabel = "imu";
+        imu.sensorLabel = otherImuFirst ? "imu_new" : "imu";
         imu.set(mrpt::obs::IMU_X_ACC, r.acc.x / accUnit);
         imu.set(mrpt::obs::IMU_Y_ACC, r.acc.y / accUnit);
         imu.set(mrpt::obs::IMU_Z_ACC, r.acc.z / accUnit);
@@ -211,15 +232,22 @@ void test_imu_preintegration_accel_units()
     const auto inGGiven  = run(readings, G, std::to_string(G));
     // Control: readings in units of g taken as m/s^2.
     const auto inGAsSI = run(readings, G, "1.0");
+    // Units decided for another IMU before a reset do not carry over:
+    const auto resetSI = run(readings, 1.0, "0", true);
+    const auto resetG  = run(readings, G, "0", true);
 
     const double dAuto  = max_distance(inSI, inG);
     const double dGiven = max_distance(inSIGiven, inGGiven);
     const double dWrong = max_distance(inSIGiven, inGAsSI);
+    const double dReset = max_distance(resetSI, resetG);
     std::cout << "max position difference, units of g vs m/s^2: automatic scale " << dAuto
-              << " m, given scale " << dGiven << " m, g taken as m/s^2 " << dWrong << " m\n";
+              << " m, given scale " << dGiven << " m, g taken as m/s^2 " << dWrong
+              << " m, new IMU after a reset " << dReset << " m\n";
 
     ASSERT_LT_(dAuto, 1e-6);
     ASSERT_LT_(dGiven, 1e-6);
+    // (the leveling also averages the other IMU's readings, by direction only)
+    ASSERT_LT_(dReset, 1e-4);
     // In this scenario, the units do matter:
     ASSERT_GT_(dWrong, 0.05);
 }

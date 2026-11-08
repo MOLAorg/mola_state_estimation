@@ -632,7 +632,6 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params_.loadFrom(cfg["params"]);
-    accScale_ = params_.imu_preintegration.accel_scale;
 
     if (params_.imu_bias_tracking)
     {
@@ -4529,6 +4528,14 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
         p->setBodyPSensor(mrpt::gtsam_wrappers::toPose3(imu.sensorPose));
         g.pimParams      = p;
         g.rawImuRotation = mrpt::gtsam_wrappers::toPose3(imu.sensorPose).rotation();
+        // Units found before a reset hold for the same sensor only:
+        if (accScaleLabel_ != imu.sensorLabel)
+        {
+            accScaleLabel_ = imu.sensorLabel;
+            accScale_      = ip.accel_scale;
+            accNormSum_    = 0;
+            accNormCount_  = 0;
+        }
         MRPT_LOG_INFO_STREAM(
             "[imu_preintegration] Preintegrating IMU '"
             << imu.sensorLabel << "', pose on vehicle: " << imu.sensorPose);
