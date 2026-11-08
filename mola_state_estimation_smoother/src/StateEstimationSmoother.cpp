@@ -3471,6 +3471,16 @@ void StateEstimationSmoother::solve_locked()
 {
     const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
 
+#if !GTSAM_USES_BOOST
+    // With no keyframe yet there is nothing to estimate, and a solve would only
+    // commit T_enu_to_map before level_enu_to_map_locked() can set it:
+    if (params_.imu_preintegration.enabled && !state_.gtsam->enuLevelDone &&
+        state_.stamp2frame_index.empty())
+    {
+        return;
+    }
+#endif
+
     // Until some source relates {map} to the vehicle (e.g. while IMU readings
     // arrive ahead of the first pose), its position and heading are held only
     // by weak priors, which some GTSAM versions refuse to factorize. Wait for
@@ -4379,7 +4389,7 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     // T_enu_to_map reaches the solver, set its roll and pitch from the
     // accelerometer around an instant whose attitude in {map} is known.
     auto& g = *state_.gtsam;
-    if (g.enuLevelDone || !g.enuLevelRef || !g.pimParams || params_.fixed_geo_reference.has_value())
+    if (g.enuLevelDone || !g.enuLevelRef || params_.fixed_geo_reference.has_value())
     {
         return;
     }
