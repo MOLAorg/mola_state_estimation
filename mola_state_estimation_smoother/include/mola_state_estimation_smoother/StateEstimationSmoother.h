@@ -285,6 +285,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  which anchors on the newest keyframe and extrapolates: the newest state
      *  is the least optimized one, the oldest is the most.
      *
+     *  Only keyframes holding a pose or odometry observation are returned:
+     *  the others (e.g. IMU, twist or GNSS readings only) have a poorly
+     *  observed attitude and would add jitter between the front end's poses.
+     *
      *  Requires `keep_finalized_trajectory` (off by default). An odometry
      *  frame is served through the latest estimate of that frame's transform,
      *  held constant over the trajectory. In the ENU frame, each keyframe goes
@@ -390,6 +394,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         /// The latest values from the estimator; updated in process_pending_gtsam_updates()
         std::map<frame_index_t, FrameState> last_estimated_states;
+
+        /// Keyframes with a pose or odometry factor (marked when it is added).
+        /// The others (e.g. IMU, twist or GNSS readings only) are left out of
+        /// estimated_trajectory().
+        std::set<frame_index_t> pose_keyframes;
 
         /// Low-pass-filtered twist of the newest keyframe, used as the
         /// extrapolation velocity for short-term prediction when

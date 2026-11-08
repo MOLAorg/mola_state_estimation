@@ -1362,6 +1362,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
             gtsam::noiseModel::Gaussian::Covariance(cov_out));
+        state_.pose_keyframes.insert(this_kf_id);
 
         state_.wheels_odometry_anchor_kf = this_kf_id;
 
@@ -1417,6 +1418,8 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 
     state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
         T(*prev), T(this_kf_id), incr_out, gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
+    state_.pose_keyframes.insert(*prev);
+    state_.pose_keyframes.insert(this_kf_id);
 }
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
@@ -2146,6 +2149,7 @@ void StateEstimationSmoother::fuse_pose_locked(
         mark_map_observed_locked();
         state_.gtsam->mapPositionObserved = true;
         mark_orientation_observed_locked(true, true);
+        state_.pose_keyframes.insert(this_kf_id);
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
             T(this_kf_id), pose_out,
             with_huber(
@@ -2181,6 +2185,7 @@ void StateEstimationSmoother::fuse_pose_locked(
             state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
                 symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
                 gtsam::noiseModel::Gaussian::Covariance(cov_out));
+            state_.pose_keyframes.insert(this_kf_id);
             chain.anchor_kf = this_kf_id;
 
             MRPT_LOG_DEBUG_FMT(
@@ -2252,6 +2257,8 @@ void StateEstimationSmoother::fuse_pose_locked(
                     with_huber(
                         gtsam::noiseModel::Gaussian::Covariance(incrCov_out),
                         params_.pose_robust_huber_threshold));
+                state_.pose_keyframes.insert(*chain.last_kf);
+                state_.pose_keyframes.insert(this_kf_id);
             }
         }
 
@@ -2674,7 +2681,8 @@ std::optional<mrpt::poses::CPose3DInterpolator> StateEstimationSmoother::estimat
     for (const auto& [t, frame_idx] : state_.stamp2frame_index)
     {
         const auto it = state_.last_estimated_states.find(frame_idx);
-        if (it == state_.last_estimated_states.end() || !inRange(t))
+        if (it == state_.last_estimated_states.end() || !inRange(t) ||
+            state_.pose_keyframes.count(frame_idx) == 0)
         {
             continue;
         }
@@ -3061,7 +3069,8 @@ void StateEstimationSmoother::delete_too_old_entries()
         for (const auto& [t_erase, frame_idx] : stamp2erasedFrame)
         {
             const auto it = state_.last_estimated_states.find(frame_idx);
-            if (it == state_.last_estimated_states.end())
+            if (it == state_.last_estimated_states.end() ||
+                state_.pose_keyframes.count(frame_idx) == 0)
             {
                 continue;
             }
@@ -3081,6 +3090,7 @@ void StateEstimationSmoother::delete_too_old_entries()
     for (const auto& idx : ids_to_erase)
     {
         state_.last_estimated_states.erase(idx);
+        state_.pose_keyframes.erase(idx);
     }
 
     // Forget the kinematic bookkeeping of links touching a marginalized keyframe.

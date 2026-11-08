@@ -20,6 +20,7 @@
  */
 
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/system/os.h>
 
 #include <Eigen/Dense>  // required by mrpt's matrix accessors
@@ -104,7 +105,7 @@ void test_disabled_by_default()
     ASSERT_(!traj.has_value());
 }
 
-// With the knob on, the poses of every keyframe are kept: those already
+// With the knob on, the poses of every pose keyframe are kept: those already
 // marginalized out, at their final optimized value, plus the ones still inside
 // the window.
 void test_covers_the_whole_run()
@@ -167,6 +168,110 @@ void test_covers_the_whole_run_without_intermediate_solves()
     }
 }
 
+// IMU readings between the poses create keyframes of their own (a reading
+// usually arrives before the pose of its scan). Their attitude only comes from
+// kinematics and gravity, so they are left out: every returned stamp must be a
+// pose stamp.
+void test_imu_keyframes_left_out()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(
+        params_with(true) +
+        "    imu_min_sample_period: 0.0\n"
+        "    imu_nearby_keyframe_stamp_tolerance: 0.01\n"
+        "    imu_angular_velocity_sigma: 0.1\n"
+        "    imu_normalized_gravity_alignment_sigma: 2.0\n"));
+
+    const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-4);
+    for (unsigned i = 0; i < N_POSES; i++)
+    {
+        const double t = i * DT;
+        nav.fuse_pose(
+            mrpt::Clock::fromDouble(t),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D::FromXYZYawPitchRoll(SPEED * t, 0, 0, 0, 0, 0), cov),
+            "odom");
+
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp   = mrpt::Clock::fromDouble(t + 0.5 * DT);
+        imu.sensorLabel = "imu";
+        imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Z_ACC, 9.81);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        nav.fuse_imu(imu);
+
+        (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
+    }
+
+    // Exactly the pose keyframes, all of them:
+    const auto traj = nav.estimated_trajectory(
+        mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
+    ASSERT_(traj.has_value());
+    ASSERT_EQUAL_(traj->size(), N_POSES);
+    unsigned i = 0;
+    for (const auto& [t, p] : *traj)
+    {
+        ASSERT_NEAR_(mrpt::Clock::toDouble(t), i * DT, 1e-6);
+        i++;
+    }
+}
+
+// A pose arriving within min_time_difference_to_create_new_frame of an IMU
+// keyframe reuses it: that keyframe holds the pose and is exported, at the
+// stamp of the IMU reading that created it.
+void test_reused_imu_keyframes_kept()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(
+        params_with(true) +
+        "    imu_min_sample_period: 0.0\n"
+        "    imu_nearby_keyframe_stamp_tolerance: 0.01\n"
+        "    imu_angular_velocity_sigma: 0.1\n"
+        "    imu_normalized_gravity_alignment_sigma: 2.0\n"));
+
+    constexpr double T0     = 1.0;
+    constexpr double IMU_DT = 0.005;
+    const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-4);
+    for (unsigned i = 0; i < N_POSES; i++)
+    {
+        const double t = T0 + i * DT;
+
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp   = mrpt::Clock::fromDouble(t - IMU_DT);
+        imu.sensorLabel = "imu";
+        imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Z_ACC, 9.81);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        nav.fuse_imu(imu);
+
+        nav.fuse_pose(
+            mrpt::Clock::fromDouble(t),
+            mrpt::poses::CPose3DPDFGaussian(
+                mrpt::poses::CPose3D::FromXYZYawPitchRoll(SPEED * (t - T0), 0, 0, 0, 0, 0), cov),
+            "odom");
+
+        (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
+    }
+
+    // Every pose, at the stamp of the IMU keyframe it reused:
+    const auto traj = nav.estimated_trajectory(
+        mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
+    ASSERT_(traj.has_value());
+    ASSERT_EQUAL_(traj->size(), N_POSES);
+    unsigned i = 0;
+    for (const auto& [t, p] : *traj)
+    {
+        ASSERT_NEAR_(mrpt::Clock::toDouble(t), T0 + i * DT - IMU_DT, 1e-6);
+        i++;
+    }
+}
+
 // An unknown frame cannot be served, and must not be silently answered in the
 // reference frame.
 void test_unknown_frame()
@@ -187,6 +292,8 @@ int main(int argc, char** argv)
         {"covers_the_whole_run", &test_covers_the_whole_run},
         {"covers_the_whole_run_without_intermediate_solves",
          &test_covers_the_whole_run_without_intermediate_solves},
+        {"imu_keyframes_left_out", &test_imu_keyframes_left_out},
+        {"reused_imu_keyframes_kept", &test_reused_imu_keyframes_kept},
         {"unknown_frame", &test_unknown_frame},
     };
 
