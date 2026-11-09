@@ -352,7 +352,7 @@ params:
   # IMU preintegration between consecutive keyframes (gtsam::ImuFactor on the raw
   # readings), with gyroscope and accelerometer biases as states. Gravity is along -z
   # of {enu} (through T_enu_to_map), so {map} need not be level. Noise densities are
-  # per sqrt(Hz). Inert without IMU readings; builds against GTSAM < 4.3 ignore it.
+  # per sqrt(Hz). Inert without IMU readings.
   imu_preintegration:
     enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|true}
     sensor_label_re: "${MOLA_SMOOTHER_IMU_PREINT_LABELS|.*}"

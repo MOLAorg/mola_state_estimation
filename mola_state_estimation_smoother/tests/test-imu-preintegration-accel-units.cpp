@@ -20,7 +20,6 @@
  * @author Jose Luis Blanco Claraco
  */
 
-#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/obs/CObservationIMU.h>
@@ -218,10 +217,6 @@ double max_distance(
 
 void test_imu_preintegration_accel_units()
 {
-#if GTSAM_USES_BOOST
-    std::cout << "Skipped: IMU preintegration needs GTSAM >= 4.3\n";
-    return;
-#endif
     const auto readings = simulate();
 
     // Automatic scale (decided after the first readings):

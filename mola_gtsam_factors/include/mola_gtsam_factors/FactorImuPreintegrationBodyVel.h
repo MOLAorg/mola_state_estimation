@@ -13,15 +13,25 @@
 */
 #pragma once
 
-#include <mola_gtsam_factors/gtsam_detect_version.h>
-
-#if !GTSAM_USES_BOOST
-
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 
 namespace mola::factors
 {
+namespace detail
+{
+// The optional Jacobian argument of evaluateError(), and how to pass a matrix
+// to it, in both GTSAM APIs:
+#if GTSAM_USES_BOOST
+using OptionalMatrix = boost::optional<gtsam::Matrix&>;
+inline OptionalMatrix jacobian(gtsam::Matrix& m) { return OptionalMatrix(m); }
+#else
+using OptionalMatrix = gtsam::OptionalMatrixType;
+inline OptionalMatrix jacobian(gtsam::Matrix& m) { return &m; }
+#endif
+}  // namespace detail
+
 /** IMU preintegration factor between two keyframes whose linear velocity is
  *  expressed in the BODY frame, as in mola_state_estimation_smoother.
  *
@@ -66,14 +76,18 @@ class FactorImuPreintegrationBodyVel
 
     gtsam::NonlinearFactor::shared_ptr clone() const override
     {
+#if GTSAM_USES_BOOST
+        return boost::static_pointer_cast<gtsam::NonlinearFactor>(boost::make_shared<This>(*this));
+#else
         return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+#endif
     }
 
     gtsam::Vector evaluateError(
         const gtsam::Pose3& Ti, const gtsam::Point3& vbi, const gtsam::Pose3& Tj,
-        const gtsam::Point3& vbj, const gtsam::imuBias::ConstantBias& bi,
-        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3,
-        gtsam::OptionalMatrixType H4, gtsam::OptionalMatrixType H5) const override
+        const gtsam::Point3& vbj, const gtsam::imuBias::ConstantBias& bi, detail::OptionalMatrix H1,
+        detail::OptionalMatrix H2, detail::OptionalMatrix H3, detail::OptionalMatrix H4,
+        detail::OptionalMatrix H5) const override
     {
         gtsam::Matrix3       dVwi_dRi;
         gtsam::Matrix3       dVwi_dVbi;
@@ -87,8 +101,9 @@ class FactorImuPreintegrationBodyVel
         gtsam::Matrix       Hpj;
         gtsam::Matrix       Hvj;
         gtsam::Matrix       Hb;
-        const gtsam::Vector e =
-            imu_.evaluateError(Ti, vwi, Tj, vwj, bi, &Hpi, &Hvi, &Hpj, &Hvj, &Hb);
+        const gtsam::Vector e = imu_.evaluateError(
+            Ti, vwi, Tj, vwj, bi, detail::jacobian(Hpi), detail::jacobian(Hvi),
+            detail::jacobian(Hpj), detail::jacobian(Hvj), detail::jacobian(Hb));
 
         // The world velocity depends on the pose through its rotation only;
         // Pose3 local coordinates are [rotation, translation].
@@ -162,15 +177,19 @@ class FactorImuPreintegrationBodyVelEnu
 
     gtsam::NonlinearFactor::shared_ptr clone() const override
     {
+#if GTSAM_USES_BOOST
+        return boost::static_pointer_cast<gtsam::NonlinearFactor>(boost::make_shared<This>(*this));
+#else
         return std::static_pointer_cast<gtsam::NonlinearFactor>(std::make_shared<This>(*this));
+#endif
     }
 
     gtsam::Vector evaluateError(
         const gtsam::Pose3& T_enu_to_map, const gtsam::Pose3& Ti, const gtsam::Point3& vbi,
         const gtsam::Pose3& Tj, const gtsam::Point3& vbj, const gtsam::imuBias::ConstantBias& bi,
-        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3,
-        gtsam::OptionalMatrixType H4, gtsam::OptionalMatrixType H5,
-        gtsam::OptionalMatrixType H6) const override
+        detail::OptionalMatrix H1, detail::OptionalMatrix H2, detail::OptionalMatrix H3,
+        detail::OptionalMatrix H4, detail::OptionalMatrix H5,
+        detail::OptionalMatrix H6) const override
     {
         // Body velocities are the same in both frames; only the poses move.
         gtsam::Matrix6     dEi_dF;
@@ -185,8 +204,9 @@ class FactorImuPreintegrationBodyVelEnu
         gtsam::Matrix       Hej;
         gtsam::Matrix       Hvj;
         gtsam::Matrix       Hb;
-        const gtsam::Vector e =
-            inEnu_.evaluateError(Ei, vbi, Ej, vbj, bi, &Hei, &Hvi, &Hej, &Hvj, &Hb);
+        const gtsam::Vector e = inEnu_.evaluateError(
+            Ei, vbi, Ej, vbj, bi, detail::jacobian(Hei), detail::jacobian(Hvi),
+            detail::jacobian(Hej), detail::jacobian(Hvj), detail::jacobian(Hb));
 
         if (H1)
         {
@@ -219,5 +239,3 @@ class FactorImuPreintegrationBodyVelEnu
 };
 
 }  // namespace mola::factors
-
-#endif

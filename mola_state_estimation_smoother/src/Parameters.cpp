@@ -19,7 +19,6 @@
  * @date   Jan 22, 2024
  */
 
-#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
 namespace mola::state_estimation_smoother
@@ -263,8 +262,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     if (relative_pose_increment_sigma_lin == 0)
     {
         // The tight value pays off only together with IMU preintegration:
-        const bool preintegration         = !GTSAM_USES_BOOST && imu_preintegration.enabled;
-        relative_pose_increment_sigma_lin = preintegration ? 1e-4 : 0.02;
+        relative_pose_increment_sigma_lin = imu_preintegration.enabled ? 1e-4 : 0.02;
     }
     ASSERTMSG_(
         relative_pose_increment_sigma_per_sqrt_meter >= 0 &&

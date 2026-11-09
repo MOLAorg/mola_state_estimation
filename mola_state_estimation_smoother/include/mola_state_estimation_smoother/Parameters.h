@@ -287,7 +287,7 @@ class Parameters
      * increment and so with pose_min_sample_period. [m]
      *
      * 0 (default) = automatic, set by loadFrom(): 0.1 mm while IMU preintegration
-     * is enabled and available in this build, 2 cm otherwise. Both values, and
+     * is enabled, 2 cm otherwise. Both values, and
      * the default relative_pose_increment_sigma_ang, suit LiDAR odometry; wheel
      * or visual odometry needs its own (e.g. 2 cm and 5 mrad).
      */
@@ -548,8 +548,7 @@ class Parameters
      * gyroscope readings), and every keyframe gets a gyroscope and
      * accelerometer bias variable, chained by a random walk. Gravity is along
      * -z of {enu}: the factors include T_enu_to_map, so {map} may be tilted.
-     * Default on; inert without IMU readings, and ignored by builds against
-     * GTSAM older than 4.3. */
+     * Default on; inert without IMU readings. */
     struct ImuPreintegration
     {
         bool        enabled         = true;
