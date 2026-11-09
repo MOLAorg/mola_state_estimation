@@ -20,7 +20,6 @@
  * @author Jose Luis Blanco Claraco
  */
 
-#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/CMatrixFixed.h>
@@ -193,11 +192,7 @@ void run_test()
     const double noPreint   = loaded_sigma_lin("    imu_preintegration:\n        enabled: false\n");
     std::cout << "automatic sigma_lin: " << withPreint << " m with preintegration, " << noPreint
               << " m without\n";
-#if GTSAM_USES_BOOST
-    ASSERT_EQUAL_(withPreint, noPreint);
-#else
     ASSERT_LT_(withPreint, 0.1 * noPreint);
-#endif
     ASSERT_EQUAL_(loaded_sigma_lin("    relative_pose_increment_sigma_lin: 0.03\n"), 0.03);
 }
 

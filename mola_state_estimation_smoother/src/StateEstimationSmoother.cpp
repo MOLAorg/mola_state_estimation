@@ -137,6 +137,15 @@ struct mola::state_estimation_smoother::StateEstimationSmoother::ImuDecimator
 
 namespace
 {
+// Shared pointers to GTSAM objects, as each GTSAM version holds them:
+#if GTSAM_USES_BOOST
+template <typename T>
+using gtsam_shared_ptr = boost::shared_ptr<T>;
+#else
+template <typename T>
+using gtsam_shared_ptr = std::shared_ptr<T>;
+#endif
+
 constexpr double ENU2MAP_WEAK_SIGMA          = 1e4;
 constexpr double INIT_ODOM_FRAME_POSE_SIGMA  = 1e3;
 constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
@@ -538,7 +547,6 @@ struct StateEstimationSmoother::GtsamImpl
         anchor.reset();
     }
 
-#if !GTSAM_USES_BOOST
     // ---- IMU preintegration (Parameters::imu_preintegration) ----
     struct RawImu
     {
@@ -546,22 +554,21 @@ struct StateEstimationSmoother::GtsamImpl
         gtsam::Vector3 acc;
         gtsam::Vector3 gyr;
     };
-    std::deque<RawImu>                           rawImu;  //!< oldest first
-    std::string                                  rawImuLabel;  //!< the IMU in use
-    std::optional<std::regex>                    rawImuLabelRe;
-    std::shared_ptr<gtsam::PreintegrationParams> pimParams;
-    gtsam::Rot3                                  rawImuRotation;  //!< sensor -> vehicle
-    std::set<frame_pair_t>                       imuLinksAwaiting;
-    gtsam::imuBias::ConstantBias                 lastBias;
-    double                                       lastBiasStamp = 0;
+    std::deque<RawImu>                            rawImu;  //!< oldest first
+    std::string                                   rawImuLabel;  //!< the IMU in use
+    std::optional<std::regex>                     rawImuLabelRe;
+    gtsam_shared_ptr<gtsam::PreintegrationParams> pimParams;
+    gtsam::Rot3                                   rawImuRotation;  //!< sensor -> vehicle
+    std::set<frame_pair_t>                        imuLinksAwaiting;
+    gtsam::imuBias::ConstantBias                  lastBias;
+    double                                        lastBiasStamp = 0;
     /// An instant [s] and the vehicle attitude in {map} known for it, used to
     /// level T_enu_to_map from the accelerometer before its first solve.
     std::optional<std::pair<double, gtsam::Rot3>> enuLevelRef;
     bool                                          enuLevelDone = false;
     gtsam::Rot3                                   enuLeveledRotation;  //!< of T_enu_to_map
     /// pimParams with gravity held fixed in {map}, at the leveled tilt
-    std::shared_ptr<gtsam::PreintegrationParams> pimParamsMapGravity;
-#endif
+    gtsam_shared_ptr<gtsam::PreintegrationParams> pimParamsMapGravity;
 
     /// Records the iSAM2 index of anchors passed in the last update()
     void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
@@ -1385,7 +1392,6 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         gtsam::Matrix6 cov_out;
         mola::gtsam_compat::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
 
-#if !GTSAM_USES_BOOST
         // This odometry frame defines {map} (no rotation between them), as the
         // first fuse_pose() source does otherwise:
         if (!state_.gtsam->enuLevelRef && state_.gtsam->mapAnchor &&
@@ -1394,7 +1400,6 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
             state_.gtsam->enuLevelRef.emplace(
                 key_stamp_seconds(odom.timestamp), pose_out.rotation());
         }
-#endif
 
         seed_odom_frame_locked(frame_id_idx, this_kf_id, absolutePoseInOdom.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -1475,13 +1480,11 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 
 void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
 {
-#if !GTSAM_USES_BOOST
     // Preintegration needs every raw reading, before any decimation below.
     if (params_.imu_preintegration.enabled)
     {
         buffer_raw_imu_locked(rawImu);
     }
-#endif
 
     // Ignore an IMU reading with no usable content up front, before touching the
     // decimation stamp or creating a keyframe: otherwise an empty sample would
@@ -2180,14 +2183,12 @@ void StateEstimationSmoother::fuse_pose_locked(
     gtsam::Matrix6 cov_out;
     mola::gtsam_compat::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
 
-#if !GTSAM_USES_BOOST
     // Without a pinned first pose, {map} starts as the frame of the first pose
     // source (an odometry frame is anchored to it with no relative rotation):
     if (!state_.gtsam->enuLevelRef)
     {
         state_.gtsam->enuLevelRef.emplace(key_stamp_seconds(timestamp), pose_out.rotation());
     }
-#endif
 
     // reference frame ("map") or "odom_i"?
     if (frame_id_idx == REFERENCE_FRAME_ID)
@@ -2948,12 +2949,10 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // IMU data stay determined. Without any IMU reading yet, it keeps its
     // full strength.
     double linScale = 1.0;
-#if !GTSAM_USES_BOOST
     if (params_.imu_preintegration.enabled && state_.gtsam->pimParams)
     {
         linScale = params_.imu_preintegration.linear_kinematics_sigma_scale;
     }
-#endif
     const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear * linScale;
     const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
@@ -3166,13 +3165,11 @@ void StateEstimationSmoother::delete_too_old_entries()
     {
         it = touchesErased(it->first) ? state_.gtsam->pendingKinematic.erase(it) : std::next(it);
     }
-#if !GTSAM_USES_BOOST
     for (auto it = state_.gtsam->imuLinksAwaiting.begin();
          it != state_.gtsam->imuLinksAwaiting.end();)
     {
         it = touchesErased(*it) ? state_.gtsam->imuLinksAwaiting.erase(it) : std::next(it);
     }
-#endif
 }
 
 // Creates a new frame index for timestamp t, or returns the existing one if close enough.
@@ -3494,7 +3491,6 @@ void StateEstimationSmoother::solve_locked()
 {
     const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
 
-#if !GTSAM_USES_BOOST
     // With no keyframe yet there is nothing to estimate, and a solve would only
     // commit T_enu_to_map before level_enu_to_map_locked() can set it:
     if (params_.imu_preintegration.enabled && !state_.gtsam->enuLevelDone &&
@@ -3502,7 +3498,6 @@ void StateEstimationSmoother::solve_locked()
     {
         return;
     }
-#endif
 
     // Until some source relates {map} to the vehicle (e.g. while IMU readings
     // arrive ahead of the first pose), its position and heading are held only
@@ -3573,13 +3568,11 @@ void StateEstimationSmoother::solve_locked()
         }
     }
 
-#if !GTSAM_USES_BOOST
     if (params_.imu_preintegration.enabled)
     {
         level_enu_to_map_locked();
         attach_imu_factors_locked();
     }
-#endif
 
     // Flush the per-link kinematic factors into newFactors, remembering the range
     // each link occupies so its iSAM2 indices can be recovered below.
@@ -3700,7 +3693,6 @@ void StateEstimationSmoother::solve_locked()
         optValues          = smoother.calculateEstimate();
     }
 
-#if !GTSAM_USES_BOOST
     // The latest bias estimate is the linearization point of new links.
     if (params_.imu_preintegration.enabled)
     {
@@ -3719,7 +3711,6 @@ void StateEstimationSmoother::solve_locked()
             }
         }
     }
-#endif
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":
     {
@@ -4215,10 +4206,8 @@ void StateEstimationSmoother::initialize_new_frame(
                 T(id), gtsam::Pose3::Identity(),
                 gtsam::noiseModel::Isotropic::Sigma(
                     6, *params_.link_first_pose_to_reference_origin_sigma));
-#if !GTSAM_USES_BOOST
             // {map} is this vehicle pose:
             state_.gtsam->enuLevelRef.emplace(stamp_s, gtsam::Rot3());
-#endif
         }
     }
 
@@ -4234,7 +4223,6 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newValues.insert(W(id), angVelocity);
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
-#if !GTSAM_USES_BOOST
     // Z: IMU biases, seeded with the latest estimate. The first keyframe gets
     // a prior; every later one is chained by the random walk of its links.
     if (params_.imu_preintegration.enabled)
@@ -4251,7 +4239,6 @@ void StateEstimationSmoother::initialize_new_frame(
                 Z(id), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
         }
     }
-#endif
 
     // Add planar constraints:
     if (params_.enforce_planar_motion)
@@ -4321,7 +4308,6 @@ void StateEstimationSmoother::add_kinematic_factor_between(
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
 
-#if !GTSAM_USES_BOOST
     if (params_.imu_preintegration.enabled)
     {
         // The bias random walk goes with the link from its creation, so no bias
@@ -4338,7 +4324,6 @@ void StateEstimationSmoother::add_kinematic_factor_between(
             gtsam::noiseModel::Diagonal::Sigmas(sig));
         state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
     }
-#endif
 }
 
 size_t StateEstimationSmoother::count_const_vel_factors_for_testing() const
@@ -4404,7 +4389,6 @@ std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
 
 void StateEstimationSmoother::level_enu_to_map_locked()
 {
-#if !GTSAM_USES_BOOST
     // The preintegration factors take gravity from T_enu_to_map, which starts
     // at identity, i.e. {map} assumed level. {map} may start far from level (a
     // pinned first pose of a tilted or upside-down vehicle), and a gravity
@@ -4481,13 +4465,13 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     // put it right back there.
     for (size_t i = 0; i < g.newFactors.size(); i++)
     {
-        const auto prior =
-            std::dynamic_pointer_cast<gtsam::PriorFactor<gtsam::Pose3>>(g.newFactors.at(i));
+        const auto* prior =
+            dynamic_cast<const gtsam::PriorFactor<gtsam::Pose3>*>(g.newFactors.at(i).get());
         if (prior && prior->key() == symbol_T_enu_to_map)
         {
             g.newFactors.replace(
-                i, std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                       symbol_T_enu_to_map, leveled, prior->noiseModel()));
+                i, gtsam_shared_ptr<gtsam::NonlinearFactor>(new gtsam::PriorFactor<gtsam::Pose3>(
+                       symbol_T_enu_to_map, leveled, prior->noiseModel())));
         }
     }
     g.enuLevelDone = true;
@@ -4495,12 +4479,10 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     MRPT_LOG_INFO_FMT(
         "[imu_preintegration] T_enu_to_map leveled from the accelerometer: {map} tilted %.1f deg",
         mrpt::RAD2DEG(angle));
-#endif
 }
 
 void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)
 {
-#if !GTSAM_USES_BOOST
     using namespace mrpt::obs;
     if (!imu.has(IMU_X_ACC) || !imu.has(IMU_Y_ACC) || !imu.has(IMU_Z_ACC) || !imu.has(IMU_WX) ||
         !imu.has(IMU_WY) || !imu.has(IMU_WZ))
@@ -4594,14 +4576,10 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     {
         g.rawImu.pop_front();
     }
-#else
-    (void)imu;
-#endif
 }
 
 void StateEstimationSmoother::attach_imu_factors_locked()
 {
-#if !GTSAM_USES_BOOST
     auto& g = *state_.gtsam;
     // Links wait (in imuLinksAwaiting) until the accelerometer units are known:
     if (!g.pimParams || g.rawImu.empty() || accScale_ == 0)
@@ -4659,7 +4637,8 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         const bool azimuthPinned = params_.estimate_geo_reference && g.enuYawAnchor.has_value();
         if (azimuthPinned && !g.pimParamsMapGravity)
         {
-            auto p                = std::make_shared<gtsam::PreintegrationParams>(*g.pimParams);
+            gtsam_shared_ptr<gtsam::PreintegrationParams> p(
+                new gtsam::PreintegrationParams(*g.pimParams));
             p->n_gravity          = g.enuLeveledRotation.unrotate(g.pimParams->n_gravity);
             g.pimParamsMapGravity = p;
         }
@@ -4705,7 +4684,6 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         }
         it = g.imuLinksAwaiting.erase(it);
     }
-#endif
 }
 
 void StateEstimationSmoother::remove_kinematic_factor_between(
@@ -4723,9 +4701,7 @@ void StateEstimationSmoother::remove_kinematic_factor_between(
 
     const auto key = GtsamImpl::link_key(from, to);
 
-#if !GTSAM_USES_BOOST
     state_.gtsam->imuLinksAwaiting.erase(key);
-#endif
 
     // Still pending: it never reached the solver, so dropping it costs nothing.
     // A link can be partly pending and partly flushed (an IMU factor attached

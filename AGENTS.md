@@ -124,7 +124,7 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
-- IMU preintegration (`imu_preintegration`, default on; compiled out for GTSAM < 4.3): raw readings of one IMU
+- IMU preintegration (`imu_preintegration`, default on): raw readings of one IMU
   are buffered before decimation; each kinematic link gets a
   `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
   velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may

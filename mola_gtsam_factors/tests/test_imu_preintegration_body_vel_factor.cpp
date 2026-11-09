@@ -12,12 +12,9 @@
  alone or in combination with the complete SLAM system.
 */
 
-#include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
-
-#if !GTSAM_USES_BOOST
-
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/factorTesting.h>
+#include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 
 #include <cmath>
 #include <iostream>
@@ -74,9 +71,13 @@ void test_zero_error_at_truth()
         e.norm() < 1e-6, "zero error at the true body velocities, got " + std::to_string(e.norm()));
 
     // Same as the wrapped factor with world velocities:
-    const gtsam::Vector e2 = f.imuFactor().evaluateError(
-        Ti, vw, Tj, vw, gtsam::imuBias::ConstantBias(), nullptr, nullptr, nullptr, nullptr,
-        nullptr);
+    gtsam::Values world;
+    world.insert(T(0), Ti);
+    world.insert(V(0), vw);
+    world.insert(T(1), Tj);
+    world.insert(V(1), vw);
+    world.insert(B(0), gtsam::imuBias::ConstantBias());
+    const gtsam::Vector e2 = f.imuFactor().unwhitenedError(world);
     expect((e - e2).norm() < 1e-12, "matches gtsam::ImuFactor with world velocities");
     std::cout << "[Test Passed] zero error at truth, matches gtsam::ImuFactor\n";
 }
@@ -180,7 +181,3 @@ int main()
         return 1;
     }
 }
-
-#else
-int main() { return 0; }
-#endif
