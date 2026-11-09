@@ -69,6 +69,9 @@ params:
     imu_angular_velocity_sigma: 0.1
     estimate_geo_reference: false
     async_backend: false
+    # The gravity factors under test, without preintegration:
+    imu_preintegration:
+        enabled: false
     imu_normalized_gravity_alignment_sigma: )###" +
            std::to_string(gravitySigmaDeg) +
            "\n    imu_gravity_min_sample_period: " + std::to_string(gravityPeriod) + "\n";

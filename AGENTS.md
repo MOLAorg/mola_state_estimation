@@ -124,13 +124,22 @@ Sensor inputs:
   heading, its sigma stays near (~0.7x, fixed-lag linearization) that sigma.
   `estimated_imu_yaw_bias()`; `publish_imu_yaw_bias` publishes it as module
   diagnostics (`imu_yaw_bias_deg`, `imu_yaw_bias_sigma_deg`).
-- IMU preintegration (`imu_preintegration`, default off): raw readings of one IMU
+- IMU preintegration (`imu_preintegration`, default on; compiled out for GTSAM < 4.3): raw readings of one IMU
   are buffered before decimation; each kinematic link gets a
-  `FactorImuPreintegrationBodyVel` (gtsam::ImuFactor with body-frame velocities)
-  once the readings cover it (`attach_imu_factors_locked()`), with a covariance
-  floor (`min_sigma_*`); the constant-velocity linear factors stay, weaker
-  (`linear_kinematics_sigma_scale`). Needs a gravity-aligned `{map}` (leave
-  `link_first_pose_to_reference_origin_sigma` empty for a pure odometry source).
+  `FactorImuPreintegrationBodyVelEnu` (gtsam::ImuFactor with body-frame
+  velocities, gravity along -z of `{enu}` through `T_enu_to_map`, so `{map}` may
+  be tilted; before its first solve, `level_enu_to_map_locked()` sets the roll and
+  pitch of `T_enu_to_map` from the accelerometer at the pinned first pose, the
+  first pose reading, or the first reading of a wheel odometry that defines `{map}`)
+  once the readings cover it (`attach_imu_factors_locked()`), with a
+  covariance floor (`min_sigma_*`); while an estimated geo-reference still has its
+  azimuth pinned by the gauge anchor, links get the plain factor with gravity
+  fixed in `{map}` at the leveled tilt instead. The constant-velocity linear
+  factors stay, weaker (`linear_kinematics_sigma_scale`) once an IMU has been seen,
+  so without any IMU the estimates are those with preintegration off.
+  Accelerometer units: `accel_scale` (0 = automatic: units of g if the mean norm of
+  the first 0.5 s of readings is below 3, kept across resets like `recentAccel_`);
+  links wait in `imuLinksAwaiting` until it is known.
   The per-keyframe gravity and angular-velocity factors stay on with it.
 - `relative_pose_increment_from_source_covariance` (default off): odometry-frame
   increments take each reading's own covariance instead of
@@ -172,10 +181,11 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 - Readings landing on an existing keyframe hold the chain anchor at the first
   of them, so their motion goes into the next increment.
 - A factor whose previous keyframe was already marginalized is skipped.
-- For `fuse_pose()` sources, the increment covariance is diagonal, from the
-  required `relative_pose_increment_sigma_lin`/`_ang` (> 0; `loadFrom()`
-  throws otherwise); the supplied covariance is only used by the anchor
-  factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
+- For `fuse_pose()` sources, the increment covariance is diagonal, from
+  `relative_pose_increment_sigma_lin`/`_ang` (defaults tuned for LiDAR odometry:
+  `_ang` 1e-5 rad; `_lin` 0 = automatic, resolved by `loadFrom()` to 0.1 mm with
+  preintegration on and available, 2 cm otherwise); the supplied covariance is
+  only used by the anchor factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
   a variance growing linearly with the increment size (random walk).
 
 Other behavior:

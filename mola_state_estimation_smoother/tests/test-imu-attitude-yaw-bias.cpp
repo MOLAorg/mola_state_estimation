@@ -66,6 +66,9 @@ params:
     sliding_window_length: 5.0
     relative_pose_increment_sigma_lin: 0.02
     relative_pose_increment_sigma_ang: 0.005
+    # The attitude factors under test, without preintegration:
+    imu_preintegration:
+        enabled: false
     min_time_difference_to_create_new_frame: 0.05
     sigma_random_walk_acceleration_linear: 0.1
     sigma_random_walk_acceleration_angular: 0.1

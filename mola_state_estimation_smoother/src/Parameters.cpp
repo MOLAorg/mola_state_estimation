@@ -19,6 +19,7 @@
  * @date   Jan 22, 2024
  */
 
+#include <mola_gtsam_factors/gtsam_detect_version.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
 namespace mola::state_estimation_smoother
@@ -144,6 +145,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
             c.getOrDefault("accel_bias_random_walk", ip.accel_bias_random_walk);
         ip.integration_sigma = c.getOrDefault("integration_sigma", ip.integration_sigma);
         ip.gravity           = c.getOrDefault("gravity", ip.gravity);
+        ip.accel_scale       = c.getOrDefault("accel_scale", ip.accel_scale);
         ip.initial_gyro_bias_sigma =
             c.getOrDefault("initial_gyro_bias_sigma", ip.initial_gyro_bias_sigma);
         ip.initial_accel_bias_sigma =
@@ -160,6 +162,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
         ASSERT_GT_(ip.accel_bias_random_walk, 0.0);
         ASSERT_GE_(ip.linear_kinematics_sigma_scale, 1.0);
+        ASSERT_GE_(ip.accel_scale, 0.0);
     }
 
     // Geo-referencing
@@ -243,8 +246,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, fuse_ground_truth_label);
     MCP_LOAD_OPT(cfg, pose_min_sample_period);
-    MCP_LOAD_REQ(cfg, relative_pose_increment_sigma_lin);
-    MCP_LOAD_REQ(cfg, relative_pose_increment_sigma_ang);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_lin);
+    MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_meter);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_rad);
     MCP_LOAD_OPT(cfg, pose_robust_huber_threshold);
@@ -253,9 +256,16 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
 
     ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
     ASSERTMSG_(
-        relative_pose_increment_sigma_lin > 0 && relative_pose_increment_sigma_ang > 0,
-        "relative_pose_increment_sigma_lin/_ang must be > 0: they define the uncertainty of "
+        relative_pose_increment_sigma_lin >= 0 && relative_pose_increment_sigma_ang > 0,
+        "relative_pose_increment_sigma_lin must be >= 0 (0: automatic) and "
+        "relative_pose_increment_sigma_ang > 0: they define the uncertainty of "
         "each increment of an odometry source fused with fuse_pose()");
+    if (relative_pose_increment_sigma_lin == 0)
+    {
+        // The tight value pays off only together with IMU preintegration:
+        const bool preintegration         = !GTSAM_USES_BOOST && imu_preintegration.enabled;
+        relative_pose_increment_sigma_lin = preintegration ? 1e-4 : 0.02;
+    }
     ASSERTMSG_(
         relative_pose_increment_sigma_per_sqrt_meter >= 0 &&
             relative_pose_increment_sigma_per_sqrt_rad >= 0,

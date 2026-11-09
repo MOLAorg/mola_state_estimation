@@ -237,7 +237,9 @@ custom copy of the file can be used instead:
 
       Odometry sources are fused as chains of increments, whose uncertainty is set by
       ``relative_pose_increment_sigma_lin`` / ``_ang`` (env vars ``MOLA_REL_POSE_INCR_SIGMA_LIN``
-      / ``_ANG``), not by the covariance in the messages. Tune them for each platform.
+      / ``_ANG``), not by the covariance in the messages. The defaults suit LiDAR odometry
+      (``_lin`` 0 = automatic: 0.1 mm with IMU preintegration, 2 cm without); tune them for
+      other sources, e.g. 0.02 m and 0.005 rad for wheel odometry.
       See :ref:`section 3 <mola_sta_est_api>`.
 
    Key launch arguments:
@@ -460,8 +462,9 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        (default: becomes a ``CObservationRobotPose``)
      - ``fuse_pose()`` in the source's own frame (named after its label). Odometry drifts,
        so only the increments between consecutive keyframes are fused, with the uncertainty
-       set by the required parameters ``relative_pose_increment_sigma_lin`` / ``_ang``
+       set by the parameters ``relative_pose_increment_sigma_lin`` / ``_ang``
        (plus optional growth with the increment size, ``..._per_sqrt_meter`` / ``_rad``).
+       Their defaults suit LiDAR odometry; set them for wheel odometry (e.g. 0.02 m / 0.005 rad).
        The first reading adds one absolute factor, with the message covariance, to resolve
        ``T_map_to_odom_<label>``. The twist part is not used.
      - Increments between consecutive readings dead-reckon the pose between primary pose

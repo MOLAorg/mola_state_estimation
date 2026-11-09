@@ -674,6 +674,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// `keep_finalized_trajectory` is set. Kept outside State so that a reset
     /// of the factor graph does not discard the history already collected.
     mrpt::poses::CPose3DInterpolator finalizedTrajectory_;
+    /// Recent accelerometer readings of the preintegrated IMU (stamp [s], in
+    /// the vehicle frame), read by level_enu_to_map_locked(). Kept outside
+    /// State: a front end that levels itself from the IMU resets the estimator
+    /// right after averaging it, and those readings are still valid.
+    std::deque<std::pair<double, mrpt::math::TVector3D>> recentAccel_;
+    /// Takes the preintegrated IMU's accelerometer readings to m/s^2 (0 while
+    /// undecided), from imu_preintegration.accel_scale or the mean norm of the
+    /// first readings (accNormSum_ over accNormCount_, since accFirstStamp_).
+    /// Kept outside State, as recentAccel_: the units of the same sensor
+    /// (accScaleLabel_) do not change on a reset.
+    std::string accScaleLabel_;
+    double      accScale_      = 0;
+    double      accNormSum_    = 0;
+    size_t      accNormCount_  = 0;
+    double      accFirstStamp_ = 0;
     /// Same keyframes in ENU, through the T_enu_to_map estimated when each one
     /// left the window (the one it was optimized against). Only those finalized
     /// once the geo-reference was fixed or had converged.
@@ -856,6 +871,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
     /// IMU preintegration: keeps the raw readings of the IMU in use.
     void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
+
+    /// IMU preintegration: before T_enu_to_map reaches the solver, sets its
+    /// roll and pitch from the accelerometer, so a tilted {map} starts right.
+    void level_enu_to_map_locked();
 
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.

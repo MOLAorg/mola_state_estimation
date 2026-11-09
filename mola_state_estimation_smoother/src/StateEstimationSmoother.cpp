@@ -173,6 +173,10 @@ constexpr double GYRO_HUBER_K = 1.345;
 // normalized to g stay well below it, so terms in m/s^2 must not touch them.
 constexpr double ACC_NORM_MIN_FOR_SI_UNITS = 3.0;
 
+// Span of the first readings whose mean norm decides the units of an IMU's
+// accelerometer, when imu_preintegration.accel_scale is automatic.
+constexpr double ACC_UNITS_DETECTION_PERIOD = 0.5;  // [s]
+
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
 {
     p.z(0);
@@ -546,9 +550,17 @@ struct StateEstimationSmoother::GtsamImpl
     std::string                                  rawImuLabel;  //!< the IMU in use
     std::optional<std::regex>                    rawImuLabelRe;
     std::shared_ptr<gtsam::PreintegrationParams> pimParams;
+    gtsam::Rot3                                  rawImuRotation;  //!< sensor -> vehicle
     std::set<frame_pair_t>                       imuLinksAwaiting;
     gtsam::imuBias::ConstantBias                 lastBias;
     double                                       lastBiasStamp = 0;
+    /// An instant [s] and the vehicle attitude in {map} known for it, used to
+    /// level T_enu_to_map from the accelerometer before its first solve.
+    std::optional<std::pair<double, gtsam::Rot3>> enuLevelRef;
+    bool                                          enuLevelDone = false;
+    gtsam::Rot3                                   enuLeveledRotation;  //!< of T_enu_to_map
+    /// pimParams with gravity held fixed in {map}, at the leveled tilt
+    std::shared_ptr<gtsam::PreintegrationParams> pimParamsMapGravity;
 #endif
 
     /// Records the iSAM2 index of anchors passed in the last update()
@@ -1373,6 +1385,17 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
         gtsam::Matrix6 cov_out;
         mola::gtsam_compat::to_gtsam_se3_cov6(absolutePoseInOdom, pose_out, cov_out);
 
+#if !GTSAM_USES_BOOST
+        // This odometry frame defines {map} (no rotation between them), as the
+        // first fuse_pose() source does otherwise:
+        if (!state_.gtsam->enuLevelRef && state_.gtsam->mapAnchor &&
+            state_.gtsam->mapAnchorFrame == frame_id_idx)
+        {
+            state_.gtsam->enuLevelRef.emplace(
+                key_stamp_seconds(odom.timestamp), pose_out.rotation());
+        }
+#endif
+
         seed_odom_frame_locked(frame_id_idx, this_kf_id, absolutePoseInOdom.mean);
         state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
             symbol_T_map_to_odom_i_base + frame_id_idx, T(this_kf_id), pose_out,
@@ -2157,6 +2180,15 @@ void StateEstimationSmoother::fuse_pose_locked(
     gtsam::Matrix6 cov_out;
     mola::gtsam_compat::to_gtsam_se3_cov6(poseSanitized, pose_out, cov_out);
 
+#if !GTSAM_USES_BOOST
+    // Without a pinned first pose, {map} starts as the frame of the first pose
+    // source (an odometry frame is anchored to it with no relative rotation):
+    if (!state_.gtsam->enuLevelRef)
+    {
+        state_.gtsam->enuLevelRef.emplace(key_stamp_seconds(timestamp), pose_out.rotation());
+    }
+#endif
+
     // reference frame ("map") or "odom_i"?
     if (frame_id_idx == REFERENCE_FRAME_ID)
     {
@@ -2913,10 +2945,15 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // errors in constant vel:
     // The IMU measures the accelerations this model denies: with
     // preintegration its linear part is only kept, weak, so that links without
-    // IMU data stay determined.
-    const double linScale      = params_.imu_preintegration.enabled
-                                     ? params_.imu_preintegration.linear_kinematics_sigma_scale
-                                     : 1.0;
+    // IMU data stay determined. Without any IMU reading yet, it keeps its
+    // full strength.
+    double linScale = 1.0;
+#if !GTSAM_USES_BOOST
+    if (params_.imu_preintegration.enabled && state_.gtsam->pimParams)
+    {
+        linScale = params_.imu_preintegration.linear_kinematics_sigma_scale;
+    }
+#endif
     const double std_lin_vel   = params_.sigma_random_walk_acceleration_linear * linScale;
     const double sigma_ang_vel = angular_const_vel_sigma(dt);
 
@@ -3457,6 +3494,16 @@ void StateEstimationSmoother::solve_locked()
 {
     const auto tle = mola::ProfilerEntry(profiler_, "process_pending_gtsam_updates");
 
+#if !GTSAM_USES_BOOST
+    // With no keyframe yet there is nothing to estimate, and a solve would only
+    // commit T_enu_to_map before level_enu_to_map_locked() can set it:
+    if (params_.imu_preintegration.enabled && !state_.gtsam->enuLevelDone &&
+        state_.stamp2frame_index.empty())
+    {
+        return;
+    }
+#endif
+
     // Until some source relates {map} to the vehicle (e.g. while IMU readings
     // arrive ahead of the first pose), its position and heading are held only
     // by weak priors, which some GTSAM versions refuse to factorize. Wait for
@@ -3529,6 +3576,7 @@ void StateEstimationSmoother::solve_locked()
 #if !GTSAM_USES_BOOST
     if (params_.imu_preintegration.enabled)
     {
+        level_enu_to_map_locked();
         attach_imu_factors_locked();
     }
 #endif
@@ -4167,6 +4215,10 @@ void StateEstimationSmoother::initialize_new_frame(
                 T(id), gtsam::Pose3::Identity(),
                 gtsam::noiseModel::Isotropic::Sigma(
                     6, *params_.link_first_pose_to_reference_origin_sigma));
+#if !GTSAM_USES_BOOST
+            // {map} is this vehicle pose:
+            state_.gtsam->enuLevelRef.emplace(stamp_s, gtsam::Rot3());
+#endif
         }
     }
 
@@ -4350,6 +4402,102 @@ std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
     return links;
 }
 
+void StateEstimationSmoother::level_enu_to_map_locked()
+{
+#if !GTSAM_USES_BOOST
+    // The preintegration factors take gravity from T_enu_to_map, which starts
+    // at identity, i.e. {map} assumed level. {map} may start far from level (a
+    // pinned first pose of a tilted or upside-down vehicle), and a gravity
+    // direction that wrong is outside the basin of the solver. So, before
+    // T_enu_to_map reaches the solver, set its roll and pitch from the
+    // accelerometer around an instant whose attitude in {map} is known.
+    auto& g = *state_.gtsam;
+    if (g.enuLevelDone || !g.enuLevelRef || params_.fixed_geo_reference.has_value())
+    {
+        return;
+    }
+    if (!g.newValues.exists(symbol_T_enu_to_map))
+    {
+        if (!g.pimParams && recentAccel_.empty())
+        {
+            return;  // no IMU so far: nothing to level, nothing to warn about yet
+        }
+        g.enuLevelDone = true;
+        MRPT_LOG_WARN(
+            "[imu_preintegration] T_enu_to_map reached the solver before it could be leveled "
+            "from the accelerometer: preintegration assumes a level {map} at start");
+        return;
+    }
+
+    // Readings just before the reference instant count too: a front end that
+    // levels itself averages the IMU first, then resets the estimator. Even a
+    // single reading is far better than nothing: off by the vehicle's own
+    // acceleration at most, a few degrees, against up to 180 deg.
+    constexpr double LEVEL_BEFORE = 1.0;  // [s]
+    constexpr double LEVEL_AFTER  = 0.5;  // [s]
+
+    const auto& [tRef, R_map_vehicle] = *g.enuLevelRef;
+    gtsam::Vector3 sum                = gtsam::Vector3::Zero();
+    unsigned       count              = 0;
+    for (const auto& [t, acc] : recentAccel_)
+    {
+        if (t >= tRef - LEVEL_BEFORE && t <= tRef + LEVEL_AFTER)
+        {
+            sum += gtsam::Vector3(acc.x, acc.y, acc.z);
+            count++;
+        }
+    }
+    if (count == 0 || sum.norm() < 1e-6)
+    {
+        return;  // not yet: try again on the next update
+    }
+    // At rest the accelerometer points up:
+    const gtsam::Vector3 up = (R_map_vehicle * sum).normalized();
+
+    // Shortest rotation taking it to +z: about a horizontal axis, so the
+    // azimuth gauge of T_enu_to_map is left as it was.
+    const gtsam::Vector3 z(0, 0, 1);
+    const gtsam::Vector3 axis  = up.cross(z);
+    const double         s     = axis.norm();
+    const double         angle = std::atan2(s, up.dot(z));
+    gtsam::Rot3          R_enu_map;
+    if (s > 1e-9)
+    {
+        R_enu_map = gtsam::Rot3::AxisAngle(gtsam::Point3(axis / s), angle);
+    }
+    else if (angle > 1.0)
+    {
+        R_enu_map = gtsam::Rot3::Rx(M_PI);
+    }
+
+    const auto         prev = g.newValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
+    const gtsam::Pose3 leveled(R_enu_map, prev.translation());
+    g.newValues.update(symbol_T_enu_to_map, leveled);
+    g.enuLeveledRotation = R_enu_map;
+    g.pimParamsMapGravity.reset();  // rebuilt from the leveled tilt when next needed
+
+    // Its weak priors (and azimuth anchor, tracked by index) are centered at the
+    // old value: a solve in which nothing else observes T_enu_to_map yet would
+    // put it right back there.
+    for (size_t i = 0; i < g.newFactors.size(); i++)
+    {
+        const auto prior =
+            std::dynamic_pointer_cast<gtsam::PriorFactor<gtsam::Pose3>>(g.newFactors.at(i));
+        if (prior && prior->key() == symbol_T_enu_to_map)
+        {
+            g.newFactors.replace(
+                i, std::make_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+                       symbol_T_enu_to_map, leveled, prior->noiseModel()));
+        }
+    }
+    g.enuLevelDone = true;
+
+    MRPT_LOG_INFO_FMT(
+        "[imu_preintegration] T_enu_to_map leveled from the accelerometer: {map} tilted %.1f deg",
+        mrpt::RAD2DEG(angle));
+#endif
+}
+
 void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)
 {
 #if !GTSAM_USES_BOOST
@@ -4378,7 +4526,16 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
         p->setAccelerometerCovariance(mrpt::square(ip.accel_noise_density) * gtsam::I_3x3);
         p->setIntegrationCovariance(mrpt::square(ip.integration_sigma) * gtsam::I_3x3);
         p->setBodyPSensor(mrpt::gtsam_wrappers::toPose3(imu.sensorPose));
-        g.pimParams = p;
+        g.pimParams      = p;
+        g.rawImuRotation = mrpt::gtsam_wrappers::toPose3(imu.sensorPose).rotation();
+        // Units found before a reset hold for the same sensor only:
+        if (accScaleLabel_ != imu.sensorLabel)
+        {
+            accScaleLabel_ = imu.sensorLabel;
+            accScale_      = ip.accel_scale;
+            accNormSum_    = 0;
+            accNormCount_  = 0;
+        }
         MRPT_LOG_INFO_STREAM(
             "[imu_preintegration] Preintegrating IMU '"
             << imu.sensorLabel << "', pose on vehicle: " << imu.sensorPose);
@@ -4398,6 +4555,39 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     r.gyr = {imu.get(IMU_WX), imu.get(IMU_WY), imu.get(IMU_WZ)};
     g.rawImu.push_back(r);
 
+    if (accScale_ == 0)
+    {
+        // Some drivers publish the acceleration in units of g: over a short span,
+        // the mean norm is about 1 then, and near 9.8 for readings in m/s^2.
+        if (accNormCount_ == 0)
+        {
+            accFirstStamp_ = t;
+        }
+        accNormSum_ += r.acc.norm();
+        accNormCount_++;
+        if (t - accFirstStamp_ >= ACC_UNITS_DETECTION_PERIOD)
+        {
+            const double meanNorm = accNormSum_ / static_cast<double>(accNormCount_);
+            const bool   inG      = meanNorm < ACC_NORM_MIN_FOR_SI_UNITS;
+            accScale_             = inG ? ip.gravity : 1.0;
+            MRPT_LOG_INFO_FMT(
+                "[imu_preintegration] Accelerometer readings taken in %s (mean norm %.3f over "
+                "%zu readings)",
+                inG ? "units of g" : "m/s^2", meanNorm, accNormCount_);
+        }
+    }
+
+    if (recentAccel_.empty() || t > recentAccel_.back().first)
+    {
+        const gtsam::Vector3 aVehicle = g.rawImuRotation * r.acc;
+        recentAccel_.emplace_back(
+            t, mrpt::math::TVector3D(aVehicle.x(), aVehicle.y(), aVehicle.z()));
+        while (recentAccel_.front().first < t - 2.0)
+        {
+            recentAccel_.pop_front();
+        }
+    }
+
     // Readings older than the window can no longer be part of any link.
     const double keepSince = t - params_.sliding_window_length - 2.0;
     while (!g.rawImu.empty() && g.rawImu.front().t < keepSince)
@@ -4413,7 +4603,8 @@ void StateEstimationSmoother::attach_imu_factors_locked()
 {
 #if !GTSAM_USES_BOOST
     auto& g = *state_.gtsam;
-    if (!g.pimParams || g.rawImu.empty())
+    // Links wait (in imuLinksAwaiting) until the accelerometer units are known:
+    if (!g.pimParams || g.rawImu.empty() || accScale_ == 0)
     {
         return;
     }
@@ -4461,8 +4652,21 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             --first;
         }
 
-        gtsam::PreintegratedImuMeasurements pim(g.pimParams, g.lastBias);
-        double                              tc = ti;
+        // While the azimuth of an estimated geo-reference is pinned by its gauge
+        // anchor, factors on T_enu_to_map are marginalized at that azimuth, which
+        // the real one may be far from (as for the gravity factors): meanwhile,
+        // gravity is held fixed in {map}, at the tilt leveled from the accelerometer.
+        const bool azimuthPinned = params_.estimate_geo_reference && g.enuYawAnchor.has_value();
+        if (azimuthPinned && !g.pimParamsMapGravity)
+        {
+            auto p                = std::make_shared<gtsam::PreintegrationParams>(*g.pimParams);
+            p->n_gravity          = g.enuLeveledRotation.unrotate(g.pimParams->n_gravity);
+            g.pimParamsMapGravity = p;
+        }
+
+        gtsam::PreintegratedImuMeasurements pim(
+            azimuthPinned ? g.pimParamsMapGravity : g.pimParams, g.lastBias);
+        double tc = ti;
         for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
         {
             const auto   next  = std::next(k);
@@ -4474,7 +4678,7 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             }
             if (tNext > tc)
             {
-                pim.integrateMeasurement(k->acc, k->gyr, tNext - tc);
+                pim.integrateMeasurement(accScale_ * k->acc, k->gyr, tNext - tc);
             }
             tc = tNext;
         }
@@ -4485,8 +4689,19 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;
             floor.block<3, 3>(3, 3) = mrpt::square(ip.min_sigma_position) * gtsam::I_3x3;
             floor.block<3, 3>(6, 6) = mrpt::square(ip.min_sigma_velocity) * gtsam::I_3x3;
-            g.pendingKinematic[*it].emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
-                T(i), V(i), T(j), V(j), Z(i), pim, floor);
+            if (azimuthPinned)
+            {
+                g.pendingKinematic[*it]
+                    .emplace_shared<mola::factors::FactorImuPreintegrationBodyVel>(
+                        T(i), V(i), T(j), V(j), Z(i), pim, floor);
+            }
+            else
+            {
+                // Gravity is along -z of {enu}, so {map} need not be level:
+                g.pendingKinematic[*it]
+                    .emplace_shared<mola::factors::FactorImuPreintegrationBodyVelEnu>(
+                        symbol_T_enu_to_map, T(i), V(i), T(j), V(j), Z(i), pim, floor);
+            }
         }
         it = g.imuLinksAwaiting.erase(it);
     }
