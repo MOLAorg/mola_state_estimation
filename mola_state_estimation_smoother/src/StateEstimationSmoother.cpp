@@ -635,7 +635,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     auto lck = mrpt::lockHelper(stateMutex_);
 
     // This also resets the GTSAM pimpl unique_ptr in state_
-    reset_locked();
+    reset_locked(false);
 
     // Load params:
     params_.loadFrom(cfg["params"]);
@@ -827,7 +827,7 @@ void StateEstimationSmoother::set_geo_reference(const mola::Georeferencing& geor
     // reinitialize_gtsam_locked() call) before re-running it -- calling
     // reinitialize_gtsam_locked() directly here would try to insert that
     // same key a second time into the still-pending newValues and throw.
-    reset_locked();
+    reset_locked(false);
 }
 #endif
 
@@ -1098,10 +1098,16 @@ void StateEstimationSmoother::advertiseMapToOdom(
 void StateEstimationSmoother::reset()
 {
     auto lck = mrpt::lockHelper(stateMutex_);
-    reset_locked();
+    reset_locked(false);
 }
 
-void StateEstimationSmoother::reset_locked()
+void StateEstimationSmoother::reset_motion()
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+    reset_locked(true);
+}
+
+void StateEstimationSmoother::reset_locked(bool keepFrames)
 {
     // The keyframes still in the window would be lost with the state: record
     // their latest values as final, as when they leave the window, so the
@@ -1117,6 +1123,29 @@ void StateEstimationSmoother::reset_locked()
                 continue;
             }
             finalizedTrajectory_.insert(itStamp->second, frameState.pose.asTPose());
+        }
+    }
+
+    if (!keepFrames)
+    {
+        mapDefinedBeforeReset_ = false;
+        keptOdomFrames_.clear();
+        keptEnuToMap_.reset();
+    }
+    else if (state_.gtsam && !state_.stamp2frame_index.empty())
+    {
+        mapDefinedBeforeReset_ = true;
+        if (state_.last_solved_T_enu_to_map.has_value())
+        {
+            keptEnuToMap_ = *state_.last_solved_T_enu_to_map;
+        }
+        for (const auto& [name, idx] : state_.known_odom_frames.getDirectMap())
+        {
+            const auto it = state_.last_solved_frames.find(idx);
+            if (it != state_.last_solved_frames.end())
+            {
+                keptOdomFrames_[name] = it->second;
+            }
         }
     }
 
@@ -1232,7 +1261,7 @@ void StateEstimationSmoother::backend_loop()
             MRPT_LOG_ERROR_STREAM(
                 "[backend_loop] Exception while applying a batch; resetting smoother:\n"
                 << e.what());
-            reset_locked();
+            reset_locked(true);
         }
     }
 }
@@ -3335,8 +3364,13 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     const auto newId = state_.next_odom_frame_id++;
     state_.known_odom_frames.insert(frame_id_name, newId);
 
-    // Initialize gtsam symbol and prior factor for the new frame:
-    const gtsam::Pose3 initFramePose = gtsam::Pose3::Identity();
+    // Initialize gtsam symbol and prior factor for the new frame (where it was
+    // before a reset, if it existed):
+    gtsam::Pose3 initFramePose = gtsam::Pose3::Identity();
+    if (const auto itKept = keptOdomFrames_.find(frame_id_name); itKept != keptOdomFrames_.end())
+    {
+        initFramePose = mrpt::gtsam_wrappers::toPose3(itKept->second);
+    }
 
     ASSERT_GE_(newId, 1);
 
@@ -3347,8 +3381,7 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
 
     // Until some source observes {map}, define it as this first odometry frame,
     // which is also where the weak prior above would leave it:
-    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor &&
-        !params_.link_first_pose_to_reference_origin_sigma.has_value())
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !link_first_pose_to_origin())
     {
         state_.gtsam->add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
             state_.gtsam->mapAnchor, symbol_T_map_to_odom_i_base + newId, initFramePose,
@@ -3459,13 +3492,17 @@ void StateEstimationSmoother::seed_odom_frame_locked(
         return;
     }
 
-    // While {map} is this very frame, the reading is the keyframe pose itself:
+    // While {map} is anchored to this very frame, the frame is known (identity,
+    // or where it was before a reset), and so is the keyframe pose:
     if (state_.gtsam->mapAnchor && state_.gtsam->mapAnchorFrame == frame_id_idx)
     {
         if (state_.gtsam->newValues.exists(T(kf)))
         {
-            state_.gtsam->newValues.update(T(kf), mrpt::gtsam_wrappers::toPose3(poseInOdom));
-            it->second.pose = poseInOdom;
+            const auto T_map_to_odom = mrpt::poses::CPose3D(
+                mrpt::gtsam_wrappers::toTPose3D(state_.gtsam->newValues.at<gtsam::Pose3>(key)));
+            const auto poseInMap = T_map_to_odom + poseInOdom;
+            state_.gtsam->newValues.update(T(kf), mrpt::gtsam_wrappers::toPose3(poseInMap));
+            it->second.pose = poseInMap;
         }
         return;
     }
@@ -3500,7 +3537,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
         // A failed smoother.update() is not strongly exception-safe: it can leave
         // the iSAM2 Bayes tree internally inconsistent, so every later update
         // would keep throwing. Rebuild the smoother from scratch instead.
-        reset_locked();
+        reset_locked(true);
     }
 }
 
@@ -3520,8 +3557,7 @@ void StateEstimationSmoother::solve_locked()
     // arrive ahead of the first pose), its position and heading are held only
     // by weak priors, which some GTSAM versions refuse to factorize. Wait for
     // one, for up to a window length so that the pending data stays bounded.
-    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor &&
-        !params_.link_first_pose_to_reference_origin_sigma.has_value() &&
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !link_first_pose_to_origin() &&
         state_.gtsam->smoother->timestamps().empty())
     {
         double oldestStamp = std::numeric_limits<double>::infinity();
@@ -3813,6 +3849,12 @@ void StateEstimationSmoother::solve_locked()
         }
     }
 
+    if (optValues.exists(symbol_T_enu_to_map))
+    {
+        state_.last_solved_T_enu_to_map = mrpt::poses::CPose3D(
+            mrpt::gtsam_wrappers::toTPose3D(optValues.at<gtsam::Pose3>(symbol_T_enu_to_map)));
+    }
+
     // Retrieve latest enu_to_map for geo-referencing:
     if (params_.estimate_geo_reference)
     {
@@ -3964,6 +4006,8 @@ void StateEstimationSmoother::solve_locked()
             const auto symbolOdom    = symbol_T_map_to_odom_i_base + odomFrameIdx;
             const auto T_map2_odom_i = optValues.at<gtsam::Pose3>(symbolOdom);
 
+            state_.last_solved_frames[odomFrameIdx] =
+                mrpt::poses::CPose3D(mrpt::gtsam_wrappers::toTPose3D(T_map2_odom_i));
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
             const auto live = liveRelativeFrame(odomFrameIdx);
@@ -4217,7 +4261,7 @@ void StateEstimationSmoother::initialize_new_frame(
             W(id), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
             gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
 
-        if (params_.link_first_pose_to_reference_origin_sigma.has_value())
+        if (link_first_pose_to_origin())
         {
             state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
                 T(id), gtsam::Pose3::Identity(),
@@ -4437,38 +4481,48 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     constexpr double LEVEL_BEFORE = 1.0;  // [s]
     constexpr double LEVEL_AFTER  = 0.5;  // [s]
 
-    const auto& [tRef, R_map_vehicle] = *g.enuLevelRef;
-    gtsam::Vector3 sum                = gtsam::Vector3::Zero();
-    unsigned       count              = 0;
-    for (const auto& [t, acc] : recentAccel_)
+    gtsam::Rot3 R_enu_map;
+    double      angle = 0;
+    if (mapDefinedBeforeReset_ && keptEnuToMap_.has_value())
     {
-        if (t >= tRef - LEVEL_BEFORE && t <= tRef + LEVEL_AFTER)
+        // {map} has not changed with the reset: reuse its leveling (and azimuth).
+        R_enu_map = mrpt::gtsam_wrappers::toPose3(*keptEnuToMap_).rotation();
+        angle     = std::acos(std::clamp(R_enu_map.matrix()(2, 2), -1.0, 1.0));
+    }
+    else
+    {
+        const auto& [tRef, R_map_vehicle] = *g.enuLevelRef;
+        gtsam::Vector3 sum                = gtsam::Vector3::Zero();
+        unsigned       count              = 0;
+        for (const auto& [t, acc] : recentAccel_)
         {
-            sum += gtsam::Vector3(acc.x, acc.y, acc.z);
-            count++;
+            if (t >= tRef - LEVEL_BEFORE && t <= tRef + LEVEL_AFTER)
+            {
+                sum += gtsam::Vector3(acc.x, acc.y, acc.z);
+                count++;
+            }
         }
-    }
-    if (count == 0 || sum.norm() < 1e-6)
-    {
-        return;  // not yet: try again on the next update
-    }
-    // At rest the accelerometer points up:
-    const gtsam::Vector3 up = (R_map_vehicle * sum).normalized();
+        if (count == 0 || sum.norm() < 1e-6)
+        {
+            return;  // not yet: try again on the next update
+        }
+        // At rest the accelerometer points up:
+        const gtsam::Vector3 up = (R_map_vehicle * sum).normalized();
 
-    // Shortest rotation taking it to +z: about a horizontal axis, so the
-    // azimuth gauge of T_enu_to_map is left as it was.
-    const gtsam::Vector3 z(0, 0, 1);
-    const gtsam::Vector3 axis  = up.cross(z);
-    const double         s     = axis.norm();
-    const double         angle = std::atan2(s, up.dot(z));
-    gtsam::Rot3          R_enu_map;
-    if (s > 1e-9)
-    {
-        R_enu_map = gtsam::Rot3::AxisAngle(gtsam::Point3(axis / s), angle);
-    }
-    else if (angle > 1.0)
-    {
-        R_enu_map = gtsam::Rot3::Rx(M_PI);
+        // Shortest rotation taking it to +z: about a horizontal axis, so the
+        // azimuth gauge of T_enu_to_map is left as it was.
+        const gtsam::Vector3 z(0, 0, 1);
+        const gtsam::Vector3 axis = up.cross(z);
+        const double         s    = axis.norm();
+        angle                     = std::atan2(s, up.dot(z));
+        if (s > 1e-9)
+        {
+            R_enu_map = gtsam::Rot3::AxisAngle(gtsam::Point3(axis / s), angle);
+        }
+        else if (angle > 1.0)
+        {
+            R_enu_map = gtsam::Rot3::Rx(M_PI);
+        }
     }
 
     const auto         prev = g.newValues.at<gtsam::Pose3>(symbol_T_enu_to_map);
@@ -4494,8 +4548,14 @@ void StateEstimationSmoother::level_enu_to_map_locked()
     g.enuLevelDone = true;
 
     MRPT_LOG_INFO_FMT(
-        "[imu_preintegration] T_enu_to_map leveled from the accelerometer: {map} tilted %.1f deg",
+        "[imu_preintegration] T_enu_to_map leveled %s: {map} tilted %.1f deg",
+        mapDefinedBeforeReset_ ? "as before the reset" : "from the accelerometer",
         mrpt::RAD2DEG(angle));
+}
+
+bool StateEstimationSmoother::link_first_pose_to_origin() const
+{
+    return params_.link_first_pose_to_reference_origin_sigma.has_value() && !mapDefinedBeforeReset_;
 }
 
 void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)

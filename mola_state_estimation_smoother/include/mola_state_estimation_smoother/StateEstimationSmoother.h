@@ -174,6 +174,15 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /** Resets the estimator state to an initial state. Tracked IMU biases are kept. */
     void reset() override;
 
+    /** Like reset(), but {map} and the odometry frames are kept: the poses
+     * fused next continue in them, the first one is not linked to the origin,
+     * and T_enu_to_map keeps its rotation. */
+#if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_RESET_MOTION)
+    void reset_motion() override;
+#else
+    void reset_motion();
+#endif
+
 #if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
     /** \name ImuBiasSource (with `imu_bias_tracking`)
      *  @{ */
@@ -412,6 +421,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// The covariances of odometry frames are filled in on first use, see
         /// complete_odom_frame_covariance_locked().
         mutable std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
+        /// T_map_to_odom_i as solved (last_estimated_frames holds the live,
+        /// keyframe-relative value instead).
+        std::map<odometry_frameid_t, mrpt::poses::CPose3D> last_solved_frames;
+        /// T_enu_to_map as solved.
+        std::optional<mrpt::poses::CPose3D> last_solved_T_enu_to_map;
 
         /// The last raw pose received from each odometry source, expressed in
         /// that source's OWN frame {odom_i} (NOT in {map}), with its timestamp.
@@ -695,7 +709,21 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     mrpt::poses::CPose3DInterpolator finalizedTrajectoryEnu_;
     /// GNSS gate counters; kept outside State so a reset does not clear them.
     GnssGateStats gnssGateStats_;
-    bool          params_loaded_ = false;
+    /// Set by a reset that keeps the frames (reset_motion(), or after a failed
+    /// solve) once keyframes had defined {map}: {map} keeps its origin and its
+    /// tilt, so the first keyframe after it is not linked to the origin,
+    /// odometry frames return where they were, and T_enu_to_map keeps the
+    /// rotation below. A full reset() clears it.
+    bool mapDefinedBeforeReset_ = false;
+    /// Last solved T_map_to_odom_i of each odometry frame, by name, as of
+    /// the last reset that kept the frames: a frame created again starts
+    /// anchored there.
+    std::map<std::string, mrpt::poses::CPose3D> keptOdomFrames_;
+    /// Rotation of T_enu_to_map (leveling and azimuth), as last solved before a
+    /// reset that keeps the frames, and reused after it: leveling again while
+    /// moving would read the vehicle's own acceleration as gravity.
+    std::optional<mrpt::poses::CPose3D> keptEnuToMap_;
+    bool                                params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
@@ -771,7 +799,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void inflate_pinned_orientation_cov_locked(mrpt::math::CMatrixDouble66& cov) const;
 
     // ---- _locked variants: assume stateMutex_ is already held by the caller ----
-    void reset_locked();
+    /// keepFrames: see reset_motion().
+    void reset_locked(bool keepFrames);
     void reinitialize_gtsam_locked();
     void fuse_pose_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
@@ -875,6 +904,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// IMU preintegration: before T_enu_to_map reaches the solver, sets its
     /// roll and pitch from the accelerometer, so a tilted {map} starts right.
     void level_enu_to_map_locked();
+
+    /// Whether the first keyframe is linked to the {map} origin
+    /// (link_first_pose_to_reference_origin_sigma), which only holds until a
+    /// pose has defined {map}.
+    bool link_first_pose_to_origin() const;
 
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.

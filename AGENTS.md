@@ -246,6 +246,11 @@ Other behavior:
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
   cannot be solved yet. Any exception in the solve (`solve_locked()`: update,
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
+- Two resets: `reset()` starts from scratch (the next poses define {map} again,
+  as after a re-localization); `reset_motion()` and the solve-failure resets keep
+  {map}: odometry frames come back anchored at their last solved T_map_to_odom_i,
+  the first keyframe is not linked to the origin, and T_enu_to_map keeps its last
+  solved rotation (leveling again while moving reads acceleration as gravity).
 - Gauge anchors (strong priors on never-marginalized variables, withdrawn once
   observed; weak priors there break GTSAM>=4.3 Cholesky): `{map}` is pinned to
   the first odometry frame until a `{map}` pose arrives (or, with a fixed
