@@ -317,6 +317,67 @@ void test_reset_keeps_the_window()
     ASSERT_GT_(mrpt::Clock::toDouble(traj->rbegin()->first), (RESET_AT + 1) * DT);
 }
 
+// With the first pose linked to the {map} origin, a reset_motion() mid-run
+// must not link the first keyframe after it there too: earlier poses (in {map}
+// or in an odometry frame) already placed the vehicle elsewhere, and the
+// estimate must stay with them. A full reset() starts from scratch instead: the
+// first pose after it is linked to the origin again, as needed when the front
+// end redefines its frame.
+void test_reset_mid_run(bool keepFrames, const std::string& poseFrame, bool newSource = false)
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(
+        params_with(true) + "    link_first_pose_to_reference_origin_sigma: 1e-6\n"));
+
+    const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-4);
+    constexpr unsigned RESET_AT = N_POSES / 2;
+    for (unsigned i = 0; i < N_POSES; i++)
+    {
+        if (i == RESET_AT)
+        {
+            if (keepFrames)
+            {
+                nav.reset_motion();
+            }
+            else
+            {
+                nav.reset();
+            }
+        }
+        const double t = i * DT;
+        // In {map}, which the first pose defines, the vehicle moves along its x
+        // axis. An odometry frame starts elsewhere, so it is rotated and offset
+        // with respect to {map}:
+        const auto inMap =
+            mrpt::poses::CPose3D::FromXYZYawPitchRoll(SPEED * t, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+        const auto odomStart =
+            mrpt::poses::CPose3D::FromXYZYawPitchRoll(5.0, -3.0, 0.5, 30.0_deg, 2.0_deg, -1.5_deg);
+        const auto p = poseFrame == "map" ? inMap : odomStart + inMap;
+        // A source that only starts after the reset, ahead of the kept one, in
+        // a frame of its own: it must not redefine {map}.
+        if (newSource && i >= RESET_AT)
+        {
+            const auto otherStart = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                100.0, 50.0, 0.0, 90.0_deg, 0.0_deg, 0.0_deg);
+            nav.fuse_pose(
+                mrpt::Clock::fromDouble(t),
+                mrpt::poses::CPose3DPDFGaussian(otherStart + inMap, cov), "other_odom");
+        }
+        nav.fuse_pose(
+            mrpt::Clock::fromDouble(t), mrpt::poses::CPose3DPDFGaussian(p, cov), poseFrame);
+        const auto ns = nav.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
+        if (i > RESET_AT + 1)
+        {
+            const double expectedX = keepFrames ? SPEED * t : SPEED * (t - RESET_AT * DT);
+            ASSERT_(ns.has_value());
+            ASSERT_NEAR_(ns->pose.mean.x(), expectedX, 0.05);
+            ASSERT_NEAR_(ns->pose.mean.y(), 0.0, 0.05);
+            ASSERT_NEAR_(ns->pose.mean.z(), 0.0, 0.05);
+            ASSERT_NEAR_(ns->twist.vx, SPEED, 0.2);
+        }
+    }
+}
+
 // An unknown frame cannot be served, and must not be silently answered in the
 // reference frame.
 void test_unknown_frame()
@@ -340,6 +401,10 @@ int main(int argc, char** argv)
         {"imu_keyframes_left_out", &test_imu_keyframes_left_out},
         {"reused_imu_keyframes_kept", &test_reused_imu_keyframes_kept},
         {"reset_keeps_the_window", &test_reset_keeps_the_window},
+        {"reset_motion_keeps_frames", [] { test_reset_mid_run(true, "map"); }},
+        {"reset_motion_keeps_frames_odom", [] { test_reset_mid_run(true, "odom"); }},
+        {"reset_motion_keeps_frames_new_source", [] { test_reset_mid_run(true, "odom", true); }},
+        {"full_reset_redefines_frames", [] { test_reset_mid_run(false, "odom"); }},
         {"unknown_frame", &test_unknown_frame},
     };
 
