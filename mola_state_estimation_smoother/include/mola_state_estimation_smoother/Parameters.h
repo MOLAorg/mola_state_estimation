@@ -161,7 +161,8 @@ class Parameters
      *  serve them through estimated_trajectory(). Off by default: in a live
      *  system nothing reads them and the container would grow without bound.
      *  Intended for offline runs that want the smoothed trajectory instead of
-     *  the front end's own registered poses.
+     *  the front end's own registered poses. A reset() keeps them, and records
+     *  the keyframes still in the window as final.
      */
     bool keep_finalized_trajectory = false;
 
