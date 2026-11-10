@@ -323,7 +323,8 @@ void test_reset_keeps_the_window()
 // estimate must stay with them. A full reset() starts from scratch instead: the
 // first pose after it is linked to the origin again, as needed when the front
 // end redefines its frame.
-void test_reset_mid_run(bool keepFrames, const std::string& poseFrame, bool newSource = false)
+void test_reset_mid_run(
+    bool keepFrames, const std::string& poseFrame, bool newSource = false, bool twice = false)
 {
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(
@@ -338,6 +339,11 @@ void test_reset_mid_run(bool keepFrames, const std::string& poseFrame, bool newS
             if (keepFrames)
             {
                 nav.reset_motion();
+                if (twice)
+                {
+                    // No solve in between: what was kept is not trusted.
+                    nav.reset_motion();
+                }
             }
             else
             {
@@ -368,7 +374,7 @@ void test_reset_mid_run(bool keepFrames, const std::string& poseFrame, bool newS
         const auto ns = nav.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
         if (i > RESET_AT + 1)
         {
-            const double expectedX = keepFrames ? SPEED * t : SPEED * (t - RESET_AT * DT);
+            const double expectedX = keepFrames && !twice ? SPEED * t : SPEED * (t - RESET_AT * DT);
             ASSERT_(ns.has_value());
             ASSERT_NEAR_(ns->pose.mean.x(), expectedX, 0.05);
             ASSERT_NEAR_(ns->pose.mean.y(), 0.0, 0.05);
@@ -404,6 +410,8 @@ int main(int argc, char** argv)
         {"reset_motion_keeps_frames", [] { test_reset_mid_run(true, "map"); }},
         {"reset_motion_keeps_frames_odom", [] { test_reset_mid_run(true, "odom"); }},
         {"reset_motion_keeps_frames_new_source", [] { test_reset_mid_run(true, "odom", true); }},
+        {"reset_motion_twice_without_solve_is_full",
+         [] { test_reset_mid_run(true, "odom", false, true); }},
         {"full_reset_redefines_frames", [] { test_reset_mid_run(false, "odom"); }},
         {"unknown_frame", &test_unknown_frame},
     };

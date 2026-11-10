@@ -24,6 +24,7 @@
 #include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/obs/CObservationOdometry.h>
 #include <mrpt/poses/CPose3D.h>
+#include <mrpt/poses/CPose3DPDFGaussian.h>
 
 #include <Eigen/Dense>  // required by mrpt's matrix accessors
 #include <algorithm>
@@ -32,6 +33,8 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace
 {
@@ -141,7 +144,99 @@ void check(
     ASSERT_LT_(dist, 0.05);
     ASSERT_LT_(speed, 0.05);
 }
+
+// A tilted vehicle levels {map} at rest, then accelerates along its x axis and
+// is reset while accelerating. Returns the tilt of {map} reported by each
+// leveling of T_enu_to_map [deg].
+std::vector<double> run_reset_while_accelerating(bool keepFrames)
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    std::vector<double>                                      tilts;
+    nav.logRegisterCallback(
+        [&tilts](std::string_view msg, auto&&...)
+        {
+            const std::string m(msg);
+            const auto        p = m.find("tilted ");
+            if (m.find("T_enu_to_map leveled") != std::string::npos && p != std::string::npos)
+            {
+                tilts.push_back(std::stod(m.substr(p + 7)));
+            }
+        });
+    nav.initialize(mrpt::containers::yaml::FromText(params(true)));
+    const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-6);
+    // Rolled, so an acceleration along x changes the magnitude of the tilt read
+    // from the accelerometer (the only thing the log reports):
+    const auto attitude = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+        0, 0, 0, mrpt::DEG2RAD(30.0), 0.0, mrpt::DEG2RAD(20.0));
+    const auto g_body = attitude.inverseRotateVector(mrpt::math::TVector3D(0, 0, 9.81));
+
+    constexpr double   IMU_DT          = 0.01;
+    constexpr unsigned READINGS_PER_KF = 10;
+    constexpr double   T_START         = 2.0;  // [s] starts accelerating
+    constexpr double   ACC             = 3.0;  // [m/s^2] along the vehicle x axis
+    constexpr double   T_RESET         = 3.0;  // [s]
+    constexpr double   DURATION        = 5.0;
+
+    for (unsigned k = 0; k * IMU_DT <= DURATION; k++)
+    {
+        const double t   = 1.0 + k * IMU_DT;
+        const double tr  = k * IMU_DT;  // time since the start
+        const double acc = tr >= T_START ? ACC : 0.0;
+        const double dt  = std::max(0.0, tr - T_START);
+
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp   = mrpt::Clock::fromDouble(t);
+        imu.sensorLabel = "imu";
+        imu.set(mrpt::obs::IMU_X_ACC, g_body.x + acc);
+        imu.set(mrpt::obs::IMU_Y_ACC, g_body.y);
+        imu.set(mrpt::obs::IMU_Z_ACC, g_body.z);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        nav.fuse_imu(imu);
+
+        if (std::abs(tr - T_RESET) < IMU_DT / 2)
+        {
+            if (keepFrames)
+            {
+                nav.reset_motion();
+            }
+            else
+            {
+                nav.reset();
+            }
+        }
+        if (k % READINGS_PER_KF != 0)
+        {
+            continue;
+        }
+        // The odometry frame is level, as for a front end that levels itself:
+        const auto p    = attitude.rotateVector(mrpt::math::TVector3D(0.5 * ACC * dt * dt, 0, 0));
+        auto       pose = attitude;
+        pose.x(p.x);
+        pose.y(p.y);
+        pose.z(p.z);
+        nav.fuse_pose(imu.timestamp, mrpt::poses::CPose3DPDFGaussian(pose, cov), "odom");
+        (void)nav.estimated_navstate(imu.timestamp, "map");
+    }
+    return tilts;
+}
 }  // namespace
+
+// A reset that keeps the frames reuses the leveling done at rest; leveling
+// again would read the acceleration as gravity.
+void test_reset_motion_while_accelerating()
+{
+    const auto keep = run_reset_while_accelerating(true);
+    const auto full = run_reset_while_accelerating(false);
+    ASSERT_GE_(keep.size(), 2U);
+    ASSERT_GE_(full.size(), 2U);
+    std::cout << "  tilt of {map}: at rest " << keep.front() << " deg; after reset_motion() "
+              << keep.back() << " deg, after reset() " << full.back() << " deg\n";
+    ASSERT_NEAR_(keep.back(), keep.front(), 0.2);
+    // Not a requirement, a check that this test can tell the two apart:
+    ASSERT_GT_(std::abs(full.back() - full.front()), 2.0);
+}
 
 void test_level() { check(0, 0, 0); }
 void test_tilted() { check(40, 0, 30); }
@@ -164,6 +259,7 @@ int main(int argc, char** argv)
         {"upside_down_after_reset", &test_upside_down_after_reset},
         {"upside_down_first_pose_with_imu", &test_upside_down_first_pose_with_imu},
         {"nearly_upside_down_wheel_odometry", &test_nearly_upside_down_wheel_odometry},
+        {"reset_motion_while_accelerating", &test_reset_motion_while_accelerating},
     };
 
     bool anyFail = false;

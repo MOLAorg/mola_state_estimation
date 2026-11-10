@@ -421,11 +421,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         /// The covariances of odometry frames are filled in on first use, see
         /// complete_odom_frame_covariance_locked().
         mutable std::map<odometry_frameid_t, mrpt::poses::CPose3DPDFGaussian> last_estimated_frames;
-        /// T_map_to_odom_i as solved (last_estimated_frames holds the live,
-        /// keyframe-relative value instead).
-        std::map<odometry_frameid_t, mrpt::poses::CPose3D> last_solved_frames;
-        /// T_enu_to_map as solved.
+        /// T_enu_to_map as last solved, once the whole solve succeeded
+        /// (`solving_T_enu_to_map` holds it until then).
         std::optional<mrpt::poses::CPose3D> last_solved_T_enu_to_map;
+        std::optional<mrpt::poses::CPose3D> solving_T_enu_to_map;
 
         /// The last raw pose received from each odometry source, expressed in
         /// that source's OWN frame {odom_i} (NOT in {map}), with its timestamp.
@@ -709,19 +708,19 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     mrpt::poses::CPose3DInterpolator finalizedTrajectoryEnu_;
     /// GNSS gate counters; kept outside State so a reset does not clear them.
     GnssGateStats gnssGateStats_;
-    /// Set by a reset that keeps the frames (reset_motion(), or after a failed
-    /// solve) once keyframes had defined {map}: {map} keeps its origin and its
-    /// tilt, so the first keyframe after it is not linked to the origin,
-    /// odometry frames return where they were, and T_enu_to_map keeps the
-    /// rotation below. A full reset() clears it.
+    /// Set by reset_motion() once keyframes had defined {map}: {map} keeps its
+    /// origin and its tilt, so the first keyframe after it is not linked to the
+    /// origin, odometry frames return where they were, and T_enu_to_map keeps
+    /// the rotation below. A full reset() clears it, and so does a second
+    /// reset_motion() with no successful solve in between.
     bool mapDefinedBeforeReset_ = false;
-    /// Last solved T_map_to_odom_i of each odometry frame, by name, as of
+    /// Live T_map_to_odom_i of each odometry frame, by name, as of
     /// the last reset that kept the frames: a frame created again starts
     /// anchored there.
     std::map<std::string, mrpt::poses::CPose3D> keptOdomFrames_;
-    /// Rotation of T_enu_to_map (leveling and azimuth), as last solved before a
-    /// reset that keeps the frames, and reused after it: leveling again while
-    /// moving would read the vehicle's own acceleration as gravity.
+    /// Rotation of T_enu_to_map kept by reset_motion(): the leveling that
+    /// preintegration used, with the azimuth as last solved. Leveling again
+    /// while moving would read the vehicle's own acceleration as gravity.
     std::optional<mrpt::poses::CPose3D> keptEnuToMap_;
     bool                                params_loaded_ = false;
 
