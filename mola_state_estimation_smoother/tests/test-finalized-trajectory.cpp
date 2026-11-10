@@ -323,7 +323,7 @@ void test_reset_keeps_the_window()
 // estimate must stay with them. A full reset() starts from scratch instead: the
 // first pose after it is linked to the origin again, as needed when the front
 // end redefines its frame.
-void test_reset_mid_run(bool keepFrames, const std::string& poseFrame)
+void test_reset_mid_run(bool keepFrames, const std::string& poseFrame, bool newSource = false)
 {
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(
@@ -353,6 +353,16 @@ void test_reset_mid_run(bool keepFrames, const std::string& poseFrame)
         const auto odomStart =
             mrpt::poses::CPose3D::FromXYZYawPitchRoll(5.0, -3.0, 0.5, 30.0_deg, 2.0_deg, -1.5_deg);
         const auto p = poseFrame == "map" ? inMap : odomStart + inMap;
+        // A source that only starts after the reset, ahead of the kept one, in
+        // a frame of its own: it must not redefine {map}.
+        if (newSource && i >= RESET_AT)
+        {
+            const auto otherStart = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+                100.0, 50.0, 0.0, 90.0_deg, 0.0_deg, 0.0_deg);
+            nav.fuse_pose(
+                mrpt::Clock::fromDouble(t),
+                mrpt::poses::CPose3DPDFGaussian(otherStart + inMap, cov), "other_odom");
+        }
         nav.fuse_pose(
             mrpt::Clock::fromDouble(t), mrpt::poses::CPose3DPDFGaussian(p, cov), poseFrame);
         const auto ns = nav.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
@@ -393,6 +403,7 @@ int main(int argc, char** argv)
         {"reset_keeps_the_window", &test_reset_keeps_the_window},
         {"reset_motion_keeps_frames", [] { test_reset_mid_run(true, "map"); }},
         {"reset_motion_keeps_frames_odom", [] { test_reset_mid_run(true, "odom"); }},
+        {"reset_motion_keeps_frames_new_source", [] { test_reset_mid_run(true, "odom", true); }},
         {"full_reset_redefines_frames", [] { test_reset_mid_run(false, "odom"); }},
         {"unknown_frame", &test_unknown_frame},
     };

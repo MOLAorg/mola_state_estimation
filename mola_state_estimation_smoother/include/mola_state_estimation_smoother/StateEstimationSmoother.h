@@ -909,6 +909,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// (link_first_pose_to_reference_origin_sigma), which only holds until a
     /// pose has defined {map}.
     bool link_first_pose_to_origin() const;
+    /// Pins {map} to the first odometry frame, if nothing anchors it yet.
+    void anchor_map_to_first_odom_frame_locked();
 
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.

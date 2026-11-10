@@ -3367,10 +3367,15 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
     // Initialize gtsam symbol and prior factor for the new frame (where it was
     // before a reset, if it existed):
     gtsam::Pose3 initFramePose = gtsam::Pose3::Identity();
-    if (const auto itKept = keptOdomFrames_.find(frame_id_name); itKept != keptOdomFrames_.end())
+    const auto   itKept        = keptOdomFrames_.find(frame_id_name);
+    if (itKept != keptOdomFrames_.end())
     {
         initFramePose = mrpt::gtsam_wrappers::toPose3(itKept->second);
     }
+    // After a reset that kept the frames, a kept frame defines {map} when it
+    // comes back; a new one must not take its place meanwhile:
+    const bool waitForKeptFrame =
+        mapDefinedBeforeReset_ && !keptOdomFrames_.empty() && itKept == keptOdomFrames_.end();
 
     ASSERT_GE_(newId, 1);
 
@@ -3381,7 +3386,8 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
 
     // Until some source observes {map}, define it as this first odometry frame,
     // which is also where the weak prior above would leave it:
-    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !link_first_pose_to_origin())
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !link_first_pose_to_origin() &&
+        !waitForKeptFrame)
     {
         state_.gtsam->add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
             state_.gtsam->mapAnchor, symbol_T_map_to_odom_i_base + newId, initFramePose,
@@ -3571,6 +3577,9 @@ void StateEstimationSmoother::solve_locked()
         {
             return;
         }
+        // No kept frame came back after a reset that kept the frames: define
+        // {map} as the first odometry frame, as without a reset.
+        anchor_map_to_first_odom_frame_locked();
     }
 
     // Even if we have no new factors/values, do update the stamps of "persistent" variables:
@@ -4551,6 +4560,29 @@ void StateEstimationSmoother::level_enu_to_map_locked()
         "[imu_preintegration] T_enu_to_map leveled %s: {map} tilted %.1f deg",
         mapDefinedBeforeReset_ ? "as before the reset" : "from the accelerometer",
         mrpt::RAD2DEG(angle));
+}
+
+void StateEstimationSmoother::anchor_map_to_first_odom_frame_locked()
+{
+    auto& g = *state_.gtsam;
+    if (g.mapAnchor || state_.known_odom_frames.empty())
+    {
+        return;
+    }
+    odometry_frameid_t firstId = std::numeric_limits<odometry_frameid_t>::max();
+    for (const auto& [_, id] : state_.known_odom_frames.getDirectMap())
+    {
+        firstId = std::min(firstId, id);
+    }
+    const auto key = symbol_T_map_to_odom_i_base + firstId;
+    if (!g.newValues.exists(key))
+    {
+        return;
+    }
+    g.add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
+        g.mapAnchor, key, g.newValues.at<gtsam::Pose3>(key),
+        gtsam::noiseModel::Isotropic::Sigma(6, GAUGE_ANCHOR_SIGMA));
+    g.mapAnchorFrame = firstId;
 }
 
 bool StateEstimationSmoother::link_first_pose_to_origin() const
