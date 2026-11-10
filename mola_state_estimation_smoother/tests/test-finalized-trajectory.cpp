@@ -272,6 +272,51 @@ void test_reused_imu_keyframes_kept()
     }
 }
 
+// A reset() mid-run, as a front end does after a divergence, must not leave a
+// gap: the keyframes still in the window are recorded as final, and the poses
+// fused after it continue the trajectory.
+void test_reset_keeps_the_window()
+{
+    mola::state_estimation_smoother::StateEstimationSmoother nav;
+    nav.initialize(mrpt::containers::yaml::FromText(params_with(true)));
+
+    const auto cov = mrpt::math::CMatrixDouble66(mrpt::math::CMatrixDouble66::Identity() * 1e-4);
+    constexpr unsigned RESET_AT = N_POSES / 2;
+    for (unsigned i = 0; i < N_POSES; i++)
+    {
+        if (i == RESET_AT)
+        {
+            nav.reset();
+        }
+        const double t = i * DT;
+        const auto   p =
+            mrpt::poses::CPose3D::FromXYZYawPitchRoll(SPEED * t, 0, 0, 0.0_deg, 0.0_deg, 0.0_deg);
+        nav.fuse_pose(mrpt::Clock::fromDouble(t), mrpt::poses::CPose3DPDFGaussian(p, cov), "odom");
+        (void)nav.estimated_navstate(mrpt::Clock::fromDouble(t), "odom");
+    }
+
+    const auto traj = nav.estimated_trajectory(
+        mrpt::Clock::time_point::min(), mrpt::Clock::time_point::max(), "odom");
+    ASSERT_(traj.has_value());
+
+    // No hole around the reset: consecutive stamps are at most one input step
+    // apart (1 s of window, 10 keyframes, would be missing otherwise).
+    double prevT = -1;
+    for (const auto& [t, p] : *traj)
+    {
+        const double tt = mrpt::Clock::toDouble(t);
+        if (prevT >= 0)
+        {
+            ASSERT_LT_(tt - prevT, 1.5 * DT);
+        }
+        ASSERT_NEAR_(p.x, SPEED * tt, 0.05);
+        prevT = tt;
+    }
+    // From the first pose to the last one:
+    ASSERT_NEAR_(mrpt::Clock::toDouble(traj->begin()->first), 0.0, 1e-6);
+    ASSERT_GT_(mrpt::Clock::toDouble(traj->rbegin()->first), (RESET_AT + 1) * DT);
+}
+
 // An unknown frame cannot be served, and must not be silently answered in the
 // reference frame.
 void test_unknown_frame()
@@ -294,6 +339,7 @@ int main(int argc, char** argv)
          &test_covers_the_whole_run_without_intermediate_solves},
         {"imu_keyframes_left_out", &test_imu_keyframes_left_out},
         {"reused_imu_keyframes_kept", &test_reused_imu_keyframes_kept},
+        {"reset_keeps_the_window", &test_reset_keeps_the_window},
         {"unknown_frame", &test_unknown_frame},
     };
 

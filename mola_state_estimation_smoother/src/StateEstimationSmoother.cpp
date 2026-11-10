@@ -1103,6 +1103,23 @@ void StateEstimationSmoother::reset()
 
 void StateEstimationSmoother::reset_locked()
 {
+    // The keyframes still in the window would be lost with the state: record
+    // their latest values as final, as when they leave the window, so the
+    // smoothed trajectory has no gap across a reset.
+    if (params_.keep_finalized_trajectory)
+    {
+        const auto& kf2stamp = state_.stamp2frame_index.getInverseMap();
+        for (const auto& [frame_idx, frameState] : state_.last_estimated_states)
+        {
+            const auto itStamp = kf2stamp.find(frame_idx);
+            if (itStamp == kf2stamp.end() || state_.pose_keyframes.count(frame_idx) == 0)
+            {
+                continue;
+            }
+            finalizedTrajectory_.insert(itStamp->second, frameState.pose.asTPose());
+        }
+    }
+
     state_ = State();
     // The datum goes with the state, so ENU poses recorded so far may refer to
     // another one: keep only the {map} history.
