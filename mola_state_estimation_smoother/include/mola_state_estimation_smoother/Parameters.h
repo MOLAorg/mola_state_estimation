@@ -272,6 +272,25 @@ class Parameters
      */
     double pose_min_sample_period = 0.0;  // [s]
 
+    /** A fuse_pose() reading stamped more than this after both the previous
+     * reading of the same frame_id and the newest reading of the other inputs
+     * (those that delivered readings since that one) is dropped: its stamp is
+     * wrong. Kept, it would become the newest
+     * keyframe and the tail of its source's chain of increments, so the next
+     * correct readings of that source would be dropped as out of order, and
+     * predictions would be extrapolated from a pose in the future.
+     *
+     * Both conditions are needed: a source may be ahead of slow inputs (e.g.
+     * GNSS) between their readings, or come back after a gap. A source with no
+     * other input still delivering readings is not checked. One with a period over this value,
+     * whose other inputs are all slower, may get correct readings dropped: raise it then. After 10
+     * readings in a row dropped, the stamps of that source are accepted again (e.g. inputs with
+     * unsynchronized clocks), with a warning.
+     *
+     * 0 disables it. [seconds]
+     */
+    double pose_max_lead_time = 0.5;  // [s]
+
     /** \name Per-increment accuracy of fuse_pose() odometry frames
      *  Poses given in any frame other than reference_frame_name come from a
      *  drifting source (wheel, visual or LiDAR odometry), so they are fused as

@@ -61,6 +61,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
@@ -271,6 +272,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         size_t datum_restarts       = 0;  //!< datum candidates dropped as inconsistent
     };
     [[nodiscard]] GnssGateStats gnss_gate_stats() const;
+
+    /// Number of fuse_pose() readings dropped for being stamped ahead of the
+    /// other inputs (see Parameters::pose_max_lead_time).
+    [[nodiscard]] size_t pose_lead_drops() const;
 
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
@@ -637,6 +642,36 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     std::optional<GeorefConvergence> lastGeorefConvergence_;
     mutable std::mutex               lastGeorefConvergenceMutex_;
 
+    /// Input stamps for Parameters::pose_max_lead_time, with their own mutex:
+    /// checked in the callers' threads, before the async queue. Kept across
+    /// resets, since time goes on.
+    struct InputStamps
+    {
+        struct Input
+        {
+            mrpt::Clock::time_point newest;  //!< newest accepted stamp
+            uint64_t                lastArrival = 0;  //!< arrival order of its last reading
+        };
+        /// By source (type and name).
+        std::map<std::string, Input> inputs;
+        uint64_t                     arrivals = 0;
+        /// Per fuse_pose() source: readings dropped in a row.
+        std::map<std::string, size_t> droppedInARow;
+        size_t                        dropped = 0;
+
+        void note(const std::string& source, const mrpt::Clock::time_point& t)
+        {
+            const auto [it, isNew] = inputs.try_emplace(source, Input{t, 0});
+            if (!isNew && t > it->second.newest)
+            {
+                it->second.newest = t;
+            }
+            it->second.lastArrival = ++arrivals;
+        }
+    };
+    InputStamps        inputStamps_;
+    mutable std::mutex inputStampsMutex_;
+
 #if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
     /// IMU bias tracking (imu_bias_tracking), with its own mutex: fed from the raw
     /// data threads, read by the solver and other modules. Never lock stateMutex_
@@ -777,6 +812,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Moves the wheel odometry out of the frame `frame_id`, if it uses it.
     void move_wheels_odometry_frame_aside_locked(const std::string& frame_id);
+
+    /// Records the stamp of a reading of any input other than fuse_pose().
+    void note_input_stamp(const std::string& source, const mrpt::Clock::time_point& t);
+
+    /// False if a fuse_pose() reading must be dropped for its stamp, see
+    /// Parameters::pose_max_lead_time; otherwise, its stamp is recorded.
+    [[nodiscard]] bool accept_pose_stamp(
+        const mrpt::Clock::time_point& t, const std::string& frame_id);
 
     /// While T_map_to_odom_i is still pending insertion into the smoother, sets
     /// its initial value consistent with a reading `poseInOdom` of keyframe `kf`.

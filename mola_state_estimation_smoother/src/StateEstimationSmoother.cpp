@@ -159,6 +159,10 @@ constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
 
+// Pose readings of one source dropped in a row by Parameters::pose_max_lead_time
+// before its stamps are taken as they come again:
+constexpr size_t POSE_LEAD_MAX_DROPS_IN_A_ROW = 10;
+
 // A frame name for a wheel odometry labeled `label` that no frame uses yet:
 // "<label>_wheels", or with a counter after it if that is taken too.
 template <class FRAMES_MAP>
@@ -1322,6 +1326,7 @@ void StateEstimationSmoother::stop_backend_thread()
 void StateEstimationSmoother::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, const std::string& odomName)
 {
+    note_input_stamp("odometry:" + odomName, odom.timestamp);
     imu_bias_add_pose(odom.timestamp, mrpt::poses::CPose3D(odom.odometry), odomName);
     if (params_.async_backend)
     {
@@ -1540,6 +1545,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    note_input_stamp("imu:" + imu.sensorLabel, imu.timestamp);
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(imu.timestamp);
@@ -1874,6 +1880,7 @@ void StateEstimationSmoother::add_imu_yaw_bias_variable_locked(const frame_index
 
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    note_input_stamp("gnss:" + gps.sensorLabel, gps.timestamp);
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(gps.timestamp);
@@ -2126,6 +2133,10 @@ void StateEstimationSmoother::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     const std::string& frame_id)
 {
+    if (!accept_pose_stamp(timestamp, frame_id))
+    {
+        return;
+    }
     imu_bias_add_pose(timestamp, pose.mean, frame_id);
     if (params_.async_backend)
     {
@@ -2147,6 +2158,10 @@ void StateEstimationSmoother::fuse_pose_deferred(
     if (!params_.async_backend)
     {
         fuse_pose(timestamp, mrpt::poses::CPose3DPDFGaussian(mean, cov.get()), frame_id);
+        return;
+    }
+    if (!accept_pose_stamp(timestamp, frame_id))
+    {
         return;
     }
     imu_bias_add_pose(timestamp, mean, frame_id);
@@ -2411,6 +2426,7 @@ void StateEstimationSmoother::fuse_twist(
     const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
     const mrpt::math::CMatrixDouble66& twistCov)
 {
+    note_input_stamp("twist", timestamp);
     imu_bias_add_twist(timestamp, twist);
     if (params_.async_backend)
     {
@@ -3482,6 +3498,83 @@ void StateEstimationSmoother::move_wheels_odometry_frame_aside_locked(const std:
         "Pose source in frame '%s' shares that name with the wheel odometry: the latter "
         "is moved to a frame of its own, '%s'.",
         frame_id.c_str(), newName.c_str());
+}
+
+void StateEstimationSmoother::note_input_stamp(
+    const std::string& source, const mrpt::Clock::time_point& t)
+{
+    if (params_.pose_max_lead_time <= 0)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lck(inputStampsMutex_);
+    inputStamps_.note(source, t);
+}
+
+// A wrong stamp ahead of the present must be told apart from a source that is
+// just ahead of slow inputs between their readings, or one back after a gap:
+// so both a jump over its own previous reading and a lead over the newest
+// reading of the other inputs are required. Only the inputs that delivered
+// readings since the previous one of this source count: one that stopped says
+// nothing about the present. Inputs with later stamps than they should have
+// can only make this test more permissive.
+bool StateEstimationSmoother::accept_pose_stamp(
+    const mrpt::Clock::time_point& t, const std::string& frame_id)
+{
+    const double maxLead = params_.pose_max_lead_time;
+    if (maxLead <= 0)
+    {
+        return true;
+    }
+    const std::string source = "pose:" + frame_id;
+
+    std::lock_guard<std::mutex> lck(inputStampsMutex_);
+    auto&                       s             = inputStamps_;
+    auto&                       droppedInARow = s.droppedInARow[source];
+
+    if (const auto itOwn = s.inputs.find(source); itOwn != s.inputs.end())
+    {
+        const auto&                            own = itOwn->second;
+        std::optional<mrpt::Clock::time_point> newestOther;
+        for (const auto& [name, in] : s.inputs)
+        {
+            if (name != source && in.lastArrival > own.lastArrival &&
+                (!newestOther || in.newest > *newestOther))
+            {
+                newestOther = in.newest;
+            }
+        }
+        const double leadOwn    = mrpt::system::timeDifference(own.newest, t);
+        const double leadOthers = newestOther ? mrpt::system::timeDifference(*newestOther, t) : 0.0;
+        if (newestOther && leadOthers > maxLead && leadOwn > maxLead)
+        {
+            if (droppedInARow < POSE_LEAD_MAX_DROPS_IN_A_ROW)
+            {
+                droppedInARow++;
+                s.dropped++;
+                MRPT_LOG_THROTTLE_WARN_FMT(
+                    5.0,
+                    "[fuse_pose] frame='%s': dropping a reading stamped %.3f s ahead of the newest "
+                    "reading of the other inputs, and %.3f s after its previous one (t=%f): a "
+                    "wrong stamp? (%zu dropped in total)",
+                    frame_id.c_str(), leadOthers, leadOwn, mrpt::Clock::toDouble(t), s.dropped);
+                return false;
+            }
+            MRPT_LOG_WARN_FMT(
+                "[fuse_pose] frame='%s': %zu readings in a row stamped ahead of every other input "
+                "(now by %.3f s): accepting them again. Do all inputs use the same clock?",
+                frame_id.c_str(), droppedInARow, leadOthers);
+        }
+    }
+    droppedInARow = 0;
+    s.note(source, t);
+    return true;
+}
+
+size_t StateEstimationSmoother::pose_lead_drops() const
+{
+    std::lock_guard<std::mutex> lck(inputStampsMutex_);
+    return inputStamps_.dropped;
 }
 
 void StateEstimationSmoother::mark_map_observed_locked()
