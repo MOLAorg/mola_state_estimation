@@ -323,6 +323,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-reset-motion-drifted-odometry
+  SOURCES test-reset-motion-drifted-odometry.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-newest-last-fixed-lag-smoother
   SOURCES test-newest-last-fixed-lag-smoother.cpp
           ../src/NewestLastFixedLagSmoother.cpp

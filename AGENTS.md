@@ -79,7 +79,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (47) | `tests/test-*.cpp` |
+| Unit tests (48) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -254,7 +254,8 @@ Other behavior:
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
 - Two resets: `reset()` (also after a failed solve) starts from scratch: the next
   poses define {map} again, as after a re-localization. `reset_motion()` keeps
-  {map}: odometry frames come back anchored at their live T_map_to_odom_i (a frame
+  {map}: odometry frames come back anchored at their live T_map_to_odom_i, whichever
+  comes first (`test-reset-motion-drifted-odometry`; a frame
   not kept waits a window length for a kept one before anchoring {map}), the
   first keyframe is not linked to the origin, and with IMU preintegration
   T_enu_to_map keeps the leveling that preintegration used (leveling again while
