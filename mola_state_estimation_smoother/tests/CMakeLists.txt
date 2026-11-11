@@ -324,3 +324,10 @@ mola_add_test(
     gtsam
     gtsam_unstable
 )
+
+mola_add_test(
+  TARGET  test-reset-motion-keeps-georef
+  SOURCES test-reset-motion-keeps-georef.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)

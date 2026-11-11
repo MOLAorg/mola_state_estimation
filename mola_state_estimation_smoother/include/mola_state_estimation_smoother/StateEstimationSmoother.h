@@ -722,7 +722,20 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// preintegration used, with the azimuth as last solved. Leveling again
     /// while moving would read the vehicle's own acceleration as gravity.
     std::optional<mrpt::poses::CPose3D> keptEnuToMap_;
-    bool                                params_loaded_ = false;
+    /// An estimated geo-reference that had converged, kept by reset_motion()
+    /// until the first solve after it confirms {map} is the same frame
+    /// (check_kept_geo_reference_locked()). Meanwhile, it stays published.
+    struct KeptGeoReference
+    {
+        /// Datum, and T_enu_to_map as last solved, with its marginal covariance
+        mola::Georeferencing georef;
+        /// Live T_map_to_odom_i of each odometry frame at the reset, by name,
+        /// from its chain tail: where the vehicle pose propagated by that
+        /// source's own increments must be found after the reset.
+        std::map<std::string, mrpt::poses::CPose3D> frames;
+    };
+    std::optional<KeptGeoReference> keptGeoReference_;
+    bool                            params_loaded_ = false;
 
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
@@ -910,6 +923,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     bool link_first_pose_to_origin() const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
+
+    /// Tail of the chain of increments of an odometry frame, as of the last
+    /// solve: the pose of its last keyframe in {map}, and the source's raw pose
+    /// there, in its own frame.
+    [[nodiscard]] std::optional<std::pair<mrpt::poses::CPose3D, mrpt::poses::CPose3D>>
+        odom_chain_tail_locked(odometry_frameid_t idx) const;
+
+    /// Restores or drops the geo-reference kept by reset_motion(), see
+    /// keptGeoReference_. Called after a solve.
+    void check_kept_geo_reference_locked();
 
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.
