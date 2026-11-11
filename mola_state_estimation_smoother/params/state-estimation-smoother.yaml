@@ -474,6 +474,14 @@ params:
   # 0 = disabled, which is the behavior before this key existed.
   pose_min_sample_period: ${MOLA_POSE_MIN_SAMPLE_PERIOD|0.0}
 
+  # A pose reading stamped more than this after both the previous reading of
+  # its frame_id and the newest reading of the other inputs (those that
+  # delivered readings since then) is dropped (a wrong stamp): kept, the next
+  # correct readings of that source would be dropped as out of order. After 10
+  # in a row, that source is accepted again.
+  # 0 = disabled.
+  pose_max_lead_time: ${MOLA_POSE_MAX_LEAD_TIME|0.5}
+
   # Poses in any frame other than reference_frame_name (wheel, visual, LiDAR
   # odometry, e.g. nav_msgs/Odometry topics) drift, so they are fused as a
   # chain of increments between consecutive keyframes, plus one absolute

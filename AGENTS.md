@@ -79,7 +79,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (42) | `tests/test-*.cpp` |
+| Unit tests (48) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -191,6 +191,12 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 Other behavior:
 - `pose_robust_huber_threshold` (0 = off): Huber kernel on every per-reading
   `fuse_pose()` factor, not on the one-time anchor.
+- `pose_max_lead_time` (0.5 s, 0 = off): a `fuse_pose()` reading stamped more than
+  this after both its source's previous reading and the newest reading of the other
+  inputs that delivered readings since then is dropped (`accept_pose_stamp()`, in
+  the caller's thread, before the async queue; stamps per input in `inputStamps_`,
+  kept across resets). After 10 in a row, that source is accepted again.
+  `pose_lead_drops()`; `test-pose-lead-guard`.
 - Decimation (0 = off): `odometry_min_sample_period` and
   `pose_min_sample_period` merge dropped readings into the next kept one (no
   motion lost); `imu_min_sample_period` averages readings (`mola::imu::ImuAverager`),
@@ -248,7 +254,8 @@ Other behavior:
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
 - Two resets: `reset()` (also after a failed solve) starts from scratch: the next
   poses define {map} again, as after a re-localization. `reset_motion()` keeps
-  {map}: odometry frames come back anchored at their live T_map_to_odom_i (a frame
+  {map}: odometry frames come back anchored at their live T_map_to_odom_i, whichever
+  comes first (`test-reset-motion-drifted-odometry`; a frame
   not kept waits a window length for a kept one before anchoring {map}), the
   first keyframe is not linked to the origin, and with IMU preintegration
   T_enu_to_map keeps the leveling that preintegration used (leveling again while

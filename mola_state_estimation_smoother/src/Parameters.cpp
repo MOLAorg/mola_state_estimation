@@ -245,6 +245,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);
     MCP_LOAD_OPT(cfg, fuse_ground_truth_label);
     MCP_LOAD_OPT(cfg, pose_min_sample_period);
+    MCP_LOAD_OPT(cfg, pose_max_lead_time);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_lin);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_ang);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_meter);
@@ -254,6 +255,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 
     ASSERTMSG_(pose_min_sample_period >= 0, "pose_min_sample_period must be >= 0");
+    ASSERTMSG_(pose_max_lead_time >= 0, "pose_max_lead_time must be >= 0");
     ASSERTMSG_(
         relative_pose_increment_sigma_lin >= 0 && relative_pose_increment_sigma_ang > 0,
         "relative_pose_increment_sigma_lin must be >= 0 (0: automatic) and "
