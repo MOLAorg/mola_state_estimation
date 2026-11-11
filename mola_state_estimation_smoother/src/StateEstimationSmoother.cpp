@@ -152,6 +152,14 @@ constexpr double FIRST_POSE_WEAK_PRIOR_SIGMA = 1e6;
 constexpr double GAUGE_ANCHOR_SIGMA          = 1e-3;
 // T_enu_to_map angles with a larger sigma [rad] are unobserved (only their weak prior):
 constexpr double UNOBSERVED_ENU2MAP_ANGLE_SIGMA = 1.0;
+
+// After reset_motion(), the frame defining {map} again leaves the vehicle pose,
+// propagated by that source's own increments, where the solve puts it within
+// what its one anchor factor allows (centimeters). A larger jump means {map}
+// is not the same frame (e.g. a stale value, or defined at the vehicle again),
+// and with it, the geo-reference is not valid any more:
+constexpr double KEPT_GEOREF_MAX_POSITION_JUMP  = 1.0;  // [m]
+constexpr double KEPT_GEOREF_MAX_ANGLE_JUMP_DEG = 5.0;  // [deg]
 constexpr double PLANAR_XY_SIGMA                = 1e10;
 constexpr double PLANAR_Z_SIGMA                 = 1e-4;
 constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
@@ -1130,6 +1138,7 @@ void StateEstimationSmoother::reset_locked(bool keepFrames)
         }
     }
 
+    std::optional<KeptGeoReference> keptGeoReference;
     if (!keepFrames)
     {
         mapDefinedBeforeReset_ = false;
@@ -1174,11 +1183,33 @@ void StateEstimationSmoother::reset_locked(bool keepFrames)
                 keptOdomFrames_[name] = it->second.mean;
             }
         }
+        // An estimated geo-reference that had converged relates ENU to {map},
+        // which this reset keeps: it stays, if the first solve after it
+        // confirms that {map} is the same frame.
+        if (params_.estimate_geo_reference && !params_.fixed_geo_reference.has_value() &&
+            state_.geo_reference.has_value())
+        {
+            keptGeoReference.emplace();
+            keptGeoReference->georef = *state_.geo_reference;
+            if (const auto it = state_.last_estimated_frames.find(REFERENCE_FRAME_ID);
+                it != state_.last_estimated_frames.end())
+            {
+                keptGeoReference->georef.T_enu_to_map = it->second;
+            }
+            for (const auto& [name, idx] : state_.known_odom_frames.getDirectMap())
+            {
+                if (const auto tail = odom_chain_tail_locked(idx); tail)
+                {
+                    keptGeoReference->frames[name] = tail->first + (-tail->second);
+                }
+            }
+        }
     }
 
     state_ = State();
-    // The datum goes with the state, so ENU poses recorded so far may refer to
-    // another one: keep only the {map} history.
+    // The datum goes with the state (unless kept, see below, which may still
+    // fail), so ENU poses recorded so far may refer to another one: keep only
+    // the {map} history.
     finalizedTrajectoryEnu_.clear();
     {
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
@@ -1204,6 +1235,14 @@ void StateEstimationSmoother::reset_locked(bool keepFrames)
     if (params_loaded_)
     {
         reinitialize_gtsam_locked();
+    }
+
+    // The same datum, so the same ENU frame, published meanwhile:
+    keptGeoReference_ = std::move(keptGeoReference);
+    if (keptGeoReference_)
+    {
+        state_.geo_reference                 = keptGeoReference_->georef;
+        state_.tentative_geo_coord_reference = keptGeoReference_->georef.geo_coord;
     }
 }
 
@@ -1958,6 +1997,13 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
 
     mrpt::math::TPoint3D ENU_point;
     mrpt::topography::geodeticToENU_WGS84(geoCoords, ENU_point, *refGeoCoords);
+
+    // While a geo-reference kept by reset_motion() waits for its check, fixes
+    // are not fused: they would refer to a datum that may still be dropped.
+    if (keptGeoReference_)
+    {
+        return;
+    }
 
     // The azimuth of T_enu_to_map becomes observable only once the fixes span a
     // horizontal baseline long enough for the configured convergence accuracy.
@@ -4012,40 +4058,6 @@ void StateEstimationSmoother::solve_locked()
         // initial alignment while the source drifts away from it. The live
         // map->odom of such a source is the correction that makes it agree
         // with the fused pose at the tail keyframe of its chain.
-        const auto liveRelativeFrame =
-            [this](odometry_frameid_t idx) -> std::optional<mrpt::poses::CPose3D>
-        {
-            std::optional<frame_index_t>        tailKf;
-            std::optional<mrpt::poses::CPose3D> tailPoseInOdom;
-            if (const auto it = state_.relative_pose_chains.find(idx);
-                it != state_.relative_pose_chains.end() && it->second.last_pose_in_odom)
-            {
-                tailKf         = it->second.last_kf;
-                tailPoseInOdom = it->second.last_pose_in_odom->mean;
-            }
-            else if (state_.wheels_odometry_frame && state_.last_wheels_odometry_at_kf)
-            {
-                const auto itName =
-                    state_.known_odom_frames.find_key(*state_.wheels_odometry_frame);
-                if (itName != state_.known_odom_frames.getDirectMap().end() &&
-                    itName->second == idx)
-                {
-                    tailKf         = state_.last_wheels_odometry_kf;
-                    tailPoseInOdom = mrpt::poses::CPose3D(*state_.last_wheels_odometry_at_kf);
-                }
-            }
-            if (!tailKf || !tailPoseInOdom)
-            {
-                return {};
-            }
-            const auto itKf = state_.last_estimated_states.find(*tailKf);
-            if (itKf == state_.last_estimated_states.end())
-            {
-                return {};
-            }
-            return itKf->second.pose + (-*tailPoseInOdom);
-        };
-
         // Only the means here: the covariances are filled in on first use, see
         // complete_odom_frame_covariance_locked().
         state_.gtsam->odomFrameCovPending.clear();
@@ -4056,11 +4068,10 @@ void StateEstimationSmoother::solve_locked()
 
             auto& pdf = state_.last_estimated_frames[odomFrameIdx];
 
-            const auto live = liveRelativeFrame(odomFrameIdx);
             pdf = mola::gtsam_compat::to_mrpt_se3_pdf(T_map2_odom_i, gtsam::Matrix6::Zero());
-            if (live)
+            if (const auto tail = odom_chain_tail_locked(odomFrameIdx); tail)
             {
-                pdf.mean = *live;
+                pdf.mean = tail->first + (-tail->second);
             }
             state_.gtsam->odomFrameCovPending[odomFrameIdx] = T_map2_odom_i;
         }
@@ -4093,6 +4104,9 @@ void StateEstimationSmoother::solve_locked()
     state_.gtsam->newFactors.resize(0);
     state_.gtsam->newValues.clear();
     state_.gtsam->newKeyStamps.clear();
+
+    // Its prior, if any, goes into the next update:
+    check_kept_geo_reference_locked();
 
     // Geo-reference as of this solve. Keyframes finalized above came from the
     // previous one, so delete_too_old_entries() paired them with the previous
@@ -4622,6 +4636,115 @@ void StateEstimationSmoother::anchor_map_to_first_odom_frame_locked()
         g.mapAnchor, key, g.mapAnchorValue,
         gtsam::noiseModel::Isotropic::Sigma(6, GAUGE_ANCHOR_SIGMA));
     g.mapAnchorFrame = firstId;
+}
+
+std::optional<std::pair<mrpt::poses::CPose3D, mrpt::poses::CPose3D>>
+    StateEstimationSmoother::odom_chain_tail_locked(odometry_frameid_t idx) const
+{
+    std::optional<frame_index_t>        tailKf;
+    std::optional<mrpt::poses::CPose3D> tailPoseInOdom;
+    if (const auto it = state_.relative_pose_chains.find(idx);
+        it != state_.relative_pose_chains.end() && it->second.last_pose_in_odom)
+    {
+        tailKf         = it->second.last_kf;
+        tailPoseInOdom = it->second.last_pose_in_odom->mean;
+    }
+    else if (state_.wheels_odometry_frame && state_.last_wheels_odometry_at_kf)
+    {
+        const auto itName = state_.known_odom_frames.find_key(*state_.wheels_odometry_frame);
+        if (itName != state_.known_odom_frames.getDirectMap().end() && itName->second == idx)
+        {
+            tailKf         = state_.last_wheels_odometry_kf;
+            tailPoseInOdom = mrpt::poses::CPose3D(*state_.last_wheels_odometry_at_kf);
+        }
+    }
+    if (!tailKf || !tailPoseInOdom)
+    {
+        return {};
+    }
+    const auto itKf = state_.last_estimated_states.find(*tailKf);
+    if (itKf == state_.last_estimated_states.end())
+    {
+        return {};
+    }
+    return std::make_pair(itKf->second.pose, *tailPoseInOdom);
+}
+
+// T_enu_to_map relates ENU, fixed by the datum, to {map}: it is still valid
+// after reset_motion() if and only if {map} is the same frame. It is, when a
+// source observes {map} directly, or when the frame defining it again is one
+// kept by the reset and the vehicle pose before it, propagated by that source's
+// own increments over the gap, is where this solve puts it.
+void StateEstimationSmoother::check_kept_geo_reference_locked()
+{
+    if (!keptGeoReference_)
+    {
+        return;
+    }
+    auto&       g = *state_.gtsam;
+    std::string mismatch;
+    if (!g.mapObserved)
+    {
+        if (!g.mapAnchor)
+        {
+            return;  // {map} is not defined yet
+        }
+        const auto& frames = keptGeoReference_->frames;
+        const auto  itName = state_.known_odom_frames.getInverseMap().find(g.mapAnchorFrame);
+        const auto  itKept = itName == state_.known_odom_frames.getInverseMap().end()
+                                 ? frames.end()
+                                 : frames.find(itName->second);
+        if (itKept == frames.end())
+        {
+            mismatch = "{map} is defined again by an odometry frame not kept";
+        }
+        else
+        {
+            const auto tail = odom_chain_tail_locked(g.mapAnchorFrame);
+            if (!tail)
+            {
+                return;  // its first reading is not solved yet
+            }
+            const auto   d    = tail->first - (itKept->second + tail->second);
+            const double dPos = d.translation().norm();
+            const double dAng =
+                mrpt::RAD2DEG(mrpt::poses::Lie::SO<3>::log(d.getRotationMatrix()).norm());
+            if (dPos > KEPT_GEOREF_MAX_POSITION_JUMP || dAng > KEPT_GEOREF_MAX_ANGLE_JUMP_DEG)
+            {
+                mismatch = mrpt::format(
+                    "the vehicle pose in {map} jumped by %.2f m and %.1f deg across it", dPos,
+                    dAng);
+            }
+        }
+    }
+    const auto kept = std::move(*keptGeoReference_);
+    keptGeoReference_.reset();
+
+    if (!mismatch.empty())
+    {
+        MRPT_LOG_WARN_FMT(
+            "reset_motion(): the geo-reference is not kept, %s: estimating it again",
+            mismatch.c_str());
+        state_.geo_reference.reset();
+        state_.tentative_geo_coord_reference.reset();
+        g.firstGnssEnuXY.reset();
+        g.firstGnssMapXY.reset();
+        return;
+    }
+
+    // The marginal of T_enu_to_map summarizes the GNSS evidence before the
+    // reset, all of it gone with the old graph, so it is the right prior. It
+    // also observes the azimuth.
+    g.withdraw_anchor(g.enuYawAnchor);
+    gtsam::Pose3   mean;
+    gtsam::Matrix6 cov;
+    mola::gtsam_compat::to_gtsam_se3_cov6(kept.georef.T_enu_to_map, mean, cov);
+    g.newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+        symbol_T_enu_to_map, mean, gtsam::noiseModel::Gaussian::Covariance(cov));
+    // It is the estimate until the next solve has that prior:
+    state_.last_estimated_frames[REFERENCE_FRAME_ID] = kept.georef.T_enu_to_map;
+
+    MRPT_LOG_INFO("reset_motion(): {map} is the same frame, so the geo-reference is kept");
 }
 
 bool StateEstimationSmoother::link_first_pose_to_origin() const

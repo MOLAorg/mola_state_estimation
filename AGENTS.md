@@ -255,6 +255,14 @@ Other behavior:
   moving reads acceleration as gravity; the solved tilt is not used, attitude
   factors may bend it) with its last solved azimuth. A second `reset_motion()` with no successful solve in
   between resets from scratch.
+- `reset_motion()` with a converged estimated geo-reference (`state_.geo_reference`,
+  not a fixed one) keeps it, still published, as `keptGeoReference_` (datum, and
+  T_enu_to_map as last solved with its marginal) while GNSS fixes wait. The first
+  solve with {map} anchored again checks it (`check_kept_geo_reference_locked()`):
+  {map} observed directly, or defined by a kept frame whose source's increments
+  over the gap leave the vehicle within 1 m and 5 deg of where the solve puts it,
+  restores T_enu_to_map as a prior (azimuth not pinned); otherwise it is dropped
+  and estimated again (new datum). `test-reset-motion-keeps-georef`.
 - Gauge anchors (strong priors on never-marginalized variables, withdrawn once
   observed; weak priors there break GTSAM>=4.3 Cholesky): `{map}` is pinned to
   the first odometry frame until a `{map}` pose arrives (or, with a fixed
