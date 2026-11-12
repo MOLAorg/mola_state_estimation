@@ -41,6 +41,11 @@ struct ImuReading
  *  [ti, tj] into `pim`, whose parameters (gravity, body_P_sensor) and bias
  *  linearization point are kept. Accelerations are multiplied by `accScale`.
  *
+ *  Readings are taken as instantaneous samples, linearly interpolated in
+ *  between. With an IMU away from the body origin (body_P_sensor), the
+ *  tangential acceleration of the lever arm, which gtsam does not model, is
+ *  compensated from the change of the gyro readings.
+ *
  *  Integration starts at the last reading at or before `ti` (or at the first
  *  one, if it comes at most `maxReadingGap` after `ti`), and fails if two
  *  consecutive readings are farther apart than `maxReadingGap` or the

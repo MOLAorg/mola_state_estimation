@@ -37,38 +37,69 @@ bool integrate_imu_readings(
         return false;
     }
 
-    // Zero-order hold: each reading holds until the next one. Start at the
-    // last reading at or before ti (or the first one, if close enough).
-    auto first = std::upper_bound(
+    // Start at the last reading at or before ti (or the first one, if close
+    // enough, held back to ti).
+    auto k = std::upper_bound(
         readings.begin(), readings.end(), ti,
         [](double v, const ImuReading& r) { return v < r.t; });
-    if (first == readings.begin())
+    if (k == readings.begin())
     {
-        if (first->t - ti > maxReadingGap)
+        if (k->t - ti > maxReadingGap)
         {
             return false;
         }
     }
     else
     {
-        --first;
+        --k;
     }
 
+    // gtsam corrects the accelerometer of an IMU away from the body origin by
+    // the centripetal term only, w x (w x r). The tangential one, dw/dt x r,
+    // is left out, though it reaches several m/s^2 with a lever arm of tens of
+    // cm under brisk rotations. It is removed here, with dw/dt from consecutive
+    // gyro readings: over a whole interval its integral only depends on the
+    // gyro at both ends, so differentiating the readings does not amplify
+    // their noise in the integrated result. The gyro bias cancels out.
+    const auto&          bPs   = pim.params()->body_P_sensor;
+    const bool           lever = bPs.has_value() && bPs->translation().norm() > 0;
+    const gtsam::Rot3    R_bs  = lever ? bPs->rotation() : gtsam::Rot3();
+    const gtsam::Vector3 leverB =
+        lever ? gtsam::Vector3(bPs->translation()) : gtsam::Vector3::Zero();
+
+    // Readings are samples of continuous signals: each sub-interval between
+    // consecutive readings (or interval ends) is integrated with the signals
+    // linearly interpolated at its midpoint, which is second-order accurate
+    // where holding each reading until the next lags by half a period.
     const double t0 = pim.deltaTij();
     double       tc = ti;
-    for (auto k = first; k != readings.end() && tc < tj; ++k)
+    while (tc < tj)
     {
-        const auto   next  = std::next(k);
-        const double tNext = (next != readings.end()) ? std::min(next->t, tj) : tj;
-        if (next != readings.end() && next->t - k->t > maxReadingGap)
+        const auto next = std::next(k);
+        if (next == readings.end())
+        {
+            return false;  // the readings do not reach tj
+        }
+        const double span = next->t - k->t;
+        if (span > maxReadingGap)
         {
             return false;
         }
-        if (tNext > tc)
+        const double tEnd = std::min(next->t, tj);
+        if (tEnd > tc)
         {
-            pim.integrateMeasurement(accScale * k->acc, k->gyr, tNext - tc);
+            const double         s   = std::clamp((0.5 * (tc + tEnd) - k->t) / span, 0.0, 1.0);
+            gtsam::Vector3       acc = accScale * ((1 - s) * k->acc + s * next->acc);
+            const gtsam::Vector3 gyr = (1 - s) * k->gyr + s * next->gyr;
+            if (lever)
+            {
+                const gtsam::Vector3 angAccB = R_bs.rotate((next->gyr - k->gyr) / span);
+                acc -= R_bs.unrotate(angAccB.cross(leverB));
+            }
+            pim.integrateMeasurement(acc, gyr, tEnd - tc);
         }
-        tc = tNext;
+        tc = tEnd;
+        k  = next;
     }
     return std::abs(pim.deltaTij() - t0 - (tj - ti)) < 1e-6;
 }
