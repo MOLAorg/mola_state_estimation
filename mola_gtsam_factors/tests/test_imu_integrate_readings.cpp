@@ -126,6 +126,7 @@ void test_residual_at_truth(const gtsam::Pose3& body_P_sensor, const std::string
         const gtsam::Vector                                 e = f.evaluateError(
                                             body_pose(ti), body_velocity(ti), body_pose(tj), body_velocity(tj),
                                             gtsam::imuBias::ConstantBias());
+        expect(e.allFinite(), name + ": non-finite residual");
         maxRot = std::max(maxRot, e.segment<3>(0).lpNorm<Eigen::Infinity>());
         maxPos = std::max(maxPos, e.segment<3>(3).lpNorm<Eigen::Infinity>());
         maxVel = std::max(maxVel, e.segment<3>(6).lpNorm<Eigen::Infinity>());
@@ -174,6 +175,29 @@ void test_gaps_and_coverage()
     }
 }
 
+void test_interval_before_first_reading()
+{
+    // Two readings, accelerating along x from 0 to 10 m/s^2 between t=0 and
+    // t=0.1. Over [-0.1, 0.1], the first one is held back to -0.1, then the
+    // readings are interpolated: the velocity change is 0 + 0.1 * 5 = 0.5 m/s.
+    std::deque<mola::factors::ImuReading> readings(2);
+    readings[0].t   = 0.0;
+    readings[0].acc = gtsam::Vector3::Zero();
+    readings[0].gyr = gtsam::Vector3::Zero();
+    readings[1].t   = 0.1;
+    readings[1].acc = gtsam::Vector3(10.0, 0, 0);
+    readings[1].gyr = gtsam::Vector3::Zero();
+
+    gtsam::PreintegratedImuMeasurements pim(
+        make_params(gtsam::Pose3()), gtsam::imuBias::ConstantBias());
+    expect(
+        mola::factors::integrate_imu_readings(readings, -0.1, 0.1, 1.0, 0.11, pim),
+        "an interval starting shortly before the first reading is covered");
+    expect(
+        std::abs(pim.deltaVij().x() - 0.5) < 1e-9,
+        "held first reading: dv=" + std::to_string(pim.deltaVij().x()));
+}
+
 }  // namespace
 
 int main()
@@ -187,6 +211,7 @@ int main()
             gtsam::Pose3(gtsam::Rot3::Ypr(0.3, -0.2, 0.1), gtsam::Point3(0.05, -0.03, 0.45)),
             "lever arm and rotated IMU");
         test_gaps_and_coverage();
+        test_interval_before_first_reading();
         std::cout << "All tests passed." << std::endl;
         return 0;
     }

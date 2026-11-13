@@ -73,6 +73,16 @@ bool integrate_imu_readings(
     // where holding each reading until the next lags by half a period.
     const double t0 = pim.deltaTij();
     double       tc = ti;
+
+    // Before the first reading, its values are held: there is nothing to
+    // interpolate with, nor an angular acceleration to apply.
+    if (tc < k->t)
+    {
+        const double tEnd = std::min(k->t, tj);
+        pim.integrateMeasurement(accScale * k->acc, k->gyr, tEnd - tc);
+        tc = tEnd;
+    }
+
     while (tc < tj)
     {
         const auto next = std::next(k);
