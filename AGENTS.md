@@ -131,7 +131,8 @@ Sensor inputs:
   be tilted; before its first solve, `level_enu_to_map_locked()` sets the roll and
   pitch of `T_enu_to_map` from the accelerometer at the pinned first pose, the
   first pose reading, or the first reading of a wheel odometry that defines `{map}`)
-  once the readings cover it (`attach_imu_factors_locked()`), with a
+  once the readings cover it (`attach_imu_factors_locked()`, integrated by
+  `integrate_imu_readings()`, see `mola_gtsam_factors`), with a
   covariance floor (`min_sigma_*`); while an estimated geo-reference still has its
   azimuth pinned by the gauge anchor, links get the plain factor with gravity
   fixed in `{map}` at the leveled tilt instead. The constant-velocity linear
@@ -372,6 +373,11 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 
 `imu_helpers.h`: accelerometer/quaternion sanity checks and the ENU azimuth
 correction shared by the estimators and georeferencing.
+
+`imu_preintegration.h`: `integrate_imu_readings()`, raw readings between two
+stamps into a `PreintegratedImuMeasurements`: readings linearly interpolated at
+each sub-interval midpoint, and the tangential lever-arm acceleration
+(dw/dt x r), which gtsam's `body_P_sensor` correction leaves out, removed.
 
 ## 4. `mola_georeferencing`
 

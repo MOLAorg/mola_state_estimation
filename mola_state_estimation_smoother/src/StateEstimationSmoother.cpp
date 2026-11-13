@@ -64,6 +64,7 @@
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
 #include <mola_gtsam_factors/imu_helpers.h>
+#include <mola_gtsam_factors/imu_preintegration.h>
 #include <mola_gtsam_factors/mrpt_gtsam_compat.h>
 
 #include <deque>
@@ -564,12 +565,7 @@ struct StateEstimationSmoother::GtsamImpl
     }
 
     // ---- IMU preintegration (Parameters::imu_preintegration) ----
-    struct RawImu
-    {
-        double         t = 0;
-        gtsam::Vector3 acc;
-        gtsam::Vector3 gyr;
-    };
+    using RawImu = mola::factors::ImuReading;
     std::deque<RawImu>                            rawImu;  //!< oldest first
     std::string                                   rawImuLabel;  //!< the IMU in use
     std::optional<std::regex>                     rawImuLabelRe;
@@ -4979,21 +4975,6 @@ void StateEstimationSmoother::attach_imu_factors_locked()
             continue;
         }
 
-        // Zero-order hold: each reading holds until the next one. Start at the
-        // last reading at or before ti (or the first one, if close enough).
-        auto first = std::upper_bound(
-            g.rawImu.begin(), g.rawImu.end(), ti,
-            [](double v, const GtsamImpl::RawImu& r) { return v < r.t; });
-        bool ok = true;
-        if (first == g.rawImu.begin())
-        {
-            ok = (first->t - ti) <= ip.max_reading_gap;
-        }
-        else
-        {
-            --first;
-        }
-
         // While the azimuth of an estimated geo-reference is pinned by its gauge
         // anchor, factors on T_enu_to_map are marginalized at that azimuth, which
         // the real one may be far from (as for the gravity factors): meanwhile,
@@ -5009,24 +4990,10 @@ void StateEstimationSmoother::attach_imu_factors_locked()
 
         gtsam::PreintegratedImuMeasurements pim(
             azimuthPinned ? g.pimParamsMapGravity : g.pimParams, g.lastBias);
-        double tc = ti;
-        for (auto k = first; ok && k != g.rawImu.end() && tc < tj; ++k)
-        {
-            const auto   next  = std::next(k);
-            const double tNext = (next != g.rawImu.end()) ? std::min(next->t, tj) : tj;
-            if (next != g.rawImu.end() && next->t - k->t > ip.max_reading_gap)
-            {
-                ok = false;
-                break;
-            }
-            if (tNext > tc)
-            {
-                pim.integrateMeasurement(accScale_ * k->acc, k->gyr, tNext - tc);
-            }
-            tc = tNext;
-        }
+        const bool ok = mola::factors::integrate_imu_readings(
+            g.rawImu, ti, tj, accScale_, ip.max_reading_gap, pim);
 
-        if (ok && tj - ti >= ip.min_link_duration && std::abs(pim.deltaTij() - (tj - ti)) < 1e-6)
+        if (ok && tj - ti >= ip.min_link_duration)
         {
             gtsam::Matrix9 floor    = gtsam::Matrix9::Zero();
             floor.block<3, 3>(0, 0) = mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3;

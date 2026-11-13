@@ -53,6 +53,7 @@ mola_add_library(
     include/mola_gtsam_factors/gtsam_detect_version.h
     include/mola_gtsam_factors/id.h
     include/mola_gtsam_factors/imu_helpers.h
+    include/mola_gtsam_factors/imu_preintegration.h
     include/mola_gtsam_factors/MapGravityFactor.h
     include/mola_gtsam_factors/MeasuredGravityFactor.h
     include/mola_gtsam_factors/mrpt_gtsam_compat.h
@@ -66,6 +67,7 @@ mola_add_library(
     src/FactorTrapezoidalIntegrator.cpp
     src/FactorTricycleKinematic.cpp
     src/imu_helpers.cpp
+    src/imu_preintegration.cpp
     src/MapGravityFactor.cpp
     src/MeasuredGravityFactor.cpp
     src/Pose3RotationFactor.cpp
