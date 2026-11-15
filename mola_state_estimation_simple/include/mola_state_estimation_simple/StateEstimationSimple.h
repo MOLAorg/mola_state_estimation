@@ -262,6 +262,13 @@ class StateEstimationSimple : public mola::NavStateFilter
         };
         std::multimap<mrpt::Clock::time_point, ImuSample> imu_history;
 
+        // Whether any IMU reading was received (kept across reset(), like the
+        // IMU history), and whether imu_propagation already reported the lack
+        // of IMU or accelerometer readings (once per initialize()/reset()).
+        bool         imu_received  = false;
+        mutable bool no_imu_logged = false;
+        mutable bool no_acc_logged = false;
+
         // Velocity at last_pose_obs_tim, and a slowly varying acceleration
         // bias, both in the reference frame: estimated by propagating with the
         // accelerometer between poses and correcting with each new pose (see

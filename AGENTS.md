@@ -219,7 +219,12 @@ Other behavior:
 - Predict-twist low-pass (`predict_twist_filter_enabled`,
   `predict_twist_filter_time_const`, 0.1 s): the extrapolation velocity is a
   dt-aware EMA of the newest keyframe's twist. Longer constants lag at turn
-  exits and the front end follows the prior into a heading error.
+  exits and the front end follows the prior into a heading error. Applied only
+  when extrapolating: a query at the keyframe's own stamp (about 1 us, any
+  frame) gets its twist (sync path and `FastPredictor`, via
+  `Snapshot::predictTwist`). In async mode a query right after `fuse_pose()`
+  may still hit the snapshot of the previous keyframe and get the filtered
+  twist.
 - Prediction covariance in an odometry source's frame
   (`predict_covariance_from_residuals`, default on): twist covariance from the
   running mean (`predict_residual_time_const`) of that source's squared
