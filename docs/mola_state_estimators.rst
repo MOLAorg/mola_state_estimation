@@ -631,6 +631,10 @@ the full list is in :ref:`Parameters <doxid-classmola_1_1state__estimation__simp
      - false
      - Propagate the pose between updates by integrating the IMU (gyro + accelerometer) instead
        of a constant twist.
+   * - ``imu_accel_scale``
+     - 0
+     - Multiplier taking the accelerometer readings to m/s². 0: automatic (units of g if the mean
+       norm of the first 0.5 s of valid readings is below 3).
    * - ``gnss_enabled``
      - false
      - Use low-sigma GNSS fixes (e.g. RTK) to correct position drift, given a geo-reference.

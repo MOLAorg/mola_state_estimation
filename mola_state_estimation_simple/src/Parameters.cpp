@@ -50,6 +50,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gravity_magnitude);
     MCP_LOAD_OPT(cfg, imu_propagation_sigma_acc);
     MCP_LOAD_OPT(cfg, imu_propagation_sigma_bias);
+    MCP_LOAD_OPT(cfg, imu_accel_scale);
+    ASSERT_GE_(imu_accel_scale, 0.0);
 
     MCP_LOAD_OPT(cfg, do_process_imu_labels_re);
     MCP_LOAD_OPT(cfg, do_process_odometry_labels_re);

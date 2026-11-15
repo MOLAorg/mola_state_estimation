@@ -50,6 +50,9 @@ Constant-velocity kinematic estimator with velocity extrapolation.
   `fuse_pending_odometry_up_to()`), so results depend on measurement
   timestamps, not on delivery order.
 - Velocity is low-pass filtered (`velocity_filter_enabled`, default true).
+- `imu_propagation` (default false): accelerometer units from `imu_accel_scale`
+  (0 = automatic: units of g if the mean norm of the valid readings over their
+  first 0.5 s is below 3; kept across resets, like `imu_history`).
 - `fuse_pose_deferred()`: the reading is fused by the next call that reads or
   changes the estimate (`apply_deferred_pose()` at the top of every public
   method except `fuse_imu()`), which waits for the covariance outside
