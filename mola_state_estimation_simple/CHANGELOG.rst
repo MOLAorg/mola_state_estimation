@@ -2,6 +2,13 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Detect accelerometer readings in units of g, from the time-ordered reading history.
+* fuse_pose_deferred(): deferred readings are never lost nor consumed before they are ready.
+* Twist at the newest keyframe's stamp; no hang just before the last pose.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.2.0 (2026-11-01)
 ------------------
 

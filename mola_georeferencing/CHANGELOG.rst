@@ -2,6 +2,13 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Exact GTSAM->MRPT SE(3) pose covariance conversions.
+* IMU attitude sigmas; azimuth along the ENU vertical instead of the sensor z axis.
+* recenter_georeference(): use the same T_enu_to_map convention as the rest of the code.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.2.0 (2026-11-01)
 ------------------
 * mola-trajectory-georef: accept YAML geo-referencing files, as sm2mm and mm-georef do (`#88 <https://github.com/MOLAorg/mola_state_estimation/issues/88>`_)

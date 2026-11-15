@@ -2,6 +2,13 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* IMU preintegration (also with GTSAM 4.2): interpolated readings, tangential lever-arm term, gravity taken from T_enu_to_map.
+* Motion-compensated GNSS factors with per-axis sigma floors.
+* FactorTricycleKinematic: fix the arc-branch Jacobians.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.2.0 (2026-11-01)
 ------------------
 * New Pose3RotationYawBiasFactor: absolute attitude with a scalar azimuth bias variable (`#89 <https://github.com/MOLAorg/mola_state_estimation/issues/89>`_)

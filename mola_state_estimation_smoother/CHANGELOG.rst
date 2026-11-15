@@ -2,6 +2,20 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* IMU preintegration, on by default, with LiDAR-grade increment sigmas; accelerometer units detected; T_enu_to_map leveled from the accelerometer before the first solve.
+* Optional IMU bias tracking (ImuBiasTracker), offered to other modules as a mola::ImuBiasSource.
+* reset_motion(): a reset that keeps {map} and a converged estimated geo-reference; reset() keeps the window keyframes in the finalized trajectory.
+* GNSS: motion-compensated factors, per-axis sigma floors, innovation gating and reacquisition, optional admission by sigma relative to the best recent fix; geo-reference only published once converged, with its convergence as diagnostics.
+* With a fixed geo-reference, the vehicle pose (and map->odom) is not published until the position of {map} is observed.
+* fuse_pose_deferred(); map -> <frame> published for extra odometry sources.
+* GTSAM 4.2: newest states kept at the root of the iSAM2 Bayes tree, and marginalized cliques re-eliminated (fixes out-of-order marginalization crashes); no GTSAM exception escapes the solve.
+* Odometry-frame covariances computed only when read; exact GTSAM->MRPT pose covariance conversions.
+* Configurable out-of-plane uncertainty of planar wheel odometry; predict-twist low-pass time constant 0.1 s by default.
+* Twist at the newest keyframe's stamp; no hang just before the last pose.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.2.0 (2026-11-01)
 ------------------
 * Optional IMU attitude azimuth bias state (Gauss-Markov), attitude decimation and bias diagnostics (`#89 <https://github.com/MOLAorg/mola_state_estimation/issues/89>`_)
