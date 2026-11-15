@@ -2,8 +2,8 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.3.0 (2026-11-15)
+------------------
 * IMU preintegration (also with GTSAM 4.2): interpolated readings, tangential lever-arm term, gravity taken from T_enu_to_map.
 * Motion-compensated GNSS factors with per-axis sigma floors.
 * FactorTricycleKinematic: fix the arc-branch Jacobians.

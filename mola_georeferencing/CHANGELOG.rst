@@ -2,8 +2,8 @@
 Changelog for package mola_georeferencing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.3.0 (2026-11-15)
+------------------
 * Exact GTSAM->MRPT SE(3) pose covariance conversions.
 * IMU attitude sigmas; azimuth along the ENU vertical instead of the sensor z axis.
 * recenter_georeference(): use the same T_enu_to_map convention as the rest of the code.

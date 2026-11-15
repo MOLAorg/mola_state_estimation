@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.3.0 (2026-11-15)
+------------------
 * IMU preintegration, on by default, with LiDAR-grade increment sigmas; accelerometer units detected; T_enu_to_map leveled from the accelerometer before the first solve.
 * Optional IMU bias tracking (ImuBiasTracker), offered to other modules as a mola::ImuBiasSource.
 * reset_motion(): a reset that keeps {map} and a converged estimated geo-reference; reset() keeps the window keyframes in the finalized trajectory.
