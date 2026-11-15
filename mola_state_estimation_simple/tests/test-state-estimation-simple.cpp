@@ -1856,6 +1856,79 @@ params:
     std::cout << "OK\n";
 }
 
+// The units decision must not depend on the delivery order of the readings in
+// its span: with norms 1, 9 and 9 at 0, 0.4 and 0.6 s (mean above 3: m/s²),
+// delivering the one at 0.6 s before the one at 0.4 s must not decide from
+// the first reading alone. The decision is observed through the propagation
+// at rest: taken as units of g, the readings of 9.81 m/s² that follow would
+// make the propagated pose run away.
+void test_imu_propagation_accel_units_delivery_order()
+{
+    std::cout << "[Test] IMU propagation, accelerometer units vs delivery order... ";
+
+    const std::string cfg = R"###(
+params:
+    max_time_to_use_velocity_model: 0.75
+    sigma_random_walk_acceleration_linear: 1.0
+    sigma_random_walk_acceleration_angular: 1.0
+    sigma_relative_pose_linear: 0.01
+    sigma_relative_pose_angular: 0.01
+    sigma_imu_angular_velocity: 0.05
+    imu_propagation: true
+    imu_propagation_max_time: 2.0
+    gravity_magnitude: 9.81
+)###";
+
+    const auto imuAt = [](double t, double accZ)
+    {
+        mrpt::obs::CObservationIMU imu;
+        imu.timestamp = mrpt::Clock::fromDouble(t);
+        imu.set(mrpt::obs::IMU_WX, 0.0);
+        imu.set(mrpt::obs::IMU_WY, 0.0);
+        imu.set(mrpt::obs::IMU_WZ, 0.0);
+        imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+        imu.set(mrpt::obs::IMU_Z_ACC, accZ);
+        return imu;
+    };
+
+    // Returns the propagated position error 0.3 s after the last pose, at rest.
+    const auto run = [&](const std::vector<double>& firstStamps)
+    {
+        mola::state_estimation_simple::StateEstimationSimple est;
+        est.initialize(mrpt::containers::yaml::FromText(cfg));
+        for (const double t : firstStamps)
+        {
+            est.fuse_imu(imuAt(t, t == 0.0 ? 1.0 : 9.0));
+        }
+        for (int i = 0; 1.2 + 0.005 * i <= 3.0 + 1e-9; i++)
+        {
+            const double t = 1.2 + 0.005 * i;
+            est.fuse_imu(imuAt(t, 9.81));
+            if (i % 20 == 0 && t <= 2.5 + 1e-9)
+            {
+                mrpt::poses::CPose3DPDFGaussian p;
+                p.cov.setDiagonal(1e-4);
+                est.fuse_pose(mrpt::Clock::fromDouble(t), p, "map");
+            }
+        }
+        const auto s = est.estimated_navstate(mrpt::Clock::fromDouble(2.8), "map");
+        ASSERT_(s.has_value());
+        return s->pose.mean.asTPose().translation().norm();
+    };
+
+    const double eInOrder   = run({0.0, 0.4, 0.6});
+    const double eReordered = run({0.0, 0.6, 0.4});
+    if (VERBOSE)
+    {
+        std::cout << "\n  in order " << eInOrder << " m, reordered " << eReordered << " m\n";
+    }
+    ASSERT_LT_(eInOrder, 0.05);
+    ASSERT_LT_(eReordered, 0.05);
+
+    std::cout << "OK\n";
+}
+
 // The twist queried at the stamp of the last fused pose must be the inertial
 // velocity at that instant, as for any later query, and not the slower
 // velocity filter of the constant-twist model.
@@ -2268,6 +2341,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_prediction_covariance();
         test_imu_propagation();
         test_imu_propagation_accel_in_g();
+        test_imu_propagation_accel_units_delivery_order();
         test_imu_propagation_twist_at_last_pose();
         test_imu_propagation_accel_bias();
         test_imu_propagation_after_3d_odometry();
