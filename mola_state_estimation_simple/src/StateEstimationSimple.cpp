@@ -1410,8 +1410,10 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
 
     // Inertial propagation, if enabled and the IMU readings cover the interval.
     // It may extrapolate further than the constant-twist model:
+    // A query up to kSameStampTolerance before the last pose is at its stamp.
     std::optional<Propagation> propagated;
-    if (params.imu_propagation && !state_.pose_already_updated_with_odom && dt >= 0 &&
+    const double sameStampTol = std::chrono::duration<double>(kSameStampTolerance).count();
+    if (params.imu_propagation && !state_.pose_already_updated_with_odom && dt >= -sameStampTol &&
         dt <= params.imu_propagation_max_time)
     {
         propagated = imu_propagate(timestamp);
