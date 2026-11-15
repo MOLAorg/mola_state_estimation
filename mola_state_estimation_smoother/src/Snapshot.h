@@ -56,6 +56,11 @@ struct Snapshot
     mrpt::Clock::time_point anchorStamp;
     NavState                anchor;
 
+    /// Low-pass-filtered twist used instead of anchor.twist to extrapolate, if
+    /// that filter is enabled. A query at anchorStamp itself is not an
+    /// extrapolation and gets anchor.twist.
+    std::optional<mrpt::math::TTwist3D> predictTwist;
+
     /// Latest estimated T_map_to_odom_i, keyed by numeric odometry frame id,
     /// plus the name<->id mapping so a query by frame name can be resolved.
     /// The covariance is only filled in for sources without a raw pose yet

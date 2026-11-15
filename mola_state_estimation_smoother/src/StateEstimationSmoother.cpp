@@ -2653,10 +2653,13 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
 
         // Extrapolate the low-pass-filtered velocity instead of the boundary
         // keyframe's raw (noisy) twist, when anchoring on the newest keyframe
-        // (mirrors the async fast-predictor path).
+        // (mirrors the async fast-predictor path). A query at the keyframe's own
+        // stamp (in any requested frame) is not an extrapolation: it gets that
+        // keyframe's twist.
         if (params_.predict_twist_filter_enabled && state_.filtered_predict_twist.has_value() &&
             !state_.stamp2frame_index.empty() &&
-            *closesFrameIdx == state_.stamp2frame_index.getDirectMap().rbegin()->second)
+            *closesFrameIdx == state_.stamp2frame_index.getDirectMap().rbegin()->second &&
+            std::abs(closestFrameDtSigned) > SAME_STAMP_TOLERANCE)
         {
             ret.twist = *state_.filtered_predict_twist;
         }
@@ -5081,7 +5084,7 @@ std::shared_ptr<const Snapshot> StateEstimationSmoother::build_snapshot_locked()
     // (noisy) twist, so the front end's motion prior stays smooth.
     if (params_.predict_twist_filter_enabled && state_.filtered_predict_twist.has_value())
     {
-        snap->anchor.twist = *state_.filtered_predict_twist;
+        snap->predictTwist = *state_.filtered_predict_twist;
     }
 
     // Odometry-frame transforms (numeric id >= 1) and the name<->id mapping.

@@ -578,7 +578,9 @@ Algorithm:
   smoothed by a scalar Kalman filter, with process noise from
   ``sigma_random_walk_acceleration_*`` and measurement noise from each input.
 - **Prediction:** ``estimated_navstate(t)`` applies the constant velocity model from the last pose
-  (or integrates the IMU, if ``imu_propagation`` is enabled), with a diagonal covariance growing
+  (or integrates the IMU, if ``imu_propagation`` is enabled; the twist is then the inertial velocity
+  at ``t``, from the stamp of the last pose on, holding the newest IMU reading until the next one
+  arrives), with a diagonal covariance growing
   with :math:`\Delta t` since the last pose update:
 
   .. math::

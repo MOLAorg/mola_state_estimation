@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <vector>
 
 namespace
@@ -38,6 +39,9 @@ constexpr size_t      NUM_STEPS  = 60;  // steps to drive the estimator
 constexpr double      V0         = 0.8;  // nominal forward velocity [m/s]
 constexpr double      JITTER_AMP = 0.4;  // square-wave velocity jitter amplitude [m/s]
 constexpr const char* ODOM       = "odom";
+// Predictions are queried this long after each keyframe, as a LiDAR odometry
+// does for its next scan:
+constexpr double QUERY_AHEAD = 0.5 * T;
 
 std::string make_config(bool filterEnabled)
 {
@@ -70,8 +74,12 @@ params:
 
 // Drives the estimator with a nominally-constant forward motion whose fused
 // velocity carries a square-wave jitter, and returns the sequence of predicted
-// forward velocities (twist.vx) from estimated_navstate() in the {map} frame.
-std::vector<double> run_and_collect_predicted_vx(bool filterEnabled)
+// forward velocities (twist.vx) from estimated_navstate() in `frame` ({map} if
+// empty), queried `queryAhead` seconds after each new keyframe (a prediction).
+// The odometry pose is fused `poseOffset` seconds after the keyframe stamp,
+// close enough to be merged into that keyframe.
+std::vector<double> run_and_collect_predicted_vx(
+    bool filterEnabled, double queryAhead, const std::string& frame = "", double poseOffset = 0.0)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     {
@@ -120,11 +128,12 @@ std::vector<double> run_and_collect_predicted_vx(bool filterEnabled)
             mrpt::poses::CPose3DPDFGaussian odo;
             odo.mean = gtPose;
             odo.cov.setDiagonal(mrpt::square(0.02));
-            est.fuse_pose(mrpt::Clock::fromDouble(t), odo, ODOM);
+            est.fuse_pose(mrpt::Clock::fromDouble(t + poseOffset), odo, ODOM);
         }
 
         const auto st = est.estimated_navstate(
-            mrpt::Clock::fromDouble(t), est.parameters().reference_frame_name);
+            mrpt::Clock::fromDouble(t + queryAhead),
+            frame.empty() ? est.parameters().reference_frame_name : frame);
         if (st)
         {
             predictedVx.push_back(st->twist.vx);
@@ -163,8 +172,8 @@ double mean(const std::vector<double>& v)
 // The filter must smooth the predicted velocity and track its mean without bias.
 void test_filter_smooths_and_tracks()
 {
-    const auto vxOff = run_and_collect_predicted_vx(false);
-    const auto vxOn  = run_and_collect_predicted_vx(true);
+    const auto vxOff = run_and_collect_predicted_vx(false, QUERY_AHEAD);
+    const auto vxOn  = run_and_collect_predicted_vx(true, QUERY_AHEAD);
 
     ASSERT_(vxOff.size() > 5);
     ASSERT_EQUAL_(vxOff.size(), vxOn.size());
@@ -190,12 +199,54 @@ void test_filter_smooths_and_tracks()
 // The filter is a plain deterministic EMA: identical inputs -> identical output.
 void test_filter_is_deterministic()
 {
-    const auto a = run_and_collect_predicted_vx(true);
-    const auto b = run_and_collect_predicted_vx(true);
+    const auto a = run_and_collect_predicted_vx(true, QUERY_AHEAD);
+    const auto b = run_and_collect_predicted_vx(true, QUERY_AHEAD);
     ASSERT_EQUAL_(a.size(), b.size());
     for (size_t k = 0; k < a.size(); k++)
     {
         ASSERT_EQUAL_(a[k], b[k]);
+    }
+}
+
+// A query at the newest keyframe's own stamp is not an extrapolation: it must
+// return that keyframe's twist, the same with or without the filter.
+void test_keyframe_stamp_is_not_filtered()
+{
+    for (const std::string frame : {"", ODOM})
+    {
+        const auto vxOff = run_and_collect_predicted_vx(false, 0.0, frame);
+        const auto vxOn  = run_and_collect_predicted_vx(true, 0.0, frame);
+        ASSERT_(vxOff.size() > 5);
+        ASSERT_EQUAL_(vxOff.size(), vxOn.size());
+        for (size_t k = 0; k < vxOn.size(); k++)
+        {
+            ASSERT_NEAR_(vxOn[k], vxOff[k], 1e-9);
+        }
+    }
+}
+
+// With the odometry pose merged into a keyframe a few ms after its stamp, the
+// rule is still the keyframe's stamp, also in the odometry frame: a query at
+// the keyframe stamp gets its twist, a query at the raw pose stamp is an
+// extrapolation and gets the filtered twist.
+void test_stamp_rule_with_offset_raw_pose()
+{
+    constexpr double poseOffset = 0.005;
+    for (const std::string frame : {"", ODOM})
+    {
+        const auto atKfOff = run_and_collect_predicted_vx(false, 0.0, frame, poseOffset);
+        const auto atKfOn  = run_and_collect_predicted_vx(true, 0.0, frame, poseOffset);
+        ASSERT_(atKfOff.size() > 5);
+        ASSERT_EQUAL_(atKfOff.size(), atKfOn.size());
+        for (size_t k = 0; k < atKfOn.size(); k++)
+        {
+            ASSERT_NEAR_(atKfOn[k], atKfOff[k], 1e-9);
+        }
+
+        const auto atRawOff = run_and_collect_predicted_vx(false, poseOffset, frame, poseOffset);
+        const auto atRawOn  = run_and_collect_predicted_vx(true, poseOffset, frame, poseOffset);
+        ASSERT_EQUAL_(atRawOff.size(), atRawOn.size());
+        ASSERT_LT_(roughness(atRawOn), 0.6 * roughness(atRawOff));
     }
 }
 
@@ -207,6 +258,8 @@ int main()
     {
         test_filter_smooths_and_tracks();
         test_filter_is_deterministic();
+        test_keyframe_stamp_is_not_filtered();
+        test_stamp_rule_with_offset_raw_pose();
         std::cout << "Test successful." << std::endl;
         return 0;
     }

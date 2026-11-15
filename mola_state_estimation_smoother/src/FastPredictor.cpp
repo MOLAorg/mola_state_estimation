@@ -106,6 +106,13 @@ std::optional<NavState> FastPredictor::predict(
     // synchronous estimated_navstate()).
     NavState ret = snap->anchor;
 
+    // The filtered twist is for extrapolating; at the anchor's own stamp, the
+    // anchor's twist is the estimate.
+    if (snap->predictTwist.has_value() && std::abs(dt) > SAME_STAMP_TOLERANCE)
+    {
+        ret.twist = *snap->predictTwist;
+    }
+
     // The covariance propagation below (matrix inversions, information-form
     // conversions and Gaussian pose composition) can throw on a non
     // positive-definite covariance; estimated_navstate() delegates here directly

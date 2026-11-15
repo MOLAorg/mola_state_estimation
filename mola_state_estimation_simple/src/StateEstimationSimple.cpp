@@ -56,6 +56,9 @@ constexpr double kPendingOdometryMaxAge = 5.0;
 /// IMU reading for inertial propagation to still be used.
 constexpr double kImuPropagationMaxGap = 0.05;
 
+// A query this close to the last pose's stamp is at that stamp:
+constexpr auto kSameStampTolerance = std::chrono::microseconds(1);
+
 /// Extra age [s], beyond Parameters::imu_propagation_max_time, kept in the
 /// IMU history, so a query still finds the readings right after the last pose.
 constexpr double kImuHistoryMargin = 1.0;
@@ -100,9 +103,10 @@ void StateEstimationSimple::reset()
     // own timestamp covers. Discarding them here would instead make the
     // estimate depend on how many readings happened to be delivered before the
     // reset ran, i.e. on thread scheduling rather than on the input.
-    auto pendingImu  = std::move(state_.pending_imu);
-    auto pendingOdom = std::move(state_.pending_odometry);
-    auto imuHistory  = std::move(state_.imu_history);
+    auto       pendingImu  = std::move(state_.pending_imu);
+    auto       pendingOdom = std::move(state_.pending_odometry);
+    auto       imuHistory  = std::move(state_.imu_history);
+    const bool imuReceived = state_.imu_received;
 
     // reset:
     state_ = State();
@@ -110,6 +114,7 @@ void StateEstimationSimple::reset()
     state_.pending_imu      = std::move(pendingImu);
     state_.pending_odometry = std::move(pendingOdom);
     state_.imu_history      = std::move(imuHistory);
+    state_.imu_received     = imuReceived;
 
     seedInitialTwistFromParams();
 
@@ -564,6 +569,7 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     // reproducible.
     state_.pending_imu.emplace(
         imu.timestamp, State::PendingImu{imuReading.wx, imuReading.wy, imuReading.wz});
+    state_.imu_received = true;
 
     if (params.imu_propagation && imu.has(mrpt::obs::TIMUDataIndex::IMU_X_ACC) &&
         imu.has(mrpt::obs::TIMUDataIndex::IMU_Y_ACC) &&
@@ -626,30 +632,55 @@ std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_int
     const mrpt::math::CMatrixDouble33& R0, const mrpt::math::TVector3D& v0,
     const mrpt::Clock::time_point& t0, const mrpt::Clock::time_point& t1) const
 {
-    // The readings must cover the whole interval:
-    const auto itBegin = state_.imu_history.upper_bound(t0);
-    const auto itEnd   = state_.imu_history.upper_bound(t1);
-    if (itBegin == itEnd ||
-        mrpt::system::timeDifference(t0, itBegin->first) > kImuPropagationMaxGap ||
-        mrpt::system::timeDifference(std::prev(itEnd)->first, t1) > kImuPropagationMaxGap)
+    // An empty or reversed interval has nothing to integrate:
+    if (t1 <= t0)
     {
-        if (state_.imu_history.empty())
+        return {};
+    }
+
+    if (state_.imu_history.empty())
+    {
+        if (state_.imu_received)
         {
-            MRPT_LOG_THROTTLE_WARN(
-                30.0,
-                "imu_propagation is enabled but no IMU reading with accelerometer data has been "
-                "received: using the constant-twist model.");
+            if (!state_.no_acc_logged)
+            {
+                state_.no_acc_logged = true;
+                MRPT_LOG_WARN(
+                    "imu_propagation is enabled but the IMU readings carry no accelerometer "
+                    "data: using the constant-twist model.");
+            }
         }
-        else
+        else if (!state_.no_imu_logged)
         {
-            MRPT_LOG_THROTTLE_DEBUG_FMT(
-                5.0,
-                "imu_propagation: IMU readings do not cover [%.3f, %.3f] (buffered: %.3f to "
-                "%.3f): using the constant-twist model.",
-                mrpt::Clock::toDouble(t0), mrpt::Clock::toDouble(t1),
-                mrpt::Clock::toDouble(state_.imu_history.begin()->first),
-                mrpt::Clock::toDouble(state_.imu_history.rbegin()->first));
+            // Expected on platforms without an IMU, so not a warning:
+            state_.no_imu_logged = true;
+            MRPT_LOG_INFO(
+                "imu_propagation is enabled but no IMU reading has been received: using the "
+                "constant-twist model.");
         }
+        return {};
+    }
+
+    // The readings in (t0, t1]. With none, the newest one at or before t0 is
+    // held over the whole interval, as the newest one is held up to t1 below.
+    const auto itBegin   = state_.imu_history.upper_bound(t0);
+    const auto itEnd     = state_.imu_history.upper_bound(t1);
+    const bool holdOlder = (itBegin == itEnd);
+    const bool covered =
+        holdOlder
+            ? (itBegin != state_.imu_history.begin() &&
+               mrpt::system::timeDifference(std::prev(itBegin)->first, t1) <= kImuPropagationMaxGap)
+            : (mrpt::system::timeDifference(t0, itBegin->first) <= kImuPropagationMaxGap &&
+               mrpt::system::timeDifference(std::prev(itEnd)->first, t1) <= kImuPropagationMaxGap);
+    if (!covered)
+    {
+        MRPT_LOG_THROTTLE_DEBUG_FMT(
+            5.0,
+            "imu_propagation: IMU readings do not cover [%.3f, %.3f] (buffered: %.3f to "
+            "%.3f): using the constant-twist model.",
+            mrpt::Clock::toDouble(t0), mrpt::Clock::toDouble(t1),
+            mrpt::Clock::toDouble(state_.imu_history.begin()->first),
+            mrpt::Clock::toDouble(state_.imu_history.rbegin()->first));
         return {};
     }
 
@@ -670,13 +701,20 @@ std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_int
         R = R * mola::imu::incremental_rotation({s.w.x, s.w.y, s.w.z}, noBias, dt);
     };
 
-    auto tPrev = t0;
-    for (auto it = itBegin; it != itEnd; ++it)
+    if (holdOlder)
     {
-        step(it->second, mrpt::system::timeDifference(tPrev, it->first));
-        tPrev = it->first;
+        step(std::prev(itBegin)->second, mrpt::system::timeDifference(t0, t1));
     }
-    step(std::prev(itEnd)->second, mrpt::system::timeDifference(tPrev, t1));
+    else
+    {
+        auto tPrev = t0;
+        for (auto it = itBegin; it != itEnd; ++it)
+        {
+            step(it->second, mrpt::system::timeDifference(tPrev, it->first));
+            tPrev = it->first;
+        }
+        step(std::prev(itEnd)->second, mrpt::system::timeDifference(tPrev, t1));
+    }
 
     Integration ret;
     ret.displacement = {p.x(), p.y(), p.z()};
@@ -695,7 +733,23 @@ std::optional<StateEstimationSimple::Propagation> StateEstimationSimple::imu_pro
     }
 
     const auto R0 = state_.last_pose->mean.getRotationMatrix();
-    auto       in = imu_integrate(R0, *state_.imu_velocity, *state_.last_pose_obs_tim, timestamp);
+
+    // At the stamp of the last pose (within kSameStampTolerance, or before it,
+    // which the caller only lets through within that tolerance) there is nothing
+    // to integrate: the IMU velocity already refers to that instant.
+    if (timestamp <= *state_.last_pose_obs_tim + kSameStampTolerance)
+    {
+        const Eigen::Vector3d vw(
+            state_.imu_velocity->x, state_.imu_velocity->y, state_.imu_velocity->z);
+        const Eigen::Vector3d vb = R0.asEigen().transpose() * vw;
+
+        Propagation ret;
+        ret.increment     = mrpt::poses::CPose3D::Identity();
+        ret.velocity_body = {vb.x(), vb.y(), vb.z()};
+        return ret;
+    }
+
+    auto in = imu_integrate(R0, *state_.imu_velocity, *state_.last_pose_obs_tim, timestamp);
     if (!in)
     {
         return {};

@@ -137,6 +137,10 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
 /// the covariance of predictions in its frame.
 constexpr size_t MIN_PREDICTION_RESIDUALS = 10;
 
+/// A query this close [s] to a keyframe's stamp is at that keyframe, not an
+/// extrapolation from it.
+constexpr double SAME_STAMP_TOLERANCE = 1e-6;
+
 /// Floor of the running prediction-error rate [(m/s)^2 or (rad/s)^2] under the
 /// cap on new errors, so a rate that starts at exactly zero can still grow.
 constexpr double MIN_PREDICTION_VAR_RATE = 1e-6;

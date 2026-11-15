@@ -373,7 +373,11 @@ class Parameters
      * un-damped injects jitter into a front end's motion prior. This mirrors the
      * velocity low-pass of the lightweight estimator. On by default so the
      * prior stays smooth; it is a plain dt-aware EMA, hence deterministic and
-     * reproducible run-to-run. */
+     * reproducible run-to-run. It is not applied to a query at the newest
+     * keyframe's own stamp (within about 1 us, in any frame), which gets that
+     * keyframe's twist. With async_backend, a query right after fuse_pose() may
+     * still hit the snapshot anchored on the previous keyframe, and so get the
+     * filtered twist. */
     bool predict_twist_filter_enabled = true;
 
     /** [s] Time constant of the predict-twist low-pass

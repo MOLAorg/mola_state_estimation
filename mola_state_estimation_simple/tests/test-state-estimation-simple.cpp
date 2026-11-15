@@ -1747,6 +1747,70 @@ params:
     std::cout << "OK\n";
 }
 
+// The twist queried at the stamp of the last fused pose must be the inertial
+// velocity at that instant, as for any later query, and not the slower
+// velocity filter of the constant-twist model.
+void test_imu_propagation_twist_at_last_pose()
+{
+    std::cout << "[Test] IMU propagation, twist at the last pose stamp... ";
+
+    mola::state_estimation_simple::StateEstimationSimple est;
+    est.initialize(mrpt::containers::yaml::FromText(R"###(
+params:
+    max_time_to_use_velocity_model: 0.75
+    sigma_random_walk_acceleration_linear: 1.0
+    sigma_random_walk_acceleration_angular: 1.0
+    sigma_relative_pose_linear: 0.5
+    sigma_relative_pose_angular: 0.01
+    sigma_imu_angular_velocity: 0.05
+    imu_propagation: true
+    imu_propagation_max_time: 2.0
+)###"));
+    prop_feed(est, 3.5, true);
+
+    // Ground-truth velocity at PROP_T_LAST, in the vehicle frame:
+    const auto v_gt =
+        prop_gt_pose(PROP_T_LAST).inverseRotateVector({PROP_V0, PROP_ACC_Y * PROP_T_LAST, 0});
+
+    const auto at = est.estimated_navstate(mrpt::Clock::fromDouble(PROP_T_LAST), "map");
+    ASSERT_(at.has_value());
+    const mrpt::math::TVector3D v_at(at->twist.vx, at->twist.vy, at->twist.vz);
+
+    const auto after = est.estimated_navstate(mrpt::Clock::fromDouble(PROP_T_LAST + 0.005), "map");
+    ASSERT_(after.has_value());
+    const mrpt::math::TVector3D v_after(after->twist.vx, after->twist.vy, after->twist.vz);
+
+    if (VERBOSE)
+    {
+        std::cout << "\n  v_gt=" << v_gt << " v_at=" << v_at << " v_after=" << v_after << "\n";
+    }
+    ASSERT_LT_((v_at - v_gt).norm(), 0.1);
+    ASSERT_LT_((v_at - v_after).norm(), 0.05);
+
+    // One clock tick before the stamp (time conversions may land there): must
+    // not hang, and gives the same velocity.
+    const auto before = est.estimated_navstate(
+        mrpt::Clock::fromDouble(PROP_T_LAST) - mrpt::Clock::duration(1), "map");
+    ASSERT_(before.has_value());
+    const mrpt::math::TVector3D v_before(before->twist.vx, before->twist.vy, before->twist.vz);
+    ASSERT_LT_((v_before - v_at).norm(), 1e-9);
+
+    // Off the IMU grid, before the next reading (5 ms period): the inertial
+    // velocity too, not the constant-twist one.
+    const double tOff = PROP_T_LAST + 0.004;
+    const auto   off  = est.estimated_navstate(mrpt::Clock::fromDouble(tOff), "map");
+    ASSERT_(off.has_value());
+    const mrpt::math::TVector3D v_off(off->twist.vx, off->twist.vy, off->twist.vz);
+    const auto v_gt_off = prop_gt_pose(tOff).inverseRotateVector({PROP_V0, PROP_ACC_Y * tOff, 0});
+    if (VERBOSE)
+    {
+        std::cout << "  v_off=" << v_off << " v_gt_off=" << v_gt_off << "\n";
+    }
+    ASSERT_LT_((v_off - v_gt_off).norm(), 0.1);
+
+    std::cout << "OK\n";
+}
+
 // An accelerometer bias must be estimated from the poses, not integrated into
 // the velocity: after 10 s of poses, a 1 s prediction stays within centimeters.
 void test_imu_propagation_accel_bias()
@@ -2094,6 +2158,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_initial_twist_invalid_sigma_rejected();
         test_prediction_covariance();
         test_imu_propagation();
+        test_imu_propagation_twist_at_last_pose();
         test_imu_propagation_accel_bias();
         test_imu_propagation_after_3d_odometry();
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_FUSE_POSE_DEFERRED)

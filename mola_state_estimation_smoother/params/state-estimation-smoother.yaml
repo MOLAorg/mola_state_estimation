@@ -185,6 +185,7 @@ params:
   # graph; extrapolating it un-damped injects jitter into a front end's motion
   # prior. On by default (deterministic dt-aware EMA). Keep the time constant
   # short: a lagging prior at the end of a turn pulls the registration off.
+  # Not applied to a query at the newest keyframe's own stamp.
   predict_twist_filter_enabled: ${MOLA_NAVSTATE_PREDICT_TWIST_FILTER|true}
   predict_twist_filter_time_const: ${MOLA_NAVSTATE_PREDICT_TWIST_TAU|0.1}
 
