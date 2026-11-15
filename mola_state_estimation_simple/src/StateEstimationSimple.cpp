@@ -72,6 +72,9 @@ constexpr double kAccelNormMinForSiUnits    = 3.0;
 // Readings below this norm (e.g. zeros while a driver starts) carry no
 // information on the units:
 constexpr double kAccelNormMinValid = 0.3;
+// The units are decided only once the history extends this far past the
+// detection span, so that readings delivered up to this late still count:
+constexpr double kAccelUnitsLateMargin = 0.5;
 }  // namespace
 
 StateEstimationSimple::StateEstimationSimple() = default;
@@ -662,7 +665,8 @@ void StateEstimationSimple::decide_accel_units()
 {
     // Mean norm of the valid readings (finite, not near zero, e.g. zeros while a
     // driver starts) over the span from the first of them, once the history
-    // covers it: about 1 means units of g, near 9.8 m/s².
+    // covers it and a margin for late readings: about 1 means units of g, near
+    // 9.8 m/s².
     std::optional<mrpt::Clock::time_point> first;
     double                                 normSum = 0;
     std::size_t                            count   = 0;
@@ -680,7 +684,8 @@ void StateEstimationSimple::decide_accel_units()
         }
         if (mrpt::system::timeDifference(*first, stamp) > kAccelUnitsDetectionPeriod)
         {
-            covered = true;
+            covered = mrpt::system::timeDifference(*first, state_.imu_history.rbegin()->first) >
+                      kAccelUnitsDetectionPeriod + kAccelUnitsLateMargin;
             break;
         }
         normSum += norm;

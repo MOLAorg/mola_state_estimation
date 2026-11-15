@@ -1642,13 +1642,15 @@ mrpt::poses::CPose3D prop_gt_pose(double t)
 
 // Feeds poses at 10 Hz up to PROP_T_LAST and IMU readings at 200 Hz up to
 // imuEnd; accelerometer readings only if withAcc, divided by accelUnit (e.g.
-// 9.81 for a driver that reports them in units of g).
+// 9.81 for a driver that reports them in units of g). With swapPairs, each
+// pair of consecutive IMU readings is delivered newest first.
 void prop_feed(
     mola::state_estimation_simple::StateEstimationSimple& est, double imuEnd, bool withAcc,
-    double accelUnit = 1.0)
+    double accelUnit = 1.0, bool swapPairs = false)
 {
-    for (int i = 0; 0.005 * i <= imuEnd + 1e-9; i++)
+    for (int k = 0; 0.005 * k <= imuEnd + 1e-9; k++)
     {
+        const int    i = swapPairs ? (k % 2 == 0 ? k + 1 : k - 1) : k;
         const double t = 0.005 * i;
         // Specific force = R^T (a_world - g), g = (0,0,-9.81):
         const auto f = prop_gt_pose(t).inverseRotateVector({0, PROP_ACC_Y, 9.81});
@@ -1786,6 +1788,17 @@ params:
     ASSERT_LT_(eSi, 0.1);
     ASSERT_LT_(eG, 0.1);
     ASSERT_NEAR_(eG, eSi, 1e-6);
+
+    // The decision depends on the timestamps, not on the delivery order. (Other
+    // parts of the estimator are not exactly order-independent around a pose,
+    // so the bound is that of a correct decision: readings in units of g taken
+    // as m/s² give about 0.09 m here.)
+    mola::state_estimation_simple::StateEstimationSimple swapped;
+    swapped.initialize(mrpt::containers::yaml::FromText(cfg));
+    prop_feed(swapped, 3.5, true, 9.81, true);
+    const double eSwapped = prop_error(swapped, PROP_T_LAST + 0.5);
+    ASSERT_GE_(eSwapped, 0.0);
+    ASSERT_LT_(eSwapped, 0.01);
 
     // A reset() keeps the decision and the (already scaled) IMU history: the
     // same input fused again after it matches that in m/s².
