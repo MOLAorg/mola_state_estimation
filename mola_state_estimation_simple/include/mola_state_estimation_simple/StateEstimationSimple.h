@@ -262,17 +262,10 @@ class StateEstimationSimple : public mola::NavStateFilter
         };
         std::multimap<mrpt::Clock::time_point, ImuSample> imu_history;
 
-        // Multiplier taking the accelerometer readings to m/s², decided once
-        // from the mean norm of their first readings, since some drivers
-        // publish them in units of g. Kept across reset(), like the history.
-        struct AccelUnits
-        {
-            double                  scale    = 0;  // 0: not decided yet
-            double                  norm_sum = 0;
-            std::size_t             count    = 0;
-            mrpt::Clock::time_point first_stamp;
-        };
-        AccelUnits accel_units;
+        // Multiplier taking the accelerometer readings to m/s² (0: not decided
+        // yet), since some drivers publish them in units of g. Kept across
+        // reset(), like the history.
+        double accel_scale = 0;
 
         // Whether any IMU reading was received (kept across reset(), like the
         // IMU history), and whether imu_propagation already reported the lack
@@ -349,6 +342,10 @@ class StateEstimationSimple : public mola::NavStateFilter
      *  in timestamp order, and drops them from the buffer.
      *  Must be called with state_mtx_ already held. */
     void fuse_pending_imu_up_to(const mrpt::Clock::time_point& upTo);
+
+    /** Decides state_.accel_scale from the IMU history, once it covers the
+     *  detection span, and scales the history with it. Requires state_mtx_. */
+    void decide_accel_units();
 
     /** Strapdown integration of the IMU readings in imu_history over (t0, t1],
      *  from orientation R0 and velocity v0 (both in the reference frame).

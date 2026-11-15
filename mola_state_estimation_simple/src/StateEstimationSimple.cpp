@@ -113,11 +113,11 @@ void StateEstimationSimple::reset()
     // own timestamp covers. Discarding them here would instead make the
     // estimate depend on how many readings happened to be delivered before the
     // reset ran, i.e. on thread scheduling rather than on the input.
-    auto       pendingImu  = std::move(state_.pending_imu);
-    auto       pendingOdom = std::move(state_.pending_odometry);
-    auto       imuHistory  = std::move(state_.imu_history);
-    const bool imuReceived = state_.imu_received;
-    const auto accelUnits  = state_.accel_units;
+    auto         pendingImu  = std::move(state_.pending_imu);
+    auto         pendingOdom = std::move(state_.pending_odometry);
+    auto         imuHistory  = std::move(state_.imu_history);
+    const bool   imuReceived = state_.imu_received;
+    const double accelScale  = state_.accel_scale;
 
     // reset:
     state_ = State();
@@ -126,7 +126,7 @@ void StateEstimationSimple::reset()
     state_.pending_odometry = std::move(pendingOdom);
     state_.imu_history      = std::move(imuHistory);
     state_.imu_received     = imuReceived;
-    state_.accel_units      = accelUnits;
+    state_.accel_scale      = accelScale;
 
     seedInitialTwistFromParams();
 
@@ -593,45 +593,24 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
              imu.get(mrpt::obs::TIMUDataIndex::IMU_Z_ACC)});
 
         // Some drivers publish the acceleration in units of g. Unless given,
-        // decide the units once, from the mean norm of the valid readings over
-        // their first span; propagation is not used until then.
-        auto& units = state_.accel_units;
-        if (units.scale == 0 && params.imu_accel_scale > 0)
+        // the units are decided once, from the readings in the history (in
+        // timestamp order, so not depending on the delivery order); propagation
+        // is not used until then.
+        double& scale = state_.accel_scale;
+        if (scale == 0 && params.imu_accel_scale > 0)
         {
-            units.scale = params.imu_accel_scale;
+            scale = params.imu_accel_scale;
         }
-        const double norm  = f.norm();
-        const bool   valid = std::isfinite(norm) && norm > kAccelNormMinValid;
-        if (units.scale == 0 && valid && (units.count == 0 || imu.timestamp >= units.first_stamp))
+        if (scale > 0)
         {
-            if (units.count == 0)
-            {
-                units.first_stamp = imu.timestamp;
-            }
-            units.norm_sum += norm;
-            units.count++;
-            if (mrpt::system::timeDifference(units.first_stamp, imu.timestamp) >=
-                kAccelUnitsDetectionPeriod)
-            {
-                const double meanNorm = units.norm_sum / static_cast<double>(units.count);
-                const bool   inG      = meanNorm < kAccelNormMinForSiUnits;
-                units.scale           = inG ? params.gravity_magnitude : 1.0;
-                MRPT_LOG_INFO_FMT(
-                    "imu_propagation: accelerometer readings taken in %s (mean norm %.3f over "
-                    "%zu readings).",
-                    inG ? "units of g" : "m/s^2", meanNorm, units.count);
-                for (auto& [stamp, sample] : state_.imu_history)
-                {
-                    sample.f = sample.f * units.scale;
-                }
-            }
-        }
-        if (units.scale > 0)
-        {
-            f = f * units.scale;
+            f = f * scale;
         }
         state_.imu_history.emplace(
             imu.timestamp, State::ImuSample{{imuReading.wx, imuReading.wy, imuReading.wz}, f});
+        if (scale == 0)
+        {
+            decide_accel_units();
+        }
 
         const auto oldest =
             state_.imu_history.rbegin()->first -
@@ -679,6 +658,51 @@ void StateEstimationSimple::fuse_pending_imu_up_to(const mrpt::Clock::time_point
     state_.pending_imu.erase(state_.pending_imu.begin(), itEnd);
 }
 
+void StateEstimationSimple::decide_accel_units()
+{
+    // Mean norm of the valid readings (finite, not near zero, e.g. zeros while a
+    // driver starts) over the span from the first of them, once the history
+    // covers it: about 1 means units of g, near 9.8 m/s².
+    std::optional<mrpt::Clock::time_point> first;
+    double                                 normSum = 0;
+    std::size_t                            count   = 0;
+    bool                                   covered = false;
+    for (const auto& [stamp, sample] : state_.imu_history)
+    {
+        const double norm = sample.f.norm();
+        if (!std::isfinite(norm) || norm <= kAccelNormMinValid)
+        {
+            continue;
+        }
+        if (!first)
+        {
+            first = stamp;
+        }
+        if (mrpt::system::timeDifference(*first, stamp) > kAccelUnitsDetectionPeriod)
+        {
+            covered = true;
+            break;
+        }
+        normSum += norm;
+        count++;
+    }
+    if (!covered || count == 0)
+    {
+        return;
+    }
+
+    const double meanNorm = normSum / static_cast<double>(count);
+    const bool   inG      = meanNorm < kAccelNormMinForSiUnits;
+    state_.accel_scale    = inG ? params.gravity_magnitude : 1.0;
+    MRPT_LOG_INFO_FMT(
+        "imu_propagation: accelerometer readings taken in %s (mean norm %.3f over %zu readings).",
+        inG ? "units of g" : "m/s^2", meanNorm, count);
+    for (auto& [stamp, sample] : state_.imu_history)
+    {
+        sample.f = sample.f * state_.accel_scale;
+    }
+}
+
 std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_integrate(
     const mrpt::math::CMatrixDouble33& R0, const mrpt::math::TVector3D& v0,
     const mrpt::Clock::time_point& t0, const mrpt::Clock::time_point& t1) const
@@ -713,7 +737,7 @@ std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_int
     }
 
     // Until the accelerometer units are decided:
-    if (state_.accel_units.scale == 0)
+    if (state_.accel_scale == 0)
     {
         return {};
     }

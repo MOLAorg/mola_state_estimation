@@ -1793,7 +1793,12 @@ params:
     prop_feed(si, 3.5, true);
     inG.reset();
     prop_feed(inG, 3.5, true, 9.81);
-    ASSERT_NEAR_(prop_error(inG, PROP_T_LAST + 0.5), prop_error(si, PROP_T_LAST + 0.5), 1e-6);
+    const double eSiReset = prop_error(si, PROP_T_LAST + 0.5);
+    const double eGReset  = prop_error(inG, PROP_T_LAST + 0.5);
+    ASSERT_GE_(eSiReset, 0.0);
+    ASSERT_LT_(eSiReset, 0.1);
+    ASSERT_GE_(eGReset, 0.0);
+    ASSERT_NEAR_(eGReset, eSiReset, 1e-6);
 
     // Readings without information (zeros while a driver starts) do not count
     // in the decision: m/s² readings after them are taken as such, as without
