@@ -107,7 +107,11 @@ class Parameters
      *  Requires an IMU with accelerometer, and a reference frame whose +Z
      *  points up (gravity along -Z), e.g. one initialized from IMU pitch/roll.
      *  The IMU lever arm is neglected. Without IMU readings covering the
-     *  queried interval, the constant-twist extrapolation is used.
+     *  queried interval, the constant-twist extrapolation is used. The
+     *  accelerometer units are given by imu_accel_scale, or decided
+     *  automatically: units of g if the mean norm of the valid readings
+     *  (finite, not near zero) over their first 0.5 s is below 3, else m/s².
+     *  Propagation is not used until then.
      *  @{ */
     bool   imu_propagation          = false;
     double imu_propagation_max_time = 2.0;  // [s]
@@ -117,6 +121,8 @@ class Parameters
     double imu_propagation_sigma_acc = 0.5;
     /// Random walk of the estimated acceleration bias [m/s²/sqrt(s)].
     double imu_propagation_sigma_bias = 0.1;
+    /// Multiplier taking the accelerometer readings to m/s² (>= 0). 0: automatic.
+    double imu_accel_scale = 0;
     /** @} */
 
     /// regex for IMU sensor labels (ROS topics) to accept as IMU readings.

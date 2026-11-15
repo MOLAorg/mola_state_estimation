@@ -31,6 +31,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <memory>
 
@@ -62,6 +63,15 @@ constexpr auto kSameStampTolerance = std::chrono::microseconds(1);
 /// Extra age [s], beyond Parameters::imu_propagation_max_time, kept in the
 /// IMU history, so a query still finds the readings right after the last pose.
 constexpr double kImuHistoryMargin = 1.0;
+
+/// Span [s] of the first accelerometer readings whose mean norm decides their
+/// units, and the mean norm below which they are taken in units of g (about 1
+/// then, near 9.8 in m/s²).
+constexpr double kAccelUnitsDetectionPeriod = 0.5;
+constexpr double kAccelNormMinForSiUnits    = 3.0;
+// Readings below this norm (e.g. zeros while a driver starts) carry no
+// information on the units:
+constexpr double kAccelNormMinValid = 0.3;
 }  // namespace
 
 StateEstimationSimple::StateEstimationSimple() = default;
@@ -107,6 +117,7 @@ void StateEstimationSimple::reset()
     auto       pendingOdom = std::move(state_.pending_odometry);
     auto       imuHistory  = std::move(state_.imu_history);
     const bool imuReceived = state_.imu_received;
+    const auto accelUnits  = state_.accel_units;
 
     // reset:
     state_ = State();
@@ -115,6 +126,7 @@ void StateEstimationSimple::reset()
     state_.pending_odometry = std::move(pendingOdom);
     state_.imu_history      = std::move(imuHistory);
     state_.imu_received     = imuReceived;
+    state_.accel_units      = accelUnits;
 
     seedInitialTwistFromParams();
 
@@ -575,10 +587,49 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
         imu.has(mrpt::obs::TIMUDataIndex::IMU_Y_ACC) &&
         imu.has(mrpt::obs::TIMUDataIndex::IMU_Z_ACC))
     {
-        const auto f = imu.sensorPose.rotateVector(
+        auto f = imu.sensorPose.rotateVector(
             {imu.get(mrpt::obs::TIMUDataIndex::IMU_X_ACC),
              imu.get(mrpt::obs::TIMUDataIndex::IMU_Y_ACC),
              imu.get(mrpt::obs::TIMUDataIndex::IMU_Z_ACC)});
+
+        // Some drivers publish the acceleration in units of g. Unless given,
+        // decide the units once, from the mean norm of the valid readings over
+        // their first span; propagation is not used until then.
+        auto& units = state_.accel_units;
+        if (units.scale == 0 && params.imu_accel_scale > 0)
+        {
+            units.scale = params.imu_accel_scale;
+        }
+        const double norm  = f.norm();
+        const bool   valid = std::isfinite(norm) && norm > kAccelNormMinValid;
+        if (units.scale == 0 && valid && (units.count == 0 || imu.timestamp >= units.first_stamp))
+        {
+            if (units.count == 0)
+            {
+                units.first_stamp = imu.timestamp;
+            }
+            units.norm_sum += norm;
+            units.count++;
+            if (mrpt::system::timeDifference(units.first_stamp, imu.timestamp) >=
+                kAccelUnitsDetectionPeriod)
+            {
+                const double meanNorm = units.norm_sum / static_cast<double>(units.count);
+                const bool   inG      = meanNorm < kAccelNormMinForSiUnits;
+                units.scale           = inG ? params.gravity_magnitude : 1.0;
+                MRPT_LOG_INFO_FMT(
+                    "imu_propagation: accelerometer readings taken in %s (mean norm %.3f over "
+                    "%zu readings).",
+                    inG ? "units of g" : "m/s^2", meanNorm, units.count);
+                for (auto& [stamp, sample] : state_.imu_history)
+                {
+                    sample.f = sample.f * units.scale;
+                }
+            }
+        }
+        if (units.scale > 0)
+        {
+            f = f * units.scale;
+        }
         state_.imu_history.emplace(
             imu.timestamp, State::ImuSample{{imuReading.wx, imuReading.wy, imuReading.wz}, f});
 
@@ -658,6 +709,12 @@ std::optional<StateEstimationSimple::Integration> StateEstimationSimple::imu_int
                 "imu_propagation is enabled but no IMU reading has been received: using the "
                 "constant-twist model.");
         }
+        return {};
+    }
+
+    // Until the accelerometer units are decided:
+    if (state_.accel_units.scale == 0)
+    {
         return {};
     }
 
