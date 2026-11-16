@@ -114,4 +114,64 @@ bool integrate_imu_readings(
     return std::abs(pim.deltaTij() - t0 - (tj - ti)) < 1e-6;
 }
 
+bool integrate_gyro_readings(
+    const std::deque<ImuReading>& readings, double ti, double tj, double maxReadingGap,
+    const gtsam::Rot3& R_body_sensor, gtsam::PreintegratedAhrsMeasurements& pim)
+{
+    if (readings.empty() || tj <= ti)
+    {
+        return false;
+    }
+
+    // Start at the last reading at or before ti (or the first one, if close
+    // enough, held back to ti), as integrate_imu_readings():
+    auto k = std::upper_bound(
+        readings.begin(), readings.end(), ti,
+        [](double v, const ImuReading& r) { return v < r.t; });
+    if (k == readings.begin())
+    {
+        if (k->t - ti > maxReadingGap)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        --k;
+    }
+
+    const double t0 = pim.deltaTij();
+    double       tc = ti;
+    if (tc < k->t)
+    {
+        const double tEnd = std::min(k->t, tj);
+        pim.integrateMeasurement(R_body_sensor.rotate(k->gyr), tEnd - tc);
+        tc = tEnd;
+    }
+    while (tc < tj)
+    {
+        const auto next = std::next(k);
+        if (next == readings.end())
+        {
+            return false;  // the readings do not reach tj
+        }
+        const double span = next->t - k->t;
+        if (span > maxReadingGap)
+        {
+            return false;
+        }
+        const double tEnd = std::min(next->t, tj);
+        if (tEnd > tc)
+        {
+            // Linearly interpolated at the midpoint of the sub-interval:
+            const double s = std::clamp((0.5 * (tc + tEnd) - k->t) / span, 0.0, 1.0);
+            pim.integrateMeasurement(
+                R_body_sensor.rotate((1 - s) * k->gyr + s * next->gyr), tEnd - tc);
+        }
+        tc = tEnd;
+        k  = next;
+    }
+    return std::abs(pim.deltaTij() - t0 - (tj - ti)) < 1e-6;
+}
+
 }  // namespace mola::factors

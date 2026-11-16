@@ -578,6 +578,21 @@ class Parameters
         bool        enabled         = true;
         std::string sensor_label_re = ".*";  //!< IMUs used (regex of labels)
 
+        /** If true, only the gyroscope is preintegrated: each link gets a
+         * rotation-only factor (gtsam AHRS preintegration, with the gyro bias
+         * of the same bias variables), and the accelerometer is not used for
+         * it, nor are the linear kinematic factors weakened. For vehicles
+         * whose accelerometer is too disturbed (vibration) to integrate, while
+         * their gyroscope still observes rotation far better than LiDAR or
+         * wheel odometry in some scenes (e.g. a degenerate LiDAR scene). */
+        bool gyro_only = false;
+
+        /** With gyro_only, how many IMUs matching sensor_label_re are
+         * preintegrated (1 to 3), each with its own gyro bias variables, in the
+         * order they are first seen. Several gyroscopes keep the rotation
+         * observed when one of them stops (e.g. a LiDAR with a built-in IMU). */
+        int max_imus = 1;
+
         double gyro_noise_density     = 2.4e-4;  //!< [rad/s/sqrt(Hz)]
         double accel_noise_density    = 1.6e-3;  //!< [m/s^2/sqrt(Hz)]
         double gyro_bias_random_walk  = 2e-5;  //!< [rad/s^2/sqrt(Hz)]

@@ -955,6 +955,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      */
     /// IMU preintegration: keeps the raw readings of the IMU in use.
     void buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu);
+    /// IMUs after the first one (imu_preintegration.max_imus > 1)
+    void buffer_extra_gyro_locked(const mrpt::obs::CObservationIMU& imu);
 
     /// IMU preintegration: before T_enu_to_map reaches the solver, sets its
     /// roll and pitch from the accelerometer, so a tilted {map} starts right.
@@ -964,6 +966,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// (link_first_pose_to_reference_origin_sigma), which only holds until a
     /// pose has defined {map}.
     bool link_first_pose_to_origin() const;
+    /// Number of IMU bias variable chains (0 without preintegration)
+    size_t num_imu_bias_chains() const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
 
@@ -980,6 +984,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// IMU preintegration: adds the factor of every link whose interval the
     /// raw readings now cover.
     void attach_imu_factors_locked();
+    void attach_extra_gyro_factors_locked();
 
     void remove_kinematic_factor_between(const frame_index_t from, const frame_index_t to);
 

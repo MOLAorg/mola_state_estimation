@@ -94,7 +94,9 @@ Structure:
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
   With `imu_preintegration.enabled`, also IMU biases `Z(k)`
-  (`imuBias::ConstantBias`), chained by a random walk on every link.
+  (`imuBias::ConstantBias`), chained by a random walk on every link; with
+  `gyro_only` and `max_imus` > 1, one chain per extra IMU (`Y(k)`, `X(k)`,
+  `bias_key()`).
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame` (the first neighbor found; GNSS asks
   for the closest one); consecutive keyframes are linked
@@ -141,6 +143,14 @@ Sensor inputs:
   fixed in `{map}` at the leveled tilt instead. The constant-velocity linear
   factors stay, weaker (`linear_kinematics_sigma_scale`) once an IMU has been seen,
   so without any IMU the estimates are those with preintegration off.
+  `gyro_only` (vibrating vehicles, whose accelerometer is useless to integrate):
+  rotation-only `FactorGyroPreintegration` links instead (gtsam AHRS
+  preintegration; GTSAM 4.2 corrects the bias in the body frame, so readings are
+  rotated to the body frame before integrating), no gravity, no leveling of
+  `T_enu_to_map`, linear kinematic factors at full strength, and `_lin`'s automatic
+  value is 2 cm. `max_imus` (1-3, gyro_only only): more IMUs matching
+  `sensor_label_re`, each with its own bias chain (`ExtraGyro`,
+  `attach_extra_gyro_factors_locked()`), so rotation stays observed if one stops.
   Accelerometer units: `accel_scale` (0 = automatic: units of g if the mean norm of
   the first 0.5 s of readings is below 3, kept across resets like `recentAccel_`);
   links wait in `imuLinksAwaiting` until it is known.
@@ -188,7 +198,7 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 - For `fuse_pose()` sources, the increment covariance is diagonal, from
   `relative_pose_increment_sigma_lin`/`_ang` (defaults tuned for LiDAR odometry:
   `_ang` 1e-5 rad; `_lin` 0 = automatic, resolved by `loadFrom()` to 0.1 mm with
-  preintegration on and available, 2 cm otherwise); the supplied covariance is
+  full preintegration on and available, 2 cm otherwise); the supplied covariance is
   only used by the anchor factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
   a variance growing linearly with the increment size (random walk).
 
@@ -378,6 +388,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |
 | `Pose3RotationYawBiasFactor` | `ExpressionFactorN` | Rotation-only, with a scalar azimuth bias variable |
+| `FactorGyroPreintegration` | `NoiseModelFactorN<Pose3, Pose3, ConstantBias>` | Rotation-only gyro preintegration (wraps `AHRSFactor`; sensor-frame bias) |
 
 `imu_helpers.h`: accelerometer/quaternion sanity checks and the ENU azimuth
 correction shared by the estimators and georeferencing.
@@ -386,6 +397,9 @@ correction shared by the estimators and georeferencing.
 stamps into a `PreintegratedImuMeasurements`: readings linearly interpolated at
 each sub-interval midpoint, and the tangential lever-arm acceleration
 (dw/dt x r), which gtsam's `body_P_sensor` correction leaves out, removed.
+`integrate_gyro_readings()`: the same for the gyroscope only, into a
+`PreintegratedAhrsMeasurements`, readings rotated to the body frame
+(`FactorGyroPreintegration`, `test_gyro_preintegration_factor`).
 
 ## 4. `mola_georeferencing`
 

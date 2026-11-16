@@ -48,6 +48,7 @@ mola_add_library(
     include/mola_gtsam_factors/FactorGnssEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnu.h
     include/mola_gtsam_factors/FactorGnssMapEnuConstVel.h
+    include/mola_gtsam_factors/FactorGyroPreintegration.h
     include/mola_gtsam_factors/FactorTrapezoidalIntegrator.h
     include/mola_gtsam_factors/FactorTricycleKinematic.h
     include/mola_gtsam_factors/gtsam_detect_version.h
