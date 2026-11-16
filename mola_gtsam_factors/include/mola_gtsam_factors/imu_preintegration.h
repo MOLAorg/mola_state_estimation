@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <gtsam/navigation/AHRSFactor.h>
 #include <gtsam/navigation/ImuFactor.h>
 
 #include <deque>
@@ -56,5 +57,13 @@ struct ImuReading
 bool integrate_imu_readings(
     const std::deque<ImuReading>& readings, double ti, double tj, double accScale,
     double maxReadingGap, gtsam::PreintegratedImuMeasurements& pim);
+
+/** As integrate_imu_readings(), for the gyroscope only (rotation preintegration):
+ *  same reading interpolation and failure conditions; the accelerometer is
+ *  ignored. Readings are rotated into the vehicle frame (`R_body_sensor`) before
+ *  integration, so `pim` must have no body_P_sensor (see FactorGyroPreintegration). */
+bool integrate_gyro_readings(
+    const std::deque<ImuReading>& readings, double ti, double tj, double maxReadingGap,
+    const gtsam::Rot3& R_body_sensor, gtsam::PreintegratedAhrsMeasurements& pim);
 
 }  // namespace mola::factors

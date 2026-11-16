@@ -136,6 +136,13 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         auto&                        ip = imu_preintegration;
         ip.enabled                      = c.getOrDefault("enabled", ip.enabled);
         ip.sensor_label_re              = c.getOrDefault("sensor_label_re", ip.sensor_label_re);
+        ip.gyro_only                    = c.getOrDefault("gyro_only", ip.gyro_only);
+        ip.max_imus                     = c.getOrDefault("max_imus", ip.max_imus);
+        ASSERT_GE_(ip.max_imus, 1);
+        ASSERT_LE_(ip.max_imus, 3);
+        ASSERTMSG_(
+            ip.max_imus == 1 || ip.gyro_only,
+            "imu_preintegration.max_imus > 1 requires imu_preintegration.gyro_only");
         ip.gyro_noise_density  = c.getOrDefault("gyro_noise_density", ip.gyro_noise_density);
         ip.accel_noise_density = c.getOrDefault("accel_noise_density", ip.accel_noise_density);
         ip.gyro_bias_random_walk =
@@ -263,8 +270,9 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         "each increment of an odometry source fused with fuse_pose()");
     if (relative_pose_increment_sigma_lin == 0)
     {
-        // The tight value pays off only together with IMU preintegration:
-        relative_pose_increment_sigma_lin = imu_preintegration.enabled ? 1e-4 : 0.02;
+        // The tight value pays off only together with full IMU preintegration:
+        relative_pose_increment_sigma_lin =
+            imu_preintegration.enabled && !imu_preintegration.gyro_only ? 1e-4 : 0.02;
     }
     ASSERTMSG_(
         relative_pose_increment_sigma_per_sqrt_meter >= 0 &&

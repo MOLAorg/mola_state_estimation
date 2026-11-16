@@ -357,6 +357,11 @@ params:
   imu_preintegration:
     enabled: ${MOLA_SMOOTHER_IMU_PREINTEGRATION|true}
     sensor_label_re: "${MOLA_SMOOTHER_IMU_PREINT_LABELS|.*}"
+    # Preintegrate the gyroscope only (rotation factors), for accelerometers too
+    # disturbed to integrate, e.g. on a vibrating vehicle:
+    gyro_only: ${MOLA_SMOOTHER_IMU_PREINTEGRATION_GYRO_ONLY|false}
+    # With gyro_only: up to this many IMUs (1-3), each with its own gyro bias:
+    max_imus: ${MOLA_SMOOTHER_IMU_PREINTEGRATION_MAX_IMUS|1}
     gyro_noise_density: ${MOLA_IMU_GYRO_NOISE_DENSITY|2.4e-4}  # [rad/s/sqrt(Hz)]
     accel_noise_density: ${MOLA_IMU_ACC_NOISE_DENSITY|1.6e-3}  # [m/s^2/sqrt(Hz)]
     gyro_bias_random_walk: ${MOLA_IMU_GYRO_BIAS_RW|2e-5}  # [rad/s^2/sqrt(Hz)]

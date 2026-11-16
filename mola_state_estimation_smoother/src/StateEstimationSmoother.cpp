@@ -57,6 +57,7 @@
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorGnssMapEnuConstVel.h>
+#include <mola_gtsam_factors/FactorGyroPreintegration.h>
 #include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
@@ -400,7 +401,25 @@ using gtsam::symbol_shorthand::B;  // IMU attitude yaw bias [rad]   (double)
 using gtsam::symbol_shorthand::T;  // Poses                          (Pose3)
 using gtsam::symbol_shorthand::V;  // Lin velocity (body frame)      (Point3)
 using gtsam::symbol_shorthand::W;  // Ang velocity (body frame)      (Point3)
+using gtsam::symbol_shorthand::X;  // Biases of a 3rd IMU, with imu_preintegration.max_imus > 2
+using gtsam::symbol_shorthand::Y;  // Biases of a 2nd IMU, with imu_preintegration.max_imus > 1
 using gtsam::symbol_shorthand::Z;  // IMU biases (imuBias::ConstantBias), with imu_preintegration
+
+/// Bias variable of IMU `imuIdx` (0: the first one, Z) at keyframe `id`
+gtsam::Key bias_key(size_t imuIdx, uint64_t id)
+{
+    switch (imuIdx)
+    {
+        case 0:
+            return Z(id);
+        case 1:
+            return Y(id);
+        case 2:
+            return X(id);
+        default:
+            THROW_EXCEPTION("Invalid IMU index");
+    }
+}
 //  TODO: IMU bias
 
 constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
@@ -570,10 +589,12 @@ struct StateEstimationSmoother::GtsamImpl
     std::string                                   rawImuLabel;  //!< the IMU in use
     std::optional<std::regex>                     rawImuLabelRe;
     gtsam_shared_ptr<gtsam::PreintegrationParams> pimParams;
-    gtsam::Rot3                                   rawImuRotation;  //!< sensor -> vehicle
-    std::set<frame_pair_t>                        imuLinksAwaiting;
-    gtsam::imuBias::ConstantBias                  lastBias;
-    double                                        lastBiasStamp = 0;
+    /// Gyroscope-only preintegration (imu_preintegration.gyro_only)
+    gtsam_shared_ptr<gtsam::PreintegratedRotationParams> ahrsParams;
+    gtsam::Rot3                                          rawImuRotation;  //!< sensor -> vehicle
+    std::set<frame_pair_t>                               imuLinksAwaiting;
+    gtsam::imuBias::ConstantBias                         lastBias;
+    double                                               lastBiasStamp = 0;
     /// An instant [s] and the vehicle attitude in {map} known for it, used to
     /// level T_enu_to_map from the accelerometer before its first solve.
     std::optional<std::pair<double, gtsam::Rot3>> enuLevelRef;
@@ -581,6 +602,19 @@ struct StateEstimationSmoother::GtsamImpl
     gtsam::Rot3                                   enuLeveledRotation;  //!< of T_enu_to_map
     /// pimParams with gravity held fixed in {map}, at the leveled tilt
     gtsam_shared_ptr<gtsam::PreintegrationParams> pimParamsMapGravity;
+
+    /// IMUs after the first one (imu_preintegration.max_imus, gyro only), with
+    /// bias variables bias_key(1 + index, ...)
+    struct ExtraGyro
+    {
+        std::string                  label;  //!< empty until the IMU is first seen
+        std::deque<RawImu>           raw;  //!< oldest first
+        gtsam::Rot3                  R_bs;  //!< sensor -> vehicle
+        gtsam::imuBias::ConstantBias lastBias;
+        double                       lastBiasStamp = 0;
+        std::set<frame_pair_t>       linksAwaiting;
+    };
+    std::vector<ExtraGyro> extraGyros;
 
     /// Records the iSAM2 index of anchors passed in the last update()
     void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
@@ -766,6 +800,8 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
         thresholds[chr(V(0))]            = gtsam::Vector3::Constant(coarseThr);
         thresholds[chr(W(0))]            = gtsam::Vector3::Constant(coarseThr);
         thresholds[chr(Z(0))]            = gtsam::Vector6::Constant(coarseThr);
+        thresholds[chr(Y(0))]            = gtsam::Vector6::Constant(coarseThr);
+        thresholds[chr(X(0))]            = gtsam::Vector6::Constant(coarseThr);
         thresholds[chr(B(0))]            = gtsam::Vector1::Constant(coarseThr);
         isam2Params.relinearizeThreshold = thresholds;
     }
@@ -3083,7 +3119,8 @@ void StateEstimationSmoother::addFactor(const AbsFactorConstVelKinematics& f)
     // IMU data stay determined. Without any IMU reading yet, it keeps its
     // full strength.
     double linScale = 1.0;
-    if (params_.imu_preintegration.enabled && state_.gtsam->pimParams)
+    if (params_.imu_preintegration.enabled && !params_.imu_preintegration.gyro_only &&
+        state_.gtsam->pimParams)
     {
         linScale = params_.imu_preintegration.linear_kinematics_sigma_scale;
     }
@@ -3725,8 +3762,8 @@ void StateEstimationSmoother::solve_locked()
 
     // With no keyframe yet there is nothing to estimate, and a solve would only
     // commit T_enu_to_map before level_enu_to_map_locked() can set it:
-    if (params_.imu_preintegration.enabled && !state_.gtsam->enuLevelDone &&
-        state_.stamp2frame_index.empty())
+    if (params_.imu_preintegration.enabled && !params_.imu_preintegration.gyro_only &&
+        !state_.gtsam->enuLevelDone && state_.stamp2frame_index.empty())
     {
         return;
     }
@@ -3804,8 +3841,13 @@ void StateEstimationSmoother::solve_locked()
 
     if (params_.imu_preintegration.enabled)
     {
-        level_enu_to_map_locked();
+        // Rotation-only factors do not depend on gravity, nor on a level {map}:
+        if (!params_.imu_preintegration.gyro_only)
+        {
+            level_enu_to_map_locked();
+        }
         attach_imu_factors_locked();
+        attach_extra_gyro_factors_locked();
     }
 
     // Flush the per-link kinematic factors into newFactors, remembering the range
@@ -3942,6 +3984,16 @@ void StateEstimationSmoother::solve_locked()
             {
                 g.lastBias      = optValues.at<gtsam::imuBias::ConstantBias>(Z(kfIdx));
                 g.lastBiasStamp = ts;
+            }
+            for (size_t k = 0; k < g.extraGyros.size(); k++)
+            {
+                auto&      e   = g.extraGyros[k];
+                const auto key = bias_key(1 + k, kfIdx);
+                if (ts >= e.lastBiasStamp && optValues.exists(key))
+                {
+                    e.lastBias      = optValues.at<gtsam::imuBias::ConstantBias>(key);
+                    e.lastBiasStamp = ts;
+                }
             }
         }
     }
@@ -4451,6 +4503,24 @@ void StateEstimationSmoother::initialize_new_frame(
             state_.gtsam->newFactors.addPrior(
                 Z(id), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
         }
+        // The same for the other IMUs (gyro_only, max_imus > 1):
+        auto& extra = state_.gtsam->extraGyros;
+        extra.resize(num_imu_bias_chains() - 1);
+        for (size_t k = 0; k < extra.size(); k++)
+        {
+            const auto key = bias_key(1 + k, id);
+            state_.gtsam->newValues.insert(key, extra[k].lastBias);
+            state_.gtsam->newKeyStamps[key] = stamp_s;
+            if (!closest_idx_opt.has_value())
+            {
+                const auto&    ip = params_.imu_preintegration;
+                gtsam::Vector6 sig;
+                sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
+                    gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
+                state_.gtsam->newFactors.addPrior(
+                    key, gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
+            }
+        }
     }
 
     // Add planar constraints:
@@ -4532,10 +4602,17 @@ void StateEstimationSmoother::add_kinematic_factor_between(
         sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
             gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
         auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(from, to)];
-        sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
-            Z(from), Z(to), gtsam::imuBias::ConstantBias(),
-            gtsam::noiseModel::Diagonal::Sigmas(sig));
+        for (size_t k = 0; k < num_imu_bias_chains(); k++)
+        {
+            sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
+                bias_key(k, from), bias_key(k, to), gtsam::imuBias::ConstantBias(),
+                gtsam::noiseModel::Diagonal::Sigmas(sig));
+        }
         state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
+        for (auto& e : state_.gtsam->extraGyros)
+        {
+            e.linksAwaiting.insert(GtsamImpl::link_key(from, to));
+        }
     }
 }
 
@@ -4839,6 +4916,16 @@ void StateEstimationSmoother::check_kept_geo_reference_locked()
     MRPT_LOG_INFO("reset_motion(): {map} is the same frame, so the geo-reference is kept");
 }
 
+size_t StateEstimationSmoother::num_imu_bias_chains() const
+{
+    const auto& ip = params_.imu_preintegration;
+    if (!ip.enabled)
+    {
+        return 0;
+    }
+    return ip.gyro_only ? static_cast<size_t>(ip.max_imus) : 1;
+}
+
 bool StateEstimationSmoother::link_first_pose_to_origin() const
 {
     return params_.link_first_pose_to_reference_origin_sigma.has_value() && !mapDefinedBeforeReset_;
@@ -4871,7 +4958,13 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
         p->setAccelerometerCovariance(mrpt::square(ip.accel_noise_density) * gtsam::I_3x3);
         p->setIntegrationCovariance(mrpt::square(ip.integration_sigma) * gtsam::I_3x3);
         p->setBodyPSensor(mrpt::gtsam_wrappers::toPose3(imu.sensorPose));
-        g.pimParams      = p;
+        g.pimParams = p;
+        gtsam_shared_ptr<gtsam::PreintegratedRotationParams> pa(
+            new gtsam::PreintegratedRotationParams());
+        // No body_P_sensor: readings are rotated into the vehicle frame (see
+        // mola::factors::FactorGyroPreintegration).
+        pa->setGyroscopeCovariance(mrpt::square(ip.gyro_noise_density) * gtsam::I_3x3);
+        g.ahrsParams     = pa;
         g.rawImuRotation = mrpt::gtsam_wrappers::toPose3(imu.sensorPose).rotation();
         // Units found before a reset hold for the same sensor only:
         if (accScaleLabel_ != imu.sensorLabel)
@@ -4882,11 +4975,13 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
             accNormCount_  = 0;
         }
         MRPT_LOG_INFO_STREAM(
-            "[imu_preintegration] Preintegrating IMU '"
-            << imu.sensorLabel << "', pose on vehicle: " << imu.sensorPose);
+            "[imu_preintegration] Preintegrating IMU '" << imu.sensorLabel << "'"
+                                                        << (ip.gyro_only ? " (gyroscope only)" : "")
+                                                        << ", pose on vehicle: " << imu.sensorPose);
     }
     if (imu.sensorLabel != g.rawImuLabel)
     {
+        buffer_extra_gyro_locked(imu);
         return;
     }
     const double t = key_stamp_seconds(imu.timestamp);
@@ -4941,15 +5036,128 @@ void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservatio
     }
 }
 
-void StateEstimationSmoother::attach_imu_factors_locked()
+void StateEstimationSmoother::buffer_extra_gyro_locked(const mrpt::obs::CObservationIMU& imu)
 {
-    auto& g = *state_.gtsam;
-    // Links wait (in imuLinksAwaiting) until the accelerometer units are known:
-    if (!g.pimParams || g.rawImu.empty() || accScale_ == 0)
+    using namespace mrpt::obs;
+    const size_t nExtra = num_imu_bias_chains() > 0 ? num_imu_bias_chains() - 1 : 0;
+    if (nExtra == 0)
     {
         return;
     }
-    const auto&  ip        = params_.imu_preintegration;
+    auto& g = *state_.gtsam;
+    g.extraGyros.resize(nExtra);
+    GtsamImpl::ExtraGyro* s = nullptr;
+    for (auto& e : g.extraGyros)
+    {
+        if (e.label == imu.sensorLabel)
+        {
+            s = &e;
+            break;
+        }
+    }
+    if (!s)
+    {
+        for (auto& e : g.extraGyros)
+        {
+            if (e.label.empty())
+            {
+                e.label = imu.sensorLabel;
+                e.R_bs  = mrpt::gtsam_wrappers::toPose3(imu.sensorPose).rotation();
+                s       = &e;
+                MRPT_LOG_INFO_STREAM(
+                    "[imu_preintegration] Preintegrating IMU '"
+                    << imu.sensorLabel << "' (gyroscope only, bias "
+                    << gtsam::Symbol(bias_key(1 + (s - g.extraGyros.data()), 0)).chr()
+                    << "), pose on vehicle: " << imu.sensorPose);
+                break;
+            }
+        }
+    }
+    if (!s)
+    {
+        return;  // more IMUs than max_imus
+    }
+    const double t = key_stamp_seconds(imu.timestamp);
+    if (!s->raw.empty() && t <= s->raw.back().t)
+    {
+        return;  // repeated or out of order
+    }
+    GtsamImpl::RawImu r;
+    r.t   = t;
+    r.acc = {imu.get(IMU_X_ACC), imu.get(IMU_Y_ACC), imu.get(IMU_Z_ACC)};
+    r.gyr = {imu.get(IMU_WX), imu.get(IMU_WY), imu.get(IMU_WZ)};
+    s->raw.push_back(r);
+    const double keepSince = t - params_.sliding_window_length - 2.0;
+    while (!s->raw.empty() && s->raw.front().t < keepSince)
+    {
+        s->raw.pop_front();
+    }
+}
+
+void StateEstimationSmoother::attach_extra_gyro_factors_locked()
+{
+    auto&       g  = *state_.gtsam;
+    const auto& ip = params_.imu_preintegration;
+    for (size_t k = 0; k < g.extraGyros.size(); k++)
+    {
+        auto& s = g.extraGyros[k];
+        if (s.label.empty() || s.raw.empty() || !g.ahrsParams)
+        {
+            // IMU not seen yet: links stay constrained by the bias random walk only.
+            s.linksAwaiting.clear();
+            continue;
+        }
+        const double newest = s.raw.back().t;
+        for (auto it = s.linksAwaiting.begin(); it != s.linksAwaiting.end();)
+        {
+            const auto [a, b] = *it;
+            const auto ia     = state_.last_estimated_states.find(a);
+            const auto ib     = state_.last_estimated_states.find(b);
+            if (ia == state_.last_estimated_states.end() ||
+                ib == state_.last_estimated_states.end() ||
+                ia->second.kinematic_links_to.count(b) == 0)
+            {
+                it = s.linksAwaiting.erase(it);
+                continue;
+            }
+            frame_index_t i  = a;
+            frame_index_t j  = b;
+            double        ti = key_stamp_seconds(state_.stamp2frame_index.inverse(a));
+            double        tj = key_stamp_seconds(state_.stamp2frame_index.inverse(b));
+            if (tj < ti)
+            {
+                std::swap(i, j);
+                std::swap(ti, tj);
+            }
+            if (newest < tj)
+            {
+                ++it;
+                continue;
+            }
+            gtsam::PreintegratedAhrsMeasurements pim(
+                g.ahrsParams, s.R_bs.rotate(s.lastBias.gyroscope()));
+            const bool ok = mola::factors::integrate_gyro_readings(
+                s.raw, ti, tj, ip.max_reading_gap, s.R_bs, pim);
+            if (ok && tj - ti >= ip.min_link_duration)
+            {
+                g.pendingKinematic[*it].emplace_shared<mola::factors::FactorGyroPreintegration>(
+                    T(i), T(j), bias_key(1 + k, i), pim, s.R_bs,
+                    mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3);
+            }
+            it = s.linksAwaiting.erase(it);
+        }
+    }
+}
+
+void StateEstimationSmoother::attach_imu_factors_locked()
+{
+    auto&       g  = *state_.gtsam;
+    const auto& ip = params_.imu_preintegration;
+    // Links wait (in imuLinksAwaiting) until the accelerometer units are known:
+    if (!g.pimParams || g.rawImu.empty() || (accScale_ == 0 && !ip.gyro_only))
+    {
+        return;
+    }
     const double newestImu = g.rawImu.back().t;
 
     for (auto it = g.imuLinksAwaiting.begin(); it != g.imuLinksAwaiting.end();)
@@ -4975,6 +5183,22 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         if (newestImu < tj)
         {
             ++it;  // its readings have not all arrived yet
+            continue;
+        }
+
+        if (ip.gyro_only)
+        {
+            gtsam::PreintegratedAhrsMeasurements pim(
+                g.ahrsParams, g.rawImuRotation.rotate(g.lastBias.gyroscope()));
+            const bool ok = mola::factors::integrate_gyro_readings(
+                g.rawImu, ti, tj, ip.max_reading_gap, g.rawImuRotation, pim);
+            if (ok && tj - ti >= ip.min_link_duration)
+            {
+                g.pendingKinematic[*it].emplace_shared<mola::factors::FactorGyroPreintegration>(
+                    T(i), T(j), Z(i), pim, g.rawImuRotation,
+                    mrpt::square(ip.min_sigma_rotation) * gtsam::I_3x3);
+            }
+            it = g.imuLinksAwaiting.erase(it);
             continue;
         }
 
@@ -5036,6 +5260,10 @@ void StateEstimationSmoother::remove_kinematic_factor_between(
     const auto key = GtsamImpl::link_key(from, to);
 
     state_.gtsam->imuLinksAwaiting.erase(key);
+    for (auto& e : state_.gtsam->extraGyros)
+    {
+        e.linksAwaiting.erase(key);
+    }
 
     // Still pending: it never reached the solver, so dropping it costs nothing.
     // A link can be partly pending and partly flushed (an IMU factor attached
