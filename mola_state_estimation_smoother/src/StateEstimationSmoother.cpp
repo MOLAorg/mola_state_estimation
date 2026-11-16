@@ -1609,7 +1609,10 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
     mola::gtsam_compat::to_gtsam_se3_cov6(increment, incr_out, incrCov_out);
 
     state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-        T(*prev), T(this_kf_id), incr_out, gtsam::noiseModel::Gaussian::Covariance(incrCov_out));
+        T(*prev), T(this_kf_id), incr_out,
+        with_huber(
+            gtsam::noiseModel::Gaussian::Covariance(incrCov_out),
+            params_.odometry_robust_huber_threshold));
     state_.pose_keyframes.insert(*prev);
     state_.pose_keyframes.insert(this_kf_id);
 }
@@ -4154,10 +4157,18 @@ void StateEstimationSmoother::solve_locked()
             const double em_max_ori_sigma_deg = mrpt::RAD2DEG(em_max_ori_sigma_rad);
 
             // Check against thresholds
-            const bool converged = (std::max(max_pos_sigma, em_max_pos_sigma) <=
-                                    params_.convergence_max_position_sigma) &&
-                                   (std::max(max_ori_sigma_deg, em_max_ori_sigma_deg) <=
-                                    params_.convergence_max_orientation_sigma_deg);
+            double convPos = std::max(max_pos_sigma, em_max_pos_sigma);
+            double convOri = std::max(max_ori_sigma_deg, em_max_ori_sigma_deg);
+            if (params_.georef_convergence_in_enu)
+            {
+                if (const auto s = vehicle_enu_sigmas_locked(optValues, latestFrameIdx); s)
+                {
+                    convPos = s->first;
+                    convOri = s->second;
+                }
+            }
+            const bool converged = convPos <= params_.convergence_max_position_sigma &&
+                                   convOri <= params_.convergence_max_orientation_sigma_deg;
 
             MRPT_LOG_DEBUG_FMT(
                 "[process_pending_gtsam_updates] Has converged georeferencing? %s: "
@@ -4175,7 +4186,10 @@ void StateEstimationSmoother::solve_locked()
 
             // While pinned by its anchor, the azimuth sigma says nothing about the data:
             const bool azimuthPinned = static_cast<bool>(state_.gtsam->enuYawAnchor);
-            if (converged && state_.tentative_geo_coord_reference.has_value() && !azimuthPinned)
+            const bool keepTracking =
+                params_.georef_track_after_convergence && state_.geo_reference.has_value();
+            if ((converged || keepTracking) && state_.tentative_geo_coord_reference.has_value() &&
+                !azimuthPinned)
             {
                 state_.geo_reference.emplace();
                 state_.geo_reference->geo_coord    = state_.tentative_geo_coord_reference.value();
@@ -4186,9 +4200,7 @@ void StateEstimationSmoother::solve_locked()
             {
                 std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
                 lastGeorefConvergence_ = GeorefConvergence{
-                    std::max(max_pos_sigma, em_max_pos_sigma),
-                    std::max(max_ori_sigma_deg, em_max_ori_sigma_deg), azimuthPinned,
-                    state_.geo_reference.has_value()};
+                    convPos, convOri, azimuthPinned, state_.geo_reference.has_value()};
             }
         }
     }
@@ -4924,6 +4936,50 @@ size_t StateEstimationSmoother::num_imu_bias_chains() const
         return 0;
     }
     return ip.gyro_only ? static_cast<size_t>(ip.max_imus) : 1;
+}
+
+std::optional<std::pair<double, double>> StateEstimationSmoother::vehicle_enu_sigmas_locked(
+    const gtsam::Values& values, frame_index_t kf) const
+{
+    try
+    {
+        const auto& isam  = state_.gtsam->smoother->getISAM2();
+        const auto  joint = isam.joint(symbol_T_enu_to_map, T(kf));
+        const auto [H, eta] =
+            joint->hessian(gtsam::Ordering(std::vector<gtsam::Key>{symbol_T_enu_to_map, T(kf)}));
+        (void)eta;
+        const Eigen::Matrix<double, 12, 12> cov = H.inverse();
+
+        gtsam::Matrix6     Jf;
+        gtsam::Matrix6     Jt;
+        const gtsam::Pose3 E = values.at<gtsam::Pose3>(symbol_T_enu_to_map)
+                                   .compose(values.at<gtsam::Pose3>(T(kf)), Jf, Jt);
+        Eigen::Matrix<double, 6, 12> J;
+        J << Jf, Jt;
+        const gtsam::Matrix6 C = J * cov * J.transpose();  // tangent: [rotation, translation], body
+
+        // Into {enu} axes:
+        const gtsam::Matrix3 R    = E.rotation().matrix();
+        const gtsam::Matrix3 Crot = R * C.block<3, 3>(0, 0) * R.transpose();
+        const gtsam::Matrix3 Cpos = R * C.block<3, 3>(3, 3) * R.transpose();
+        if (!Crot.allFinite() || !Cpos.allFinite())
+        {
+            return {};
+        }
+        const double pos = std::sqrt(Cpos.diagonal().maxCoeff());
+        // Roll and pitch that nothing observes keep a level prior: they do not count.
+        const auto observedOrNot = [](double sigma)
+        { return sigma < UNOBSERVED_ENU2MAP_ANGLE_SIGMA ? sigma : 0.0; };
+        const double ori = std::max(
+            {std::sqrt(Crot(2, 2)), observedOrNot(std::sqrt(Crot(0, 0))),
+             observedOrNot(std::sqrt(Crot(1, 1)))});
+        return std::make_pair(pos, mrpt::RAD2DEG(ori));
+    }
+    catch (const std::exception& e)
+    {
+        MRPT_LOG_THROTTLE_DEBUG_FMT(5.0, "vehicle_enu_sigmas_locked: %s", e.what());
+        return {};
+    }
 }
 
 bool StateEstimationSmoother::link_first_pose_to_origin() const

@@ -73,6 +73,11 @@
 #include <utility>
 #include <vector>
 
+namespace gtsam
+{
+class Values;
+}
+
 namespace mola::state_estimation_smoother
 {
 // Defined in src/, kept out of the public API (used only via pointer here):
@@ -968,6 +973,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     bool link_first_pose_to_origin() const;
     /// Number of IMU bias variable chains (0 without preintegration)
     size_t num_imu_bias_chains() const;
+    /// Position [m] and orientation [deg] sigmas of the vehicle pose in {enu} at
+    /// keyframe `kf`, from the joint marginal of T_enu_to_map and its pose.
+    std::optional<std::pair<double, double>> vehicle_enu_sigmas_locked(
+        const gtsam::Values& values, frame_index_t kf) const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
 

@@ -343,6 +343,12 @@ class Parameters
      * of a relative source is not wrapped. 0 disables it. */
     double pose_robust_huber_threshold = 0.0;
 
+    /** As pose_robust_huber_threshold, for the increments of wheel odometry
+     * (fuse_odometry()), in sigmas of its motion model: lost encoder counts or
+     * wheel slip then pull with bounded weight against GNSS and gyroscopes.
+     * 0 disables it. */
+    double odometry_robust_huber_threshold = 0.0;
+
     /** @} */
 
     /** High-rate same-sensor decimation for IMU. If > 0, IMU readings are
@@ -674,6 +680,23 @@ class Parameters
      *  will publish the estimated geo-referencing via MapSourceBase.
      */
     bool publish_estimated_georef_on_convergence = true;
+
+    /** If true, once the geo-reference has converged it keeps following the
+     *  estimate of T_enu_to_map, and is re-published, even if its own sigmas grow
+     *  above the convergence thresholds. They do when no odometry source anchors
+     *  {map} (e.g. wheel odometry only): {map} is then defined by poses that
+     *  left the window, while the vehicle pose in {enu}, which GNSS observes,
+     *  stays accurate. Otherwise the published geo-reference is frozen at its
+     *  last converged value, and so is anything derived from it (geo_pose). */
+    bool georef_track_after_convergence = false;
+
+    /** If true, the geo-reference convergence test uses the uncertainty of the
+     *  vehicle pose in {enu} (the composition of T_enu_to_map and the vehicle
+     *  pose in {map}, from their joint marginal), which is what GNSS observes,
+     *  instead of the separate marginals of both. Those are large and meaningless
+     *  when no odometry source anchors {map} (e.g. wheel odometry only), while
+     *  their composition is accurate. */
+    bool georef_convergence_in_enu = false;
 
     /** Huber robust cost threshold for GNSS factors [sigmas].
      *  Applied in whitened (normalized) residual space, so units are

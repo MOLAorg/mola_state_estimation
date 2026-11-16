@@ -204,7 +204,8 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 
 Other behavior:
 - `pose_robust_huber_threshold` (0 = off): Huber kernel on every per-reading
-  `fuse_pose()` factor, not on the one-time anchor.
+  `fuse_pose()` factor, not on the one-time anchor. `odometry_robust_huber_threshold`
+  (0 = off): the same on the wheel odometry increments (`fuse_odometry()`).
 - `pose_max_lead_time` (0.5 s, 0 = off): a `fuse_pose()` reading stamped more than
   this after both its source's previous reading and the newest reading of the other
   inputs that delivered readings since then is dropped (`accept_pose_stamp()`, in
@@ -295,7 +296,11 @@ Other behavior:
   geo-reference, GNSS/IMU attitude); the azimuth of `T_enu_to_map` until IMU
   attitude or a GNSS baseline long enough for
   `convergence_max_orientation_sigma_deg`. Estimated geo-references do not
-  converge while pinned. Until something relates `{map}` to the vehicle,
+  converge while pinned. `georef_convergence_in_enu`: test the vehicle pose sigmas in
+  `{enu}` (`vehicle_enu_sigmas_locked()`, joint marginal of `T_enu_to_map` and `T(k)`)
+  instead of both marginals, which grow without bound when no odometry frame anchors
+  `{map}` (wheel odometry only). `georef_track_after_convergence`: once converged, keep
+  updating and publishing the geo-reference even if those marginals grow. Until something relates `{map}` to the vehicle,
   solving is deferred (up to one window). When `{map}` is observed only in
   position (GNSS with a fixed geo-reference, no attitude), the orientation of
   that odometry frame stays pinned: roll/pitch until IMU gravity or attitude,
