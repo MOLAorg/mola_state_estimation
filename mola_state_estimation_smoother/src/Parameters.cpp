@@ -237,6 +237,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, convergence_max_position_sigma);
     MCP_LOAD_OPT(cfg, convergence_max_orientation_sigma_deg);
     MCP_LOAD_OPT(cfg, publish_estimated_georef_on_convergence);
+    MCP_LOAD_OPT(cfg, georef_track_after_convergence);
+    MCP_LOAD_OPT(cfg, georef_convergence_in_enu);
 
     MCP_LOAD_REQ(cfg, kinematic_model);
 
@@ -258,6 +260,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_meter);
     MCP_LOAD_OPT(cfg, relative_pose_increment_sigma_per_sqrt_rad);
     MCP_LOAD_OPT(cfg, pose_robust_huber_threshold);
+    MCP_LOAD_OPT(cfg, odometry_robust_huber_threshold);
     MCP_LOAD_OPT(cfg, relative_pose_increment_from_source_covariance);
     MCP_LOAD_OPT(cfg, do_process_gnss_labels_re);
 

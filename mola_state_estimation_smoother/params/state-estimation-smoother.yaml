@@ -392,6 +392,7 @@ params:
   # GNSS robust kernel: huber, or redescending cauchy, geman_mcclure, dcs
   # (scale: gnss_huber_threshold).
   gnss_robust_kernel: ${MOLA_NAVSTATE_GNSS_ROBUST_KERNEL|huber}
+  gnss_huber_threshold: ${MOLA_NAVSTATE_GNSS_HUBER|1.5}  # [sigmas]
 
   # GNSS admission tests and innovation gate (see Parameters.h). Rejected fixes
   # are logged and counted.
@@ -428,6 +429,12 @@ params:
 
   # If true and estimate_geo_reference is true, publish geo-ref on convergence
   publish_estimated_georef_on_convergence: "${MOLA_SE_PUBLISH_GEOREF_ON_CONV|true}"
+  # Keep following (and re-publishing) T_enu_to_map once converged, even if its
+  # sigmas grow (e.g. no odometry source anchoring {map}):
+  georef_track_after_convergence: ${MOLA_SE_GEOREF_TRACK_AFTER_CONVERGENCE|false}
+  # Convergence from the vehicle pose uncertainty in {enu}, not from the separate
+  # marginals of T_enu_to_map and of the pose in {map}:
+  georef_convergence_in_enu: ${MOLA_SE_GEOREF_CONVERGENCE_IN_ENU|false}
 
   # --------------------------------------------------------------------------
   # Nonlinear Optimization
@@ -524,6 +531,8 @@ params:
   # produces occasional gross errors, a slipped foot or a skidded wheel, and
   # under a plain Gaussian each one pulls with unbounded weight. 0 = disabled.
   pose_robust_huber_threshold: ${MOLA_POSE_ROBUST_HUBER|0.0}
+  # The same for wheel odometry increments, in sigmas of its motion model. 0 disables it.
+  odometry_robust_huber_threshold: ${MOLA_ODOM_ROBUST_HUBER|0.0}
 
   # Fusing a dataset's own reference trajectory (a CObservationRobotPose
   # labeled "ground_truth") would invalidate any accuracy number measured
