@@ -70,6 +70,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-gnss-imu-only-first-pose-pin
+  SOURCES test-gnss-imu-only-first-pose-pin.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-pose-keyframe-decimation
   SOURCES test-pose-keyframe-decimation.cpp
   LINK_LIBRARIES

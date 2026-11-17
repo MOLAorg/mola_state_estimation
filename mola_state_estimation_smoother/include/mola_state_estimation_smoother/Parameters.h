@@ -28,8 +28,9 @@
 #include <mrpt/typemeta/TEnumType.h>
 
 /// With a fixed geo-reference, an orientation that only position sources
-/// (e.g. GNSS without IMU) observe is held fixed and reported as unknown,
-/// instead of leaving the solver indeterminate:
+/// (e.g. GNSS without IMU) observe, or a position that only absolute attitude
+/// observes, is held fixed and reported as unknown, instead of leaving the
+/// solver indeterminate:
 #define MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE 1
 
 namespace mola::state_estimation_smoother
@@ -457,11 +458,12 @@ class Parameters
 
     bool enforce_planar_motion = false;
 
-    /** If set, the first keyframe with a pose or odometry reading (not an earlier
-     * one, e.g. from IMU readings arriving first) will also have an SE(3) edge
-     * favoring it to be the identity in the "reference_frame", with a sigma given
-     * by this value. Use a small number, like 1e-6, for initializing the first
-     * odometry pose near the map origin. Do not set when using geo-referenced maps.
+    /** If set, the first keyframe will also have an SE(3) edge favoring it to be
+     * the identity in the "reference_frame", with a sigma given by this value. If
+     * that keyframe has no pose or odometry reading (e.g. IMU readings arrived
+     * first), the edge moves once to the first keyframe that has one. Use a small
+     * number, like 1e-6, for initializing the first pose near the map origin. Do
+     * not set when using geo-referenced maps.
      */
     std::optional<double> link_first_pose_to_reference_origin_sigma;
 

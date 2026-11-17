@@ -860,11 +860,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Some measurement now observes the position of {map} (not just its
     /// orientation): the odometry frame anchor stops pinning it.
     void mark_map_position_observed_locked();
-    /// The first keyframe with a pose or odometry reading gets the
-    /// link_first_pose_to_reference_origin_sigma pin, if any (not an earlier one,
-    /// e.g. an IMU-only keyframe, which would leave the odometry chains anchored
-    /// only through the kinematic factors).
-    void pin_first_pose_locked(frame_index_t kf);
+    /// The link_first_pose_to_reference_origin_sigma pin, if any: on the first
+    /// keyframe, moved once to the first one with a pose or odometry reading
+    /// (`poseReading`) if the first had none, while it is not marginalized, so
+    /// that the odometry chains do not hang from it only through the kinematic
+    /// factors (e.g. IMU readings ahead of the first pose).
+    void pin_first_pose_locked(frame_index_t kf, bool poseReading);
 
     /// False while a fixed geo-reference is set but no source has observed the
     /// position of {map} yet (it is only the first odometry frame then). Runs a pending
@@ -873,9 +874,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     [[nodiscard]] bool reference_frame_position_observed();
     /// A source observes the vehicle roll/pitch and/or yaw in {map}
     void mark_orientation_observed_locked(bool rollPitch, bool yaw);
-    /// Replaces the orientation entries of a pose covariance that only a gauge
-    /// anchor pins (not observed) with "unknown" ones
-    void inflate_pinned_orientation_cov_locked(mrpt::math::CMatrixDouble66& cov) const;
+    /// Replaces the position and orientation entries of a pose covariance that
+    /// only a gauge anchor pins (not observed) with "unknown" ones
+    void inflate_pinned_cov_locked(mrpt::math::CMatrixDouble66& cov) const;
 
     // ---- _locked variants: assume stateMutex_ is already held by the caller ----
     /// keepFrames: see reset_motion().

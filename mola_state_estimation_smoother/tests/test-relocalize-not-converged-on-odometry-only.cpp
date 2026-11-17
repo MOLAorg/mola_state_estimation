@@ -17,16 +17,20 @@
  * @brief  In relocalize mode, odometry alone must not count as a converged
  *         localization: until some source observes the map frame, it is
  *         defined as the first odometry frame by a gauge anchor, which makes
- *         the vehicle pose look certain (at the odometry origin). A map
- *         observation counts once it is in the solved estimate.
+ *         the vehicle pose look certain (at the odometry origin). Nor must
+ *         odometry plus an absolute attitude, which observes the orientation of
+ *         the map frame but not its position. A map observation counts once it
+ *         is in the solved estimate.
  */
 
 #include <mola_kernel/interfaces/NavStateFilter.h>
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
 #include <iostream>
+#include <string>
 #include <tuple>
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -49,10 +53,32 @@ params:
     sigma_integrator_position: 0.02
     sigma_integrator_orientation: 0.02
     estimate_geo_reference: false
+    imu_attitude_azimuth_offset_deg: -90
 )###";
 
-void run_test()
+// A level vehicle heading East, as seen by an IMU with absolute attitude (AHRS):
+mrpt::obs::CObservationIMU level_attitude(double t)
 {
+    mrpt::obs::CObservationIMU imu;
+    imu.timestamp   = mrpt::Clock::fromDouble(t);
+    imu.sensorLabel = "imu";
+    imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+    imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+    imu.set(mrpt::obs::IMU_Z_ACC, 9.81);
+    imu.set(mrpt::obs::IMU_WX, 0.0);
+    imu.set(mrpt::obs::IMU_WY, 0.0);
+    imu.set(mrpt::obs::IMU_WZ, 0.0);
+    imu.set(mrpt::obs::IMU_ORI_QUAT_W, 1.0);
+    imu.set(mrpt::obs::IMU_ORI_QUAT_X, 0.0);
+    imu.set(mrpt::obs::IMU_ORI_QUAT_Y, 0.0);
+    imu.set(mrpt::obs::IMU_ORI_QUAT_Z, 0.0);
+    return imu;
+}
+
+void run_test(bool withAttitude)
+{
+    std::cout << "IMU attitude: " << (withAttitude ? "yes" : "no") << "\n";
+
     mola::state_estimation_smoother::StateEstimationSmoother stateEst;
     if (mrpt::get_env<bool>("VERBOSE", false))
     {
@@ -78,6 +104,10 @@ void run_test()
     for (int i = 0; i < 20; i++, t += 0.1)
     {
         stateEst.fuse_pose(mrpt::Clock::fromDouble(t), odo, "odom_wheels");
+        if (withAttitude)
+        {
+            stateEst.fuse_imu(level_attitude(t));
+        }
         // Flush pending updates, as the periodic callers do:
         std::ignore = stateEst.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
         std::ignore = stateEst.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
@@ -86,7 +116,8 @@ void run_test()
         if (stateEst.has_converged_localization(pose))
         {
             throw std::runtime_error(
-                "Reported converged with odometry only, at: " + pose.mean.asString());
+                std::string("Reported converged with odometry only") +
+                (withAttitude ? " (and IMU attitude)" : "") + ", at: " + pose.mean.asString());
         }
     }
 
@@ -119,6 +150,10 @@ void run_test()
     {
         t += 0.1;
         stateEst.fuse_pose(mrpt::Clock::fromDouble(t), odo, "odom_wheels");
+        if (withAttitude)
+        {
+            stateEst.fuse_imu(level_attitude(t));
+        }
         stateEst.fuse_pose(mrpt::Clock::fromDouble(t), inMap, "map");
         std::ignore = stateEst.estimated_navstate(mrpt::Clock::fromDouble(t), "map");
 
@@ -133,6 +168,10 @@ void run_test()
     {
         throw std::runtime_error("Did not converge with map observations");
     }
+    if (stateEst.solve_failures() != 0)
+    {
+        throw std::runtime_error("Some solves failed");
+    }
 }
 }  // namespace
 
@@ -140,7 +179,8 @@ int main()
 {
     try
     {
-        run_test();
+        run_test(false);
+        run_test(true);
         std::cout << "\nSUCCESS\n";
         return 0;
     }
