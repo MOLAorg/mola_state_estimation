@@ -2,7 +2,7 @@
 #                   SLAM system definition for MOLA
 #
 # Central mola-cli launch file for the StateEstimationSmoother with BridgeROS2.
-# Supports up to 4 odometry sources, IMU, and GNSS - all controlled via
+# Supports up to 4 odometry sources, 2 IMUs, and GNSS - all controlled via
 # environment variables.  Unused slots default to an empty topic and are
 # silently skipped by BridgeROS2.
 #
@@ -17,9 +17,15 @@
 #   ODOM2_TOPIC / ODOM2_LABEL   - 2nd odometry topic / sensor label
 #   ODOM3_TOPIC / ODOM3_LABEL   - 3rd odometry topic / sensor label
 #   ODOM4_TOPIC / ODOM4_LABEL   - 4th odometry topic / sensor label
-#   IMU_TOPIC                   - IMU topic           (default: empty)
+#   ODOM{1-4}_AS_ROBOT_POSE     - true (default): SE(3) odometry (LiDAR, visual), fused with
+#                                 relative_pose_increment_sigma_*; false: planar wheel
+#                                 odometry, fused with the odom_motion_model_a* noise model
+#   IMU_TOPIC / IMU_LABEL       - IMU topic / sensor label (default: empty / imu)
+#   IMU2_TOPIC / IMU2_LABEL     - 2nd IMU topic / label    (default: empty / imu2)
+#   IMU_POSE_* / IMU2_POSE_*    - IMU poses, used only with MOLA_USE_FIXED_IMU_POSE=true
 #   GNSS_TOPIC                  - GNSS topic          (default: empty)
 #   MOLA_WITH_GUI               - show MolaViz        (default: true)
+#   MOLA_ROS2_PUBLISH_IN_SIM_TIME - stamp outputs with the input data times (default: false)
 #
 # See params/state-estimation-smoother.yaml for smoother-specific env vars.
 # -----------------------------------------------------------------------------
@@ -96,27 +102,39 @@ modules:
         - topic: ${ODOM1_TOPIC|}
           msg_type: Odometry
           output_sensor_label: "${ODOM1_LABEL|odom1}"
+          odometry_as_robot_pose_observation: ${ODOM1_AS_ROBOT_POSE|true}
 
         # Odometry source 2
         - topic: ${ODOM2_TOPIC|}
           msg_type: Odometry
           output_sensor_label: "${ODOM2_LABEL|odom2}"
+          odometry_as_robot_pose_observation: ${ODOM2_AS_ROBOT_POSE|true}
 
         # Odometry source 3
         - topic: ${ODOM3_TOPIC|}
           msg_type: Odometry
           output_sensor_label: "${ODOM3_LABEL|odom3}"
+          odometry_as_robot_pose_observation: ${ODOM3_AS_ROBOT_POSE|true}
 
         # Odometry source 4
         - topic: ${ODOM4_TOPIC|}
           msg_type: Odometry
           output_sensor_label: "${ODOM4_LABEL|odom4}"
+          odometry_as_robot_pose_observation: ${ODOM4_AS_ROBOT_POSE|true}
 
         # IMU
         - topic: ${IMU_TOPIC|}
           msg_type: Imu
           output_sensor_label: "${IMU_LABEL|imu}"
           fixed_sensor_pose: "${IMU_POSE_X|0} ${IMU_POSE_Y|0} ${IMU_POSE_Z|0} ${IMU_POSE_YAW|0} ${IMU_POSE_PITCH|0} ${IMU_POSE_ROLL|0}"
+          use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
+
+        # 2nd IMU: both gyroscopes are preintegrated with imu_preintegration.gyro_only and
+        # max_imus: 2 (otherwise, only the first IMU heard)
+        - topic: ${IMU2_TOPIC|}
+          msg_type: Imu
+          output_sensor_label: "${IMU2_LABEL|imu2}"
+          fixed_sensor_pose: "${IMU2_POSE_X|0} ${IMU2_POSE_Y|0} ${IMU2_POSE_Z|0} ${IMU2_POSE_YAW|0} ${IMU2_POSE_PITCH|0} ${IMU2_POSE_ROLL|0}"
           use_fixed_sensor_pose: ${MOLA_USE_FIXED_IMU_POSE|false}
 
         # GNSS

@@ -176,7 +176,11 @@ custom copy of the file can be used instead:
 
    Up to three ``nav_msgs/Odometry`` sources can be fused simultaneously via
    ``odom1_topic``, ``odom2_topic``, and ``odom3_topic`` (empty string disables
-   each one). Without at least one odometry source the smoother relies solely on
+   each one). Set ``odomN_as_robot_pose:=False`` for wheel odometry (planar, with the
+   wheel motion model; the default ``True`` is for LiDAR or visual odometry).
+   A second IMU goes in ``imu2_topic_name``: both gyroscopes are preintegrated with
+   ``imu_preintegration_gyro_only:=True imu_preintegration_max_imus:=2`` (otherwise only the
+   first IMU heard is). For bag replay, add ``use_sim_time:=True``. Without at least one odometry source the smoother relies solely on
    the constant-velocity kinematic model between GNSS fixes, which degrades for
    non-smooth motion.
 
@@ -238,8 +242,10 @@ custom copy of the file can be used instead:
       Odometry sources are fused as chains of increments, whose uncertainty is set by
       ``relative_pose_increment_sigma_lin`` / ``_ang`` (env vars ``MOLA_REL_POSE_INCR_SIGMA_LIN``
       / ``_ANG``), not by the covariance in the messages. The defaults suit LiDAR odometry
-      (``_lin`` 0 = automatic: 0.1 mm once an IMU is being preintegrated, 2 cm otherwise); tune them for
-      other sources, e.g. 0.02 m and 0.005 rad for wheel odometry.
+      (``_lin`` 0 = automatic: 0.1 mm once an IMU is being preintegrated, 2 cm otherwise), and
+      are shared by all such sources. For wheel odometry use instead
+      ``odomN_as_robot_pose:=False``: it is then fused as planar odometry with its own
+      motion model (``odom_motion_model_a1`` .. ``a4``, env vars ``MOLA_ODOM_MOTION_MODEL_A*``).
       See :ref:`section 3 <mola_sta_est_api>`.
 
    Key launch arguments:
@@ -464,13 +470,14 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        so only the increments between consecutive keyframes are fused, with the uncertainty
        set by the parameters ``relative_pose_increment_sigma_lin`` / ``_ang``
        (plus optional growth with the increment size, ``..._per_sqrt_meter`` / ``_rad``).
-       Their defaults suit LiDAR odometry; set them for wheel odometry (e.g. 0.02 m / 0.005 rad).
+       Their defaults suit LiDAR odometry; for wheel odometry use the planar mode below.
        The first reading adds one absolute factor, with the message covariance, to resolve
        ``T_map_to_odom_<label>``. The twist part is not used.
      - Increments between consecutive readings dead-reckon the pose between primary pose
        updates.
    * - ``nav_msgs/Odometry``
-       (with ``BridgeROS2`` param ``odometry_as_robot_pose_observation: false``:
+       (with ``BridgeROS2`` param ``odometry_as_robot_pose_observation: false``, global or
+       per ``subscribe`` entry, i.e. launch argument ``odomN_as_robot_pose:=False``:
        becomes a planar ``CObservationOdometry``)
      - ``fuse_odometry()``: relative increments, with covariance from the motion model
        ``odom_motion_model_a1`` .. ``a4``.

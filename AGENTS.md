@@ -476,9 +476,12 @@ workspace overlay.
 ## ROS 2 integration
 
 Runs inside `mola_launcher`, with sensors bridged from ROS 2.
-`ros2-state-estimator.launch.py` takes `imu_topic_name`, `gnss_topic_name` and
-`odom{1,2,3}_topic` (+ `_label`), all empty (disabled) by default; its
-`navstate_*` args are empty by default, meaning "use the params YAML value".
+`ros2-state-estimator.launch.py` takes `imu_topic_name`, `imu2_topic_name`, `gnss_topic_name`
+and `odom{1,2,3}_topic` (+ `_label`, + `_as_robot_pose`: `False` for planar wheel odometry
+with the wheel motion model, needs a `mola_bridge_ros2` with per-entry
+`odometry_as_robot_pose_observation`), topics empty (disabled) by default; its `navstate_*`
+and `imu_preintegration_{gyro_only,max_imus}` args are empty by default, meaning "use the
+params YAML value" (two IMUs need both). `use_sim_time:=True` for bag replay.
 `ros2-fuse-two-odometries.launch.py` uses the same topic argument names. The fused
 `map -> base_link` pose is advertised; the bridge publishes it to `/tf`.
 
