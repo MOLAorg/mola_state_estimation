@@ -154,6 +154,8 @@ void run_test(bool async, bool withGeoref, bool withAttitude)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     const size_t beforeMap = count_vehicle_updates(got);
+    // {map} observed only in orientation must still be well-conditioned:
+    ASSERT_EQUAL_(est.solve_failures(), 0U);
     std::cout << "async=" << async << " georef=" << withGeoref << " attitude=" << withAttitude
               << ": {map} updates before observing it: " << beforeMap << "\n";
 
@@ -171,6 +173,7 @@ void run_test(bool async, bool withGeoref, bool withAttitude)
     spin_until_published(est, got);
     std::cout << "  {map} updates after observing it: " << count_vehicle_updates(got) << "\n";
     ASSERT_GT_(count_vehicle_updates(got), 0U);
+    ASSERT_EQUAL_(est.solve_failures(), 0U);
 }
 
 }  // namespace

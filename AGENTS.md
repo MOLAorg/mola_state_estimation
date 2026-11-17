@@ -82,7 +82,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (50) | `tests/test-*.cpp` |
+| Unit tests (51) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -277,6 +277,7 @@ Other behavior:
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
   cannot be solved yet. Any exception in the solve (`solve_locked()`: update,
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
+  `solve_failures()` counts them (tests that must stay well-conditioned assert 0).
 - Two resets: `reset()` (also after a failed solve) starts from scratch: the next
   poses define {map} again, as after a re-localization. `reset_motion()` keeps
   {map}: odometry frames come back anchored at their live T_map_to_odom_i, whichever
@@ -305,17 +306,26 @@ Other behavior:
   `{enu}` (`vehicle_enu_sigmas_locked()`, joint marginal of `T_enu_to_map` and `T(k)`)
   instead of both marginals, which grow without bound when no odometry frame anchors
   `{map}` (wheel odometry only). `georef_track_after_convergence`: once converged, keep
-  updating and publishing the geo-reference even if those marginals grow. Until something relates `{map}` to the vehicle,
-  solving is deferred (up to one window). When `{map}` is observed only in
-  position (GNSS with a fixed geo-reference, no attitude), the orientation of
-  that odometry frame stays pinned: roll/pitch until IMU gravity or attitude,
-  yaw until IMU attitude or a GNSS baseline good for ~5 deg; both by a `{map}`
-  pose. `has_converged_localization()` then reports the pinned angles as
-  unknown (yaw sigma pi, roll/pitch pi/2), so a robot without IMU converges on
-  position only if `convergence_max_orientation_sigma_deg` allows it. Feature
+  updating and publishing the geo-reference even if those marginals grow. Until something places the vehicle in `{map}`
+  (a `{map}` anchor or pose, the first-pose pin, `odomFrameAnchor`, or GNSS through a
+  fixed geo-reference), solving is deferred (up to one window). When `{map}` is observed only in
+  part, `odomFrameAnchor` keeps pinning the rest of that odometry frame: with
+  GNSS through a fixed geo-reference and no attitude, its orientation (roll/pitch
+  until IMU gravity or attitude, yaw until IMU attitude or a GNSS baseline good
+  for ~5 deg); with IMU attitude through a fixed geo-reference, its position
+  (until GNSS); all by a `{map}` pose. `has_converged_localization()`, the async snapshot and the
+  GNSS gate report what was pinned in the last solve as unknown (position sigma
+  1 km, yaw pi, roll/pitch pi/2; `inflate_pinned_cov_locked()`), so a robot without
+  IMU converges on position only if `convergence_max_orientation_sigma_deg` allows it,
+  and odometry plus IMU attitude never converges without a position source. Feature
   macro `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE` (`Parameters.h`).
 - A new `T_map_to_odom_i` is seeded from its first reading. A new key is never
   marginalized in the update that inserts it.
+- `link_first_pose_to_reference_origin_sigma` pins the first keyframe; if it has no
+  pose or odometry reading (e.g. IMU ahead of the first pose), the pin moves once to
+  the first keyframe that has one, while it is not marginalized
+  (`pin_first_pose_locked()`, `firstPoseAnchor`). GNSS+IMU-only setups keep it on
+  the first keyframe (`test-gnss-imu-only-first-pose-pin`).
 - Observations labeled `ground_truth` are ignored by both estimators unless
   `fuse_ground_truth_label: true`.
 - Optional planar motion (`enforce_planar_motion`).
@@ -343,7 +353,8 @@ Georeferencing and relocalization:
 - `has_converged_localization()`: with `estimate_geo_reference=true`, true once
   the geo-reference is known; otherwise, when `{map}` is observed in the last
   solve (not just pinned by its gauge anchor, which makes the pose look certain
-  at the odometry origin) and the vehicle's own pose sigmas pass the same thresholds.
+  at the odometry origin; directions still pinned count as unknown) and the
+  vehicle's own pose sigmas pass the same thresholds.
   Steady-state position sigma is bounded by the raw GNSS noise, so the
   thresholds must match the receiver.
 - `fuse_imu()` applies a fixed +90 deg yaw so North-referenced IMU yaw becomes

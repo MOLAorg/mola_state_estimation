@@ -128,6 +128,8 @@ std::pair<double, double> run_static(
         maxSpeed = std::max(maxSpeed, std::sqrt(tw.vx * tw.vx + tw.vy * tw.vy + tw.vz * tw.vz));
     }
     ASSERT_GT_(solves, 10U);
+    // IMU readings ahead of the first pose must not leave the graph ill-conditioned:
+    ASSERT_EQUAL_(nav.solve_failures(), 0U);
     return {maxDist, maxSpeed};
 }
 
@@ -219,6 +221,7 @@ std::vector<double> run_reset_while_accelerating(bool keepFrames)
         nav.fuse_pose(imu.timestamp, mrpt::poses::CPose3DPDFGaussian(pose, cov), "odom");
         (void)nav.estimated_navstate(imu.timestamp, "map");
     }
+    ASSERT_EQUAL_(nav.solve_failures(), 0U);
     return tilts;
 }
 }  // namespace

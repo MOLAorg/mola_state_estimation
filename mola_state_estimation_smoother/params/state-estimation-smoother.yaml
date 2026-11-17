@@ -242,6 +242,8 @@ params:
   enforce_planar_motion: ${MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION|false}
 
   # If set, pins the first robot frame to the "reference_frame" origin with the given sigma [m/rad].
+  # If that frame has no pose or odometry reading (e.g. IMU readings arrived first), the pin
+  # moves once to the first frame that has one.
   #
   # When to set (use 1e-6):
   #   - estimate_geo_reference=true with neither odometry nor map-frame pose sources: the map
