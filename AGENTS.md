@@ -93,8 +93,9 @@ Structure:
   assume it is held.
 - Per keyframe: pose `T(k)`, body linear velocity `V(k)`, body angular velocity
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
-  With `imu_preintegration.enabled`, also IMU biases `Z(k)`
-  (`imuBias::ConstantBias`), chained by a random walk on every link; with
+  With `imu_preintegration.enabled`, once an IMU has been seen, also IMU biases
+  `Z(k)` (`imuBias::ConstantBias`), chained by a random walk on every link
+  between keyframes having them (prior if the closest one has none); with
   `gyro_only` and `max_imus` > 1, one chain per extra IMU (`Y(k)`, `X(k)`,
   `bias_key()`).
 - Keyframes are created per timestamp, reusing an existing one closer than
