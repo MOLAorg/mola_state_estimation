@@ -167,6 +167,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         ASSERT_GT_(ip.accel_noise_density, 0.0);
         ASSERT_GT_(ip.gyro_bias_random_walk, 0.0);
         ASSERT_GT_(ip.accel_bias_random_walk, 0.0);
+        ASSERT_GT_(ip.initial_gyro_bias_sigma, 0.0);
+        ASSERT_GT_(ip.initial_accel_bias_sigma, 0.0);
         ASSERT_GE_(ip.linear_kinematics_sigma_scale, 1.0);
         ASSERT_GE_(ip.accel_scale, 0.0);
     }

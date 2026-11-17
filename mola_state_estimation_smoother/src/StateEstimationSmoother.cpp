@@ -166,6 +166,13 @@ constexpr double PLANAR_XY_SIGMA                = 1e10;
 constexpr double PLANAR_Z_SIGMA                 = 1e-4;
 constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 
+// Largest ratio of the initial IMU bias sigma to the sigma of one bias random-walk
+// link. Over short links the random walk is far stiffer than what anchors the
+// chain (its prior, until the IMU observes the bias), and the chain becomes too
+// ill-conditioned to factor (GTSAM >= 4.3 rejects Cholesky pivots below 1/4096 of
+// the square root of their original diagonal entry, i.e. a ratio above ~4096).
+constexpr double MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO = 1000.0;
+
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
 
@@ -4611,12 +4618,18 @@ void StateEstimationSmoother::add_kinematic_factor_between(
 
     // The bias random walk of each IMU goes with the link from its creation, if
     // both keyframes have that bias; the preintegration factor itself is attached
-    // once the raw readings cover the link's interval.
-    const auto&    ip  = params_.imu_preintegration;
-    const double   adt = std::max(std::abs(dt), 1e-3);
+    // once the raw readings cover the link's interval. Its sigma is floored, so
+    // closely spaced keyframes do not make the chain ill-conditioned.
+    const auto&  ip       = params_.imu_preintegration;
+    const double sqrtDt   = std::sqrt(std::abs(dt));
+    const double accelSig = std::max(
+        ip.accel_bias_random_walk * sqrtDt,
+        ip.initial_accel_bias_sigma / MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO);
+    const double gyroSig = std::max(
+        ip.gyro_bias_random_walk * sqrtDt,
+        ip.initial_gyro_bias_sigma / MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO);
     gtsam::Vector6 sig;
-    sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
-        gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
+    sig << gtsam::Vector3::Constant(accelSig), gtsam::Vector3::Constant(gyroSig);
     auto&      g       = *state_.gtsam;
     const auto linkKey = GtsamImpl::link_key(from, to);
     for (size_t imuIdx = 0; imuIdx < num_imu_bias_chains(); imuIdx++)

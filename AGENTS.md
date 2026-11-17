@@ -95,7 +95,9 @@ Structure:
   `W(k)`. Per odometry frame `i`: `T_map_to_odom_i`. Plus `T_enu_to_map`.
   With `imu_preintegration.enabled`, once an IMU has been seen, also IMU biases
   `Z(k)` (`imuBias::ConstantBias`), chained by a random walk on every link
-  between keyframes having them (prior if the closest one has none); with
+  between keyframes having them (prior if the closest one has none; link sigma
+  floored at 1/1000 of `initial_*_bias_sigma`, so fast keyframes stay
+  factorable: `MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO`); with
   `gyro_only` and `max_imus` > 1, one chain per extra IMU (`Y(k)`, `X(k)`,
   `bias_key()`), also only once that IMU has been seen
   (`test-imu-bias-chains-unseen-imu`).

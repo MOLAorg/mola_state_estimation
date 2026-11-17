@@ -29,18 +29,18 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <tuple>
 
 namespace
 {
 const bool VERBOSE = mrpt::get_env<bool>("VERBOSE", false);
 
 constexpr double IMU_DT     = 0.005;  // [s]  (200 Hz)
-constexpr double ODOM_DT    = 0.1;  // [s]  (10 Hz)
 constexpr double DURATION   = 6.0;  // [s]
 constexpr double VELOCITY_X = 1.0;  // [m/s]
 constexpr double YAW_RATE   = 0.2;  // [rad/s]
 
-std::string params_yaml(bool gyroOnly, int maxImus)
+std::string params_yaml(bool gyroOnly, int maxImus, double odomDt)
 {
     return R"###(
 params:
@@ -57,7 +57,8 @@ params:
     sigma_integrator_position: 0.10
     sigma_integrator_orientation: 0.10
     estimate_geo_reference: false
-    imu_min_sample_period: 0.1
+    imu_min_sample_period: )###" +
+           std::to_string(odomDt) + R"###(
     imu_preintegration:
         enabled: true
         gyro_only: )###" +
@@ -65,21 +66,22 @@ params:
            "\n        max_imus: " + std::to_string(maxImus) + "\n";
 }
 
-/// Wheel odometry along a circle, plus `numImus` (0 or 1) IMUs.
-void run_case(bool gyroOnly, int maxImus, int numImus)
+/// Wheel odometry along a circle every `odomDt` (also the keyframe period),
+/// plus `numImus` (0 or 1) IMUs.
+void run_case(bool gyroOnly, int maxImus, int numImus, double odomDt)
 {
     std::cout << "gyro_only: " << gyroOnly << ", max_imus: " << maxImus
-              << ", IMUs present: " << numImus << "\n";
+              << ", IMUs present: " << numImus << ", keyframe period: " << odomDt << " s\n";
 
     mola::state_estimation_smoother::StateEstimationSmoother est;
     if (VERBOSE)
     {
         est.setMinLoggingLevel(mrpt::system::LVL_DEBUG);
     }
-    est.initialize(mrpt::containers::yaml::FromText(params_yaml(gyroOnly, maxImus)));
+    est.initialize(mrpt::containers::yaml::FromText(params_yaml(gyroOnly, maxImus, odomDt)));
 
     const auto   numReadings  = static_cast<size_t>(DURATION / IMU_DT) + 1;
-    const size_t imuPerOdom   = static_cast<size_t>(std::lround(ODOM_DT / IMU_DT));
+    const size_t imuPerOdom   = static_cast<size_t>(std::lround(odomDt / IMU_DT));
     size_t       numEstimates = 0;
     for (size_t i = 0; i < numReadings; i++)
     {
@@ -125,25 +127,37 @@ void run_case(bool gyroOnly, int maxImus, int numImus)
         }
     }
     ASSERT_GT_(numEstimates, 50U);
+    std::cout << "  " << numEstimates << " estimates, all solves succeeded\n";
 }
 
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
-    try
+    size_t failures = 0;
+    // A typical keyframe rate, and a fast one (wheel odometry or IMU without
+    // decimation), which makes the bias random walks very stiff:
+    for (const double odomDt : {0.1, 0.01})
     {
-        run_case(false, 1, 0);
-        run_case(false, 1, 1);
-        run_case(true, 1, 0);
-        run_case(true, 1, 1);
-        run_case(true, 3, 1);
-        std::cout << "✅ SUCCESS\n";
-        return 0;
+        for (const auto& [gyroOnly, maxImus, numImus] :
+             {std::tuple{false, 1, 0}, std::tuple{false, 1, 1}, std::tuple{true, 1, 0},
+              std::tuple{true, 1, 1}, std::tuple{true, 3, 1}})
+        {
+            try
+            {
+                run_case(gyroOnly, maxImus, numImus, odomDt);
+            }
+            catch (std::exception& e)
+            {
+                std::cerr << "❌ FAILED: " << e.what() << std::endl;
+                failures++;
+            }
+        }
     }
-    catch (std::exception& e)
+    if (failures != 0)
     {
-        std::cerr << "❌ FAILED: " << e.what() << std::endl;
         return 1;
     }
+    std::cout << "✅ SUCCESS\n";
+    return 0;
 }

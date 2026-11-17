@@ -613,6 +613,10 @@ class Parameters
          * since some drivers publish them in units of g. */
         double accel_scale = 0;
 
+        /** Prior of the first bias variable. One thousandth of each is also the
+         * floor of the sigma of one bias random-walk link: over short links
+         * (closely spaced keyframes) a stiffer chain cannot be factored
+         * reliably. Must be > 0. */
         double initial_gyro_bias_sigma  = 0.02;  //!< [rad/s]
         double initial_accel_bias_sigma = 0.2;  //!< [m/s^2]
 
