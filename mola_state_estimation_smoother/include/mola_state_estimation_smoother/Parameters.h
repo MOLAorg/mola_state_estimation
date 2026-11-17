@@ -457,10 +457,11 @@ class Parameters
 
     bool enforce_planar_motion = false;
 
-    /** If set, the first ever frame will also have an SE(3) edge favoring it to be the identity in
-     * the "reference_frame", with a sigma given by this value. Use a small number, like 1e-6, for
-     * initialing the first odometry pose near the map origin. Do not set when using geo-referenced
-     * maps.
+    /** If set, the first keyframe with a pose or odometry reading (not an earlier
+     * one, e.g. from IMU readings arriving first) will also have an SE(3) edge
+     * favoring it to be the identity in the "reference_frame", with a sigma given
+     * by this value. Use a small number, like 1e-6, for initializing the first
+     * odometry pose near the map origin. Do not set when using geo-referenced maps.
      */
     std::optional<double> link_first_pose_to_reference_origin_sigma;
 

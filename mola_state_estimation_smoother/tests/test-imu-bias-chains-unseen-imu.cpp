@@ -127,6 +127,7 @@ void run_case(bool gyroOnly, int maxImus, int numImus, double odomDt)
         }
     }
     ASSERT_GT_(numEstimates, 50U);
+    ASSERT_EQUAL_(est.solve_failures(), 0U);
     std::cout << "  " << numEstimates << " estimates, all solves succeeded\n";
 }
 

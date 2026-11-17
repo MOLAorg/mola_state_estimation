@@ -511,15 +511,17 @@ struct StateEstimationSmoother::GtsamImpl
     /// Where the vehicle had the GNSS antenna in {map} at that first fix
     std::optional<gtsam::Point2> firstGnssMapXY;
 
-    /** Once {map} is observed only in position (e.g. GNSS through a fixed
-     *  geo-reference, with no attitude source), pins the orientation of the
-     *  odometry frame `orientationAnchorKey`, which nothing observes yet.
-     *  Roll/pitch and yaw are released independently, as sources observe them.
+    /** Once {map} is observed only in part, pins what nothing observes yet of
+     *  the odometry frame `odomFrameAnchorKey`: its orientation if {map} is
+     *  observed only in position (e.g. GNSS through a fixed geo-reference, with
+     *  no attitude source), its position if only in orientation (absolute
+     *  attitude through a fixed geo-reference). Position, roll/pitch and yaw
+     *  are released independently, as sources observe them.
      */
-    std::optional<GaugeAnchor> orientationAnchor;
-    std::optional<gtsam::Key>  orientationAnchorKey;
+    std::optional<GaugeAnchor> odomFrameAnchor;
+    std::optional<gtsam::Key>  odomFrameAnchorKey;
     /// Where that frame starts (identity, or its value before a reset)
-    gtsam::Pose3                 orientationAnchorValue;
+    gtsam::Pose3                 odomFrameAnchorValue;
     bool                         rollPitchObserved = false;
     bool                         yawObserved       = false;
     std::optional<gtsam::Point2> firstGnssXYForYaw;
@@ -534,25 +536,25 @@ struct StateEstimationSmoother::GtsamImpl
     double                                   yawBiasSigmaStamp = 0;
 
     /// Whether the reported orientation is pinned by a gauge anchor, not observed
-    [[nodiscard]] bool rollPitchPinned() const { return orientationAnchor && !rollPitchObserved; }
-    [[nodiscard]] bool yawPinned() const { return orientationAnchor && !yawObserved; }
+    [[nodiscard]] bool rollPitchPinned() const { return odomFrameAnchor && !rollPitchObserved; }
+    [[nodiscard]] bool yawPinned() const { return odomFrameAnchor && !yawObserved; }
 
-    /// Re-creates the orientation anchor for what is still unobserved
-    void update_orientation_anchor()
+    /// Re-creates the odometry frame anchor for what is still unobserved
+    void update_odom_frame_anchor()
     {
-        withdraw_anchor(orientationAnchor);
-        if (!orientationAnchorKey || (rollPitchObserved && yawObserved))
+        withdraw_anchor(odomFrameAnchor);
+        if (!odomFrameAnchorKey || (rollPitchObserved && yawObserved && mapPositionObserved))
         {
             return;
         }
         // Pose3 tangent: rotation (x, y, z), then translation.
-        const double   rp = rollPitchObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
-        const double   y  = yawObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
+        const double   rp  = rollPitchObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
+        const double   y   = yawObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
+        const double   xyz = mapPositionObserved ? INIT_ODOM_FRAME_POSE_SIGMA : GAUGE_ANCHOR_SIGMA;
         gtsam::Vector6 sigmas;
-        sigmas << rp, rp, y, INIT_ODOM_FRAME_POSE_SIGMA, INIT_ODOM_FRAME_POSE_SIGMA,
-            INIT_ODOM_FRAME_POSE_SIGMA;
+        sigmas << rp, rp, y, xyz, xyz, xyz;
         add_anchor<gtsam::PriorFactor<gtsam::Pose3>>(
-            orientationAnchor, *orientationAnchorKey, orientationAnchorValue,
+            odomFrameAnchor, *odomFrameAnchorKey, odomFrameAnchorValue,
             gtsam::noiseModel::Diagonal::Sigmas(sigmas));
     }
 
@@ -575,7 +577,7 @@ struct StateEstimationSmoother::GtsamImpl
         {
             const size_t idx = *anchor->pendingIndex;
             newFactors.erase(newFactors.begin() + static_cast<std::ptrdiff_t>(idx));
-            for (auto* other : {&mapAnchor, &enuYawAnchor, &orientationAnchor})
+            for (auto* other : {&mapAnchor, &enuYawAnchor, &odomFrameAnchor})
             {
                 if (*other && (*other)->pendingIndex && *(*other)->pendingIndex > idx)
                 {
@@ -616,7 +618,9 @@ struct StateEstimationSmoother::GtsamImpl
     /// level T_enu_to_map from the accelerometer before its first solve.
     std::optional<std::pair<double, gtsam::Rot3>> enuLevelRef;
     bool                                          enuLevelDone = false;
-    gtsam::Rot3                                   enuLeveledRotation;  //!< of T_enu_to_map
+    /// Whether link_first_pose_to_reference_origin_sigma pinned a keyframe yet
+    bool        firstPosePinned = false;
+    gtsam::Rot3 enuLeveledRotation;  //!< of T_enu_to_map
     /// pimParams with gravity held fixed in {map}, at the leveled tilt
     gtsam_shared_ptr<gtsam::PreintegrationParams> pimParamsMapGravity;
 
@@ -636,7 +640,7 @@ struct StateEstimationSmoother::GtsamImpl
     /// Records the iSAM2 index of anchors passed in the last update()
     void on_update_done(const gtsam::FactorIndices& newFactorsIndices)
     {
-        for (auto* anchor : {&mapAnchor, &enuYawAnchor, &orientationAnchor})
+        for (auto* anchor : {&mapAnchor, &enuYawAnchor, &odomFrameAnchor})
         {
             if (*anchor && (*anchor)->pendingIndex)
             {
@@ -1544,6 +1548,7 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 {
     const auto frame_id_idx = add_or_get_odom_frame_id(wheels_odometry_frame_locked(odomName));
     const auto this_kf_id   = create_or_get_keyframe_by_timestamp_locked(odom.timestamp);
+    pin_first_pose_locked(this_kf_id);
 
     // Unconditional, and independent of which factor is added below: this is the
     // anchor estimated_navstate() extrapolates from when a front end asks for a
@@ -2202,7 +2207,7 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     if (params_.fixed_geo_reference.has_value())
     {
         mark_map_observed_locked();
-        state_.gtsam->mapPositionObserved = true;
+        mark_map_position_observed_locked();
     }
 
     // Likewise, a pinned yaw becomes observable once the fixes span a baseline
@@ -2354,6 +2359,7 @@ void StateEstimationSmoother::fuse_pose_locked(
 
     // Create a new KF id (or reuse a very close match):
     const auto this_kf_id = create_or_get_keyframe_by_timestamp_locked(timestamp);
+    pin_first_pose_locked(this_kf_id);
 
     MRPT_LOG_DEBUG_FMT(
         "[fuse_pose]: kf_idx=%zu t=%f frame='%s' (idx=%zu) p=%s sigmas=%.02e %.02e %.02e (m) %.02e "
@@ -2381,7 +2387,7 @@ void StateEstimationSmoother::fuse_pose_locked(
     {
         // ref is "map":
         mark_map_observed_locked();
-        state_.gtsam->mapPositionObserved = true;
+        mark_map_position_observed_locked();
         mark_orientation_observed_locked(true, true);
         state_.pose_keyframes.insert(this_kf_id);
         state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
@@ -3540,12 +3546,12 @@ StateEstimationSmoother::odometry_frameid_t StateEstimationSmoother::add_or_get_
         state_.gtsam->mapAnchorFrame = newId;
         state_.gtsam->mapAnchorValue = initFramePose;
     }
-    else if (state_.gtsam->mapObserved && !state_.gtsam->orientationAnchorKey)
+    else if (state_.gtsam->mapObserved && !state_.gtsam->odomFrameAnchorKey)
     {
-        // {map} is already observed, maybe in position only:
-        state_.gtsam->orientationAnchorKey   = symbol_T_map_to_odom_i_base + newId;
-        state_.gtsam->orientationAnchorValue = initFramePose;
-        state_.gtsam->update_orientation_anchor();
+        // {map} is already observed, maybe only in part:
+        state_.gtsam->odomFrameAnchorKey   = symbol_T_map_to_odom_i_base + newId;
+        state_.gtsam->odomFrameAnchorValue = initFramePose;
+        state_.gtsam->update_odom_frame_anchor();
     }
 
     return newId;
@@ -3682,16 +3688,27 @@ size_t StateEstimationSmoother::pose_lead_drops() const
 void StateEstimationSmoother::mark_map_observed_locked()
 {
     auto& g = *state_.gtsam;
-    // The map anchor also pinned the orientation of its odometry frame:
-    // keep pinning what no source observes yet.
-    if (g.mapAnchor && !g.orientationAnchorKey)
+    // The map anchor pinned the whole pose of its odometry frame: keep pinning
+    // what no source observes yet.
+    if (g.mapAnchor && !g.odomFrameAnchorKey)
     {
-        g.orientationAnchorKey   = symbol_T_map_to_odom_i_base + g.mapAnchorFrame;
-        g.orientationAnchorValue = g.mapAnchorValue;
-        g.update_orientation_anchor();
+        g.odomFrameAnchorKey   = symbol_T_map_to_odom_i_base + g.mapAnchorFrame;
+        g.odomFrameAnchorValue = g.mapAnchorValue;
+        g.update_odom_frame_anchor();
     }
     g.mapObserved = true;
     g.withdraw_anchor(g.mapAnchor);
+}
+
+void StateEstimationSmoother::mark_map_position_observed_locked()
+{
+    auto& g = *state_.gtsam;
+    if (g.mapPositionObserved)
+    {
+        return;
+    }
+    g.mapPositionObserved = true;
+    g.update_odom_frame_anchor();
 }
 
 void StateEstimationSmoother::mark_orientation_observed_locked(bool rollPitch, bool yaw)
@@ -3703,7 +3720,7 @@ void StateEstimationSmoother::mark_orientation_observed_locked(bool rollPitch, b
     }
     g.rollPitchObserved = g.rollPitchObserved || rollPitch;
     g.yawObserved       = g.yawObserved || yaw;
-    g.update_orientation_anchor();
+    g.update_odom_frame_anchor();
 }
 
 // The identity initial value set above can be arbitrarily far from the truth
@@ -3768,6 +3785,7 @@ void StateEstimationSmoother::process_pending_gtsam_updates_locked()
             "[process_pending_gtsam_updates] GTSAM solve failed (factor graph may be "
             "underconstrained or ill-conditioned). Resetting smoother state. Exception:\n"
             << e.what());
+        solveFailures_++;
 
         // A failed smoother.update() is not strongly exception-safe: it can leave
         // the iSAM2 Bayes tree internally inconsistent, so every later update
@@ -3792,7 +3810,7 @@ void StateEstimationSmoother::solve_locked()
     // arrive ahead of the first pose), its position and heading are held only
     // by weak priors, which some GTSAM versions refuse to factorize. Wait for
     // one, for up to a window length so that the pending data stays bounded.
-    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !link_first_pose_to_origin() &&
+    if (!state_.gtsam->mapObserved && !state_.gtsam->mapAnchor && !state_.gtsam->firstPosePinned &&
         state_.gtsam->smoother->timestamps().empty())
     {
         double oldestStamp = std::numeric_limits<double>::infinity();
@@ -4493,16 +4511,6 @@ void StateEstimationSmoother::initialize_new_frame(
         state_.gtsam->newFactors.addPrior(
             W(id), gtsam::Vector3(tw.wx, tw.wy, tw.wz),
             gtsam::noiseModel::Isotropic::Sigma(3, params_.initial_twist_sigma_ang));
-
-        if (link_first_pose_to_origin())
-        {
-            state_.gtsam->newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
-                T(id), gtsam::Pose3::Identity(),
-                gtsam::noiseModel::Isotropic::Sigma(
-                    6, *params_.link_first_pose_to_reference_origin_sigma));
-            // {map} is this vehicle pose:
-            state_.gtsam->enuLevelRef.emplace(stamp_s, gtsam::Rot3());
-        }
     }
 
     // T: Pose
@@ -5028,6 +5036,21 @@ std::optional<std::pair<double, double>> StateEstimationSmoother::vehicle_enu_si
 bool StateEstimationSmoother::link_first_pose_to_origin() const
 {
     return params_.link_first_pose_to_reference_origin_sigma.has_value() && !mapDefinedBeforeReset_;
+}
+
+void StateEstimationSmoother::pin_first_pose_locked(const frame_index_t kf)
+{
+    auto& g = *state_.gtsam;
+    if (!link_first_pose_to_origin() || g.firstPosePinned)
+    {
+        return;
+    }
+    g.firstPosePinned = true;
+    g.newFactors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
+        T(kf), gtsam::Pose3::Identity(),
+        gtsam::noiseModel::Isotropic::Sigma(6, *params_.link_first_pose_to_reference_origin_sigma));
+    // {map} is this vehicle pose:
+    g.enuLevelRef.emplace(key_stamp_seconds(state_.stamp2frame_index.inverse(kf)), gtsam::Rot3());
 }
 
 void StateEstimationSmoother::buffer_raw_imu_locked(const mrpt::obs::CObservationIMU& imu)

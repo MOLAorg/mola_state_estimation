@@ -282,6 +282,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// other inputs (see Parameters::pose_max_lead_time).
     [[nodiscard]] size_t pose_lead_drops() const;
 
+    /// Number of solves that failed (e.g. an ill-conditioned graph) and reset
+    /// the smoother, since construction.
+    [[nodiscard]] size_t solve_failures() const { return solveFailures_.load(); }
+
     /** Integrates new twist estimation (in the odom frame) */
     void fuse_twist(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
@@ -682,6 +686,8 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     InputStamps        inputStamps_;
     mutable std::mutex inputStampsMutex_;
 
+    std::atomic<size_t> solveFailures_{0};  //!< see solve_failures()
+
 #if defined(MOLA_SMOOTHER_HAS_IMU_BIAS_SOURCE)
     /// IMU bias tracking (imu_bias_tracking), with its own mutex: fed from the raw
     /// data threads, read by the solver and other modules. Never lock stateMutex_
@@ -851,6 +857,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /// Some measurement now observes {map}: its gauge anchor is no longer needed.
     void mark_map_observed_locked();
+    /// Some measurement now observes the position of {map} (not just its
+    /// orientation): the odometry frame anchor stops pinning it.
+    void mark_map_position_observed_locked();
+    /// The first keyframe with a pose or odometry reading gets the
+    /// link_first_pose_to_reference_origin_sigma pin, if any (not an earlier one,
+    /// e.g. an IMU-only keyframe, which would leave the odometry chains anchored
+    /// only through the kinematic factors).
+    void pin_first_pose_locked(frame_index_t kf);
 
     /// False while a fixed geo-reference is set but no source has observed the
     /// position of {map} yet (it is only the first odometry frame then). Runs a pending

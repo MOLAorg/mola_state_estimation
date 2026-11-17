@@ -277,6 +277,7 @@ Other behavior:
 - `estimated_navstate()` returns empty, instead of throwing, while the graph
   cannot be solved yet. Any exception in the solve (`solve_locked()`: update,
   estimate or marginals) is logged and resets the smoother; it never reaches callers.
+  `solve_failures()` counts them (tests that must stay well-conditioned assert 0).
 - Two resets: `reset()` (also after a failed solve) starts from scratch: the next
   poses define {map} again, as after a re-localization. `reset_motion()` keeps
   {map}: odometry frames come back anchored at their live T_map_to_odom_i, whichever
@@ -307,15 +308,19 @@ Other behavior:
   `{map}` (wheel odometry only). `georef_track_after_convergence`: once converged, keep
   updating and publishing the geo-reference even if those marginals grow. Until something relates `{map}` to the vehicle,
   solving is deferred (up to one window). When `{map}` is observed only in
-  position (GNSS with a fixed geo-reference, no attitude), the orientation of
-  that odometry frame stays pinned: roll/pitch until IMU gravity or attitude,
-  yaw until IMU attitude or a GNSS baseline good for ~5 deg; both by a `{map}`
-  pose. `has_converged_localization()` then reports the pinned angles as
+  part, `odomFrameAnchor` keeps pinning the rest of that odometry frame: with
+  GNSS through a fixed geo-reference and no attitude, its orientation (roll/pitch
+  until IMU gravity or attitude, yaw until IMU attitude or a GNSS baseline good
+  for ~5 deg); with IMU attitude through a fixed geo-reference, its position
+  (until GNSS); all by a `{map}` pose. `has_converged_localization()` then reports the pinned angles as
   unknown (yaw sigma pi, roll/pitch pi/2), so a robot without IMU converges on
   position only if `convergence_max_orientation_sigma_deg` allows it. Feature
   macro `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE` (`Parameters.h`).
 - A new `T_map_to_odom_i` is seeded from its first reading. A new key is never
   marginalized in the update that inserts it.
+- `link_first_pose_to_reference_origin_sigma` pins the first keyframe with a pose or
+  odometry reading (`pin_first_pose_locked()`), not an earlier IMU-only one; until
+  then solving is deferred, as for a `{map}` anchor.
 - Observations labeled `ground_truth` are ignored by both estimators unless
   `fuse_ground_truth_label: true`.
 - Optional planar motion (`enforce_planar_motion`).
