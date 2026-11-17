@@ -25,6 +25,9 @@
  *         - isolated multipath jumps;
  *         - a GNSS outage during which the odometry heading drifts, so the
  *           returning fixes are far from the estimate (must be reacquired);
+ *         - the odometry heading drifting away from fixes that keep coming
+ *           (must be reacquired), and a wrong RTK fix moving with the vehicle
+ *           (must never be);
  *         - the bogus source alone after the real receiver goes silent (must
  *           never be reacquired while the vehicle moves), also before the
  *           geo-reference converges;
@@ -64,7 +67,7 @@ using mola::state_estimation_smoother::StateEstimationSmoother;
 
 constexpr double IMU_PERIOD  = 0.01;  // [s]
 constexpr double POSE_PERIOD = 0.1;  // [s]
-constexpr double GNSS_PERIOD = 0.2;  // [s]
+constexpr double GNSS_PERIOD = 0.2;  // [s], by default
 constexpr double HEADING_DEG = 60.0;  // initial vehicle azimuth (ENU yaw)
 
 const mrpt::topography::TGeodeticCoords ORIGIN(36.8281, -2.4074, 130.0);
@@ -94,6 +97,10 @@ enum class FixKind
     Impostor,  //!< datum lat/lon at zero height
     Spike,  //!< multipath jump
     Degraded,  //!< biased by meters, reporting a moderate sigma (RTK float)
+    WrongFix,  //!< a constant offset of meters, with a precise sigma (wrong RTK fix)
+    WrongFloat,  //!< the same offset, reporting a moderate sigma (RTK float after it)
+    WrongNoRtk,  //!< the same offset, reporting a large sigma (no RTK solution)
+    Float,  //!< unbiased, reporting a moderate sigma (RTK float)
     NaNCov,
     ZeroCov,
 };
@@ -111,6 +118,7 @@ struct Scenario
     double      speed               = 3.0;  // [m/s]
     double      gnssSigma           = 0.03;  // [m] (horizontal; vertical is 2x)
     int         fixQuality          = 4;
+    double      gnssPeriod          = GNSS_PERIOD;  // [s]
 
     /// Odometry heading bias [rad/s] as a function of time (default none).
     std::function<double(double)>       odomYawBias = [](double) { return 0.0; };
@@ -212,7 +220,7 @@ Result run(const Scenario& sc, double checkFrom)
     est.initialize(mrpt::containers::yaml::FromText(params));
 
     const size_t nPoseSteps = static_cast<size_t>(POSE_PERIOD / IMU_PERIOD + 0.5);
-    const size_t nGnssSteps = static_cast<size_t>(GNSS_PERIOD / IMU_PERIOD + 0.5);
+    const size_t nGnssSteps = static_cast<size_t>(sc.gnssPeriod / IMU_PERIOD + 0.5);
 
     // Odometry integrated from the true increments, plus an optional heading
     // bias rate (so the heading error accumulates, as with a biased gyro):
@@ -268,6 +276,20 @@ Result run(const Scenario& sc, double checkFrom)
                 case FixKind::Degraded:
                     est.fuse_gnss(makeFix(
                         toGeodetic({p.x + 2.0, p.y - 1.5, p.z + 2.5}), t, 0.5, sc.fixQuality));
+                    break;
+                case FixKind::WrongFix:
+                case FixKind::WrongFloat:
+                case FixKind::WrongNoRtk:
+                {
+                    const double sigma = kind == FixKind::WrongFix     ? sc.gnssSigma
+                                         : kind == FixKind::WrongFloat ? 0.5
+                                                                       : 3.0;
+                    est.fuse_gnss(
+                        makeFix(toGeodetic({p.x + 7.0, p.y, p.z + 3.8}), t, sigma, sc.fixQuality));
+                    break;
+                }
+                case FixKind::Float:
+                    est.fuse_gnss(makeFix(real, t, 0.5, sc.fixQuality));
                     break;
                 case FixKind::NaNCov:
                     est.fuse_gnss(makeFix(
@@ -482,6 +504,62 @@ void test_large_drift_is_reacquired()
     ASSERT_LT_(r.lastErr, 0.5);
 }
 
+void test_drift_with_fixes_reacquired()
+{
+    Scenario sc;
+    sc.name       = "Odometry heading drifts away from fixes that keep coming: reacquired";
+    sc.duration   = 90.0;
+    sc.speed      = 2.0;
+    sc.gnssPeriod = 1.0;
+    // Stiff odometry, so the estimate follows its drift rather than the fixes:
+    sc.extraParams =
+        "    relative_pose_increment_sigma_lin: 0.0005\n"
+        "    relative_pose_increment_sigma_ang: 0.00002\n";
+    sc.odomYawBias = [](double t) { return (t > 20.0 && t < 50.0) ? mrpt::DEG2RAD(2.0) : 0.0; };
+    const auto r   = run(sc, 85.0);
+    // Reacquired as soon as the fixes leave the gate, by the continuity of their
+    // residual, instead of after a run of rejections:
+    ASSERT_GE_(r.stats.reacquired, 1U);
+    ASSERT_LT_(r.stats.rejected_innovation, 3U);
+    ASSERT_LT_(r.maxHorizErr, 0.3);
+}
+
+void test_wrong_rtk_fix_never_reacquired()
+{
+    for (const bool floatBefore : {false, true})
+    {
+        Scenario sc;
+        sc.name = std::string("A wrong RTK fix (7 m off, moving with the vehicle) for 25 s") +
+                  (floatBefore ? ", entered from and left as RTK float" : "") +
+                  ": never reacquired";
+        sc.duration   = 70.0;
+        sc.speed      = 1.0;
+        sc.gnssPeriod = 1.0;
+        // With float before it, also as RTK float (and one fix without RTK) after it:
+        sc.fixKind = [floatBefore](double t, int)
+        {
+            if (floatBefore && t > 41.5 && t < 42.5)
+            {
+                return FixKind::WrongNoRtk;
+            }
+            if (floatBefore && t > 42.5 && t < 55.0)
+            {
+                return FixKind::WrongFloat;
+            }
+            if (t > 30.0 && t < 55.0)
+            {
+                return FixKind::WrongFix;
+            }
+            return (floatBefore && t > 20.0 && t < 30.0) ? FixKind::Float : FixKind::Real;
+        };
+        const auto r = run(sc, 15.0);
+        ASSERT_EQUAL_(r.stats.reacquired, 0U);
+        ASSERT_GE_(r.stats.rejected_innovation, 23U);
+        ASSERT_LT_(r.maxHorizErr, 0.5);
+        ASSERT_EQUAL_(r.stats.consecutive_rejected, 0U);
+    }
+}
+
 void test_impostor_alone_never_reacquired()
 {
     Scenario sc;
@@ -658,6 +736,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_multipath_spikes();
         test_outage_with_heading_drift();
         test_large_drift_is_reacquired();
+        test_drift_with_fixes_reacquired();
+        test_wrong_rtk_fix_never_reacquired();
         test_impostor_alone_never_reacquired();
         test_impostor_alone_before_convergence();
         test_impostor_during_odometry_gap();

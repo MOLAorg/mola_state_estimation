@@ -790,6 +790,21 @@ class Parameters
      *  fixed wrong position look alike. */
     double gnss_gate_reacquire_min_path = 5.0;  // [m]
 
+    /** Reacquisition by the continuity of the residual: the horizontal
+     *  residual (fix minus prediction) of every gated fix is followed from fix
+     *  to fix. If it changed smoothly (by at most its noise plus half the
+     *  predicted motion) since a fix within the nominal gate, and that stretch
+     *  has gnss_gate_reacquire_after fixes with a horizontal sigma (after the
+     *  floors) up to this [m] (e.g. RTK fixed), the receiver kept tracking the
+     *  vehicle while the estimate drifted away from it: the first such fix
+     *  rejected is accepted, without waiting for a run of rejections. A receiver
+     *  fault (e.g. a wrong RTK fix) makes the residual jump instead (a jump
+     *  involving a precise fix): the fixes after it are not reacquired by their
+     *  motion either, only once a precise one is back within the nominal gate,
+     *  after a gap of a few seconds without fixes, or within the gate grown
+     *  with the path. 0 disables all of this. */
+    double gnss_gate_reacquire_max_sigma = 0.2;  // [m]
+
     /** Before the geo-reference converges, consecutive fixes are compared with
      *  each other: they may not be farther apart than this speed allows, plus
      *  their uncertainty [m/s]. */

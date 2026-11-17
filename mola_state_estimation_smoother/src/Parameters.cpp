@@ -195,6 +195,8 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gnss_gate_reacquire_after);
     MCP_LOAD_OPT(cfg, gnss_gate_reacquire_min_path);
     ASSERT_GE_(gnss_gate_reacquire_min_path, 0.0);
+    MCP_LOAD_OPT(cfg, gnss_gate_reacquire_max_sigma);
+    ASSERT_GE_(gnss_gate_reacquire_max_sigma, 0.0);
     MCP_LOAD_OPT(cfg, gnss_max_plausible_speed);
     MCP_LOAD_OPT(cfg, gnss_datum_min_consistent_fixes);
     ASSERT_GE_(gnss_max_horizontal_sigma, 0.0);

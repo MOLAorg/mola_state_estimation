@@ -408,6 +408,7 @@ params:
   gnss_gate_drift_per_meter: ${MOLA_NAVSTATE_GNSS_GATE_DRIFT|0.02}  # [m/m]
   gnss_gate_reacquire_after: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE|10}  # fixes, 0 = never
   gnss_gate_reacquire_min_path: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE_PATH|5.0}  # [m]
+  gnss_gate_reacquire_max_sigma: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE_MAX_SIGMA|0.2}  # [m], 0 = off
   gnss_max_plausible_speed: ${MOLA_NAVSTATE_GNSS_MAX_SPEED|50.0}  # [m/s]
   gnss_datum_min_consistent_fixes: ${MOLA_NAVSTATE_GNSS_DATUM_MIN_FIXES|3}
 
