@@ -64,5 +64,8 @@ mola_add_library(
 
 # -----------------------
 # define tests:
-enable_testing()
-add_subdirectory(tests)
+option(BUILD_TESTING "Build unit tests" ON)
+if(BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

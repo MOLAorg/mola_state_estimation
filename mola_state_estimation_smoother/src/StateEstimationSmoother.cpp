@@ -595,6 +595,14 @@ struct StateEstimationSmoother::GtsamImpl
     std::set<frame_pair_t>                               imuLinksAwaiting;
     gtsam::imuBias::ConstantBias                         lastBias;
     double                                               lastBiasStamp = 0;
+
+    /// Whether keyframe k has an IMU bias variable (pending or in the smoother).
+    [[nodiscard]] bool has_bias(const frame_index_t k) const
+    {
+        return newValues.exists(Z(k)) ||
+               (smoother.has_value() && smoother->getLinearizationPoint().exists(Z(k)));
+    }
+
     /// An instant [s] and the vehicle attitude in {map} known for it, used to
     /// level T_enu_to_map from the accelerometer before its first solve.
     std::optional<std::pair<double, gtsam::Rot3>> enuLevelRef;
@@ -4500,13 +4508,17 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newValues.insert(W(id), angVelocity);
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
-    // Z: IMU biases, seeded with the latest estimate. The first keyframe gets
-    // a prior; every later one is chained by the random walk of its links.
-    if (params_.imu_preintegration.enabled)
+    // Z: IMU biases, seeded with the latest estimate, only once an IMU has been
+    // seen: with nothing observing them, the chain of bias random walks is
+    // ill-conditioned. A keyframe whose closest neighbor has no bias gets a
+    // prior; every other one is chained by the random walk of its links.
+    if (params_.imu_preintegration.enabled && state_.gtsam->pimParams)
     {
+        const bool chained =
+            closest_idx_opt.has_value() && state_.gtsam->has_bias(*closest_idx_opt);
         state_.gtsam->newValues.insert(Z(id), state_.gtsam->lastBias);
         state_.gtsam->newKeyStamps[Z(id)] = stamp_s;
-        if (!closest_idx_opt.has_value())
+        if (!chained)
         {
             const auto&    ip = params_.imu_preintegration;
             gtsam::Vector6 sig;
@@ -4523,7 +4535,7 @@ void StateEstimationSmoother::initialize_new_frame(
             const auto key = bias_key(1 + k, id);
             state_.gtsam->newValues.insert(key, extra[k].lastBias);
             state_.gtsam->newKeyStamps[key] = stamp_s;
-            if (!closest_idx_opt.has_value())
+            if (!chained)
             {
                 const auto&    ip = params_.imu_preintegration;
                 gtsam::Vector6 sig;
@@ -4603,11 +4615,12 @@ void StateEstimationSmoother::add_kinematic_factor_between(
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
 
-    if (params_.imu_preintegration.enabled)
+    if (params_.imu_preintegration.enabled && state_.gtsam->has_bias(from) &&
+        state_.gtsam->has_bias(to))
     {
-        // The bias random walk goes with the link from its creation, so no bias
-        // variable is ever left unconstrained; the preintegration factor itself
-        // is attached once the raw readings cover the link's interval.
+        // The bias random walk goes with the link from its creation; the
+        // preintegration factor itself is attached once the raw readings cover
+        // the link's interval.
         const auto&    ip  = params_.imu_preintegration;
         const double   adt = std::max(std::abs(dt), 1e-3);
         gtsam::Vector6 sig;
@@ -5185,6 +5198,11 @@ void StateEstimationSmoother::attach_extra_gyro_factors_locked()
                 std::swap(i, j);
                 std::swap(ti, tj);
             }
+            if (!g.has_bias(i))
+            {
+                it = s.linksAwaiting.erase(it);
+                continue;
+            }
             if (newest < tj)
             {
                 ++it;
@@ -5235,6 +5253,11 @@ void StateEstimationSmoother::attach_imu_factors_locked()
         {
             std::swap(i, j);
             std::swap(ti, tj);
+        }
+        if (!g.has_bias(i))
+        {
+            it = g.imuLinksAwaiting.erase(it);  // created before any IMU reading
+            continue;
         }
         if (newestImu < tj)
         {
