@@ -23,6 +23,7 @@
 #include <mola_state_estimation_smoother/StateEstimationSmoother.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/math/CMatrixFixed.h>
+#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/poses/CPose3D.h>
 #include <mrpt/poses/CPose3DPDFGaussian.h>
 
@@ -30,6 +31,7 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <utility>
 
 using namespace std::string_literals;
 
@@ -138,11 +140,25 @@ bool initialize_throws(const std::string& incrementSigmaLines)
     return false;
 }
 
-double loaded_sigma_lin(const std::string& extraLines)
+/// The linear increment sigma in use, before and after one IMU reading.
+std::pair<double, double> sigma_lin_in_use(const std::string& extraLines)
 {
     mola::state_estimation_smoother::StateEstimationSmoother est;
     est.initialize(mrpt::containers::yaml::FromText(params_yaml(extraLines)));
-    return est.parameters().relative_pose_increment_sigma_lin;
+    const double before = est.relative_pose_increment_sigma_lin_in_use();
+
+    mrpt::obs::CObservationIMU imu;
+    imu.timestamp   = mrpt::Clock::fromDouble(1.0);
+    imu.sensorLabel = "imu";
+    imu.set(mrpt::obs::IMU_X_ACC, 0.0);
+    imu.set(mrpt::obs::IMU_Y_ACC, 0.0);
+    imu.set(mrpt::obs::IMU_Z_ACC, 9.81);
+    imu.set(mrpt::obs::IMU_WX, 0.0);
+    imu.set(mrpt::obs::IMU_WY, 0.0);
+    imu.set(mrpt::obs::IMU_WZ, 0.0);
+    est.fuse_imu(imu);
+
+    return {before, est.relative_pose_increment_sigma_lin_in_use()};
 }
 
 void run_test()
@@ -186,14 +202,21 @@ void run_test()
     ASSERT_(initialize_throws("    relative_pose_increment_sigma_ang: 0.0\n"));
     ASSERT_(!initialize_throws(sigma_lines(INCREMENT_SIGMA)));
 
-    // Automatic linear sigma: tight while IMU preintegration takes the motion
-    // between keyframes, looser otherwise. An explicit value is kept as given.
-    const double withPreint = loaded_sigma_lin("");
-    const double noPreint   = loaded_sigma_lin("    imu_preintegration:\n        enabled: false\n");
-    std::cout << "automatic sigma_lin: " << withPreint << " m with preintegration, " << noPreint
-              << " m without\n";
-    ASSERT_LT_(withPreint, 0.1 * noPreint);
-    ASSERT_EQUAL_(loaded_sigma_lin("    relative_pose_increment_sigma_lin: 0.03\n"), 0.03);
+    // Automatic linear sigma: tight once IMU preintegration takes the motion
+    // between keyframes, looser otherwise (also while no IMU has been seen, as
+    // for LiDAR odometry alone). An explicit value is kept as given.
+    const auto withPreint = sigma_lin_in_use("");
+    const auto noPreint   = sigma_lin_in_use("    imu_preintegration:\n        enabled: false\n");
+    const auto gyroOnly   = sigma_lin_in_use("    imu_preintegration:\n        gyro_only: true\n");
+    const auto explicitSigma = sigma_lin_in_use("    relative_pose_increment_sigma_lin: 0.03\n");
+    std::cout << "automatic sigma_lin with preintegration: " << withPreint.first
+              << " m before an IMU reading, " << withPreint.second << " m after\n";
+    ASSERT_EQUAL_(withPreint.first, noPreint.first);
+    ASSERT_LT_(withPreint.second, 0.1 * withPreint.first);
+    ASSERT_EQUAL_(noPreint.second, noPreint.first);
+    ASSERT_EQUAL_(gyroOnly.second, noPreint.first);
+    ASSERT_EQUAL_(explicitSigma.first, 0.03);
+    ASSERT_EQUAL_(explicitSigma.second, 0.03);
 }
 
 }  // namespace

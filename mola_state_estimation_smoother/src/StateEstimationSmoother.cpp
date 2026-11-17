@@ -596,11 +596,13 @@ struct StateEstimationSmoother::GtsamImpl
     gtsam::imuBias::ConstantBias                         lastBias;
     double                                               lastBiasStamp = 0;
 
-    /// Whether keyframe k has an IMU bias variable (pending or in the smoother).
-    [[nodiscard]] bool has_bias(const frame_index_t k) const
+    /// Whether keyframe k has a bias variable of IMU `imuIdx` (0: the first
+    /// one, see bias_key()), pending or in the smoother.
+    [[nodiscard]] bool has_bias(const frame_index_t k, const size_t imuIdx = 0) const
     {
-        return newValues.exists(Z(k)) ||
-               (smoother.has_value() && smoother->getLinearizationPoint().exists(Z(k)));
+        const auto key = bias_key(imuIdx, k);
+        return newValues.exists(key) ||
+               (smoother.has_value() && smoother->getLinearizationPoint().exists(key));
     }
 
     /// An instant [s] and the vehicle attitude in {map} known for it, used to
@@ -2455,7 +2457,7 @@ void StateEstimationSmoother::fuse_pose_locked(
                     mrpt::poses::Lie::SO<3>::log(increment.getRotationMatrix()).norm();
 
                 const double varLin =
-                    mrpt::square(params_.relative_pose_increment_sigma_lin) +
+                    mrpt::square(relative_pose_increment_sigma_lin_locked()) +
                     mrpt::square(params_.relative_pose_increment_sigma_per_sqrt_meter) * dL;
                 const double varAng =
                     mrpt::square(params_.relative_pose_increment_sigma_ang) +
@@ -4508,42 +4510,34 @@ void StateEstimationSmoother::initialize_new_frame(
     state_.gtsam->newValues.insert(W(id), angVelocity);
     state_.gtsam->newKeyStamps[W(id)] = stamp_s;
 
-    // Z: IMU biases, seeded with the latest estimate, only once an IMU has been
-    // seen: with nothing observing them, the chain of bias random walks is
-    // ill-conditioned. A keyframe whose closest neighbor has no bias gets a
-    // prior; every other one is chained by the random walk of its links.
+    // IMU biases (Z, and Y, X for the other IMUs with gyro_only and max_imus > 1),
+    // seeded with the latest estimate, only once that IMU has been seen: with
+    // nothing observing them, the chain of bias random walks is ill-conditioned.
+    // A keyframe whose closest neighbor has no bias of that IMU gets a prior;
+    // every other one is chained by the random walk of its links.
     if (params_.imu_preintegration.enabled && state_.gtsam->pimParams)
     {
-        const bool chained =
-            closest_idx_opt.has_value() && state_.gtsam->has_bias(*closest_idx_opt);
-        state_.gtsam->newValues.insert(Z(id), state_.gtsam->lastBias);
-        state_.gtsam->newKeyStamps[Z(id)] = stamp_s;
-        if (!chained)
+        auto& g = *state_.gtsam;
+        g.extraGyros.resize(num_imu_bias_chains() - 1);
+        for (size_t imuIdx = 0; imuIdx < num_imu_bias_chains(); imuIdx++)
         {
+            if (imuIdx > 0 && g.extraGyros[imuIdx - 1].label.empty())
+            {
+                continue;  // that IMU not seen yet
+            }
+            const auto key = bias_key(imuIdx, id);
+            g.newValues.insert(key, imuIdx == 0 ? g.lastBias : g.extraGyros[imuIdx - 1].lastBias);
+            g.newKeyStamps[key] = stamp_s;
+            if (closest_idx_opt.has_value() && g.has_bias(*closest_idx_opt, imuIdx))
+            {
+                continue;  // chained
+            }
             const auto&    ip = params_.imu_preintegration;
             gtsam::Vector6 sig;
             sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
                 gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
-            state_.gtsam->newFactors.addPrior(
-                Z(id), gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
-        }
-        // The same for the other IMUs (gyro_only, max_imus > 1):
-        auto& extra = state_.gtsam->extraGyros;
-        extra.resize(num_imu_bias_chains() - 1);
-        for (size_t k = 0; k < extra.size(); k++)
-        {
-            const auto key = bias_key(1 + k, id);
-            state_.gtsam->newValues.insert(key, extra[k].lastBias);
-            state_.gtsam->newKeyStamps[key] = stamp_s;
-            if (!chained)
-            {
-                const auto&    ip = params_.imu_preintegration;
-                gtsam::Vector6 sig;
-                sig << gtsam::Vector3::Constant(ip.initial_accel_bias_sigma),
-                    gtsam::Vector3::Constant(ip.initial_gyro_bias_sigma);
-                state_.gtsam->newFactors.addPrior(
-                    key, gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
-            }
+            g.newFactors.addPrior(
+                key, gtsam::imuBias::ConstantBias(), gtsam::noiseModel::Diagonal::Sigmas(sig));
         }
     }
 
@@ -4615,28 +4609,33 @@ void StateEstimationSmoother::add_kinematic_factor_between(
             THROW_EXCEPTION("Invalid kinematic_model value");
     }
 
-    if (params_.imu_preintegration.enabled && state_.gtsam->has_bias(from) &&
-        state_.gtsam->has_bias(to))
+    // The bias random walk of each IMU goes with the link from its creation, if
+    // both keyframes have that bias; the preintegration factor itself is attached
+    // once the raw readings cover the link's interval.
+    const auto&    ip  = params_.imu_preintegration;
+    const double   adt = std::max(std::abs(dt), 1e-3);
+    gtsam::Vector6 sig;
+    sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
+        gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
+    auto&      g       = *state_.gtsam;
+    const auto linkKey = GtsamImpl::link_key(from, to);
+    for (size_t imuIdx = 0; imuIdx < num_imu_bias_chains(); imuIdx++)
     {
-        // The bias random walk goes with the link from its creation; the
-        // preintegration factor itself is attached once the raw readings cover
-        // the link's interval.
-        const auto&    ip  = params_.imu_preintegration;
-        const double   adt = std::max(std::abs(dt), 1e-3);
-        gtsam::Vector6 sig;
-        sig << gtsam::Vector3::Constant(ip.accel_bias_random_walk * std::sqrt(adt)),
-            gtsam::Vector3::Constant(ip.gyro_bias_random_walk * std::sqrt(adt));
-        auto& sink = state_.gtsam->pendingKinematic[GtsamImpl::link_key(from, to)];
-        for (size_t k = 0; k < num_imu_bias_chains(); k++)
+        if (!g.has_bias(from, imuIdx) || !g.has_bias(to, imuIdx))
         {
-            sink.emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
-                bias_key(k, from), bias_key(k, to), gtsam::imuBias::ConstantBias(),
-                gtsam::noiseModel::Diagonal::Sigmas(sig));
+            continue;
         }
-        state_.gtsam->imuLinksAwaiting.insert(GtsamImpl::link_key(from, to));
-        for (auto& e : state_.gtsam->extraGyros)
+        g.pendingKinematic[linkKey]
+            .emplace_shared<gtsam::BetweenFactor<gtsam::imuBias::ConstantBias>>(
+                bias_key(imuIdx, from), bias_key(imuIdx, to), gtsam::imuBias::ConstantBias(),
+                gtsam::noiseModel::Diagonal::Sigmas(sig));
+        if (imuIdx == 0)
         {
-            e.linksAwaiting.insert(GtsamImpl::link_key(from, to));
+            g.imuLinksAwaiting.insert(linkKey);
+        }
+        else
+        {
+            g.extraGyros.at(imuIdx - 1).linksAwaiting.insert(linkKey);
         }
     }
 }
@@ -4941,6 +4940,24 @@ void StateEstimationSmoother::check_kept_geo_reference_locked()
     MRPT_LOG_INFO("reset_motion(): {map} is the same frame, so the geo-reference is kept");
 }
 
+double StateEstimationSmoother::relative_pose_increment_sigma_lin_locked() const
+{
+    if (params_.relative_pose_increment_sigma_lin > 0)
+    {
+        return params_.relative_pose_increment_sigma_lin;
+    }
+    // The tight value pays off only while full IMU preintegration takes the
+    // motion between keyframes:
+    const auto& ip = params_.imu_preintegration;
+    return ip.enabled && !ip.gyro_only && state_.gtsam->pimParams ? 1e-4 : 0.02;
+}
+
+double StateEstimationSmoother::relative_pose_increment_sigma_lin_in_use() const
+{
+    auto lck = mrpt::lockHelper(stateMutex_);
+    return relative_pose_increment_sigma_lin_locked();
+}
+
 size_t StateEstimationSmoother::num_imu_bias_chains() const
 {
     const auto& ip = params_.imu_preintegration;
@@ -5198,7 +5215,7 @@ void StateEstimationSmoother::attach_extra_gyro_factors_locked()
                 std::swap(i, j);
                 std::swap(ti, tj);
             }
-            if (!g.has_bias(i))
+            if (!g.has_bias(i, 1 + k))
             {
                 it = s.linksAwaiting.erase(it);
                 continue;

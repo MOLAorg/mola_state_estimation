@@ -365,6 +365,11 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     [[nodiscard]] std::set<std::pair<mrpt::Clock::time_point, mrpt::Clock::time_point>>
         const_vel_factor_links_for_testing() const;
 
+    /** The linear sigma of the next odometry-frame increment: the configured
+     *  relative_pose_increment_sigma_lin, or, if 0 (automatic), 0.1 mm once an IMU
+     *  is being preintegrated (not gyro_only) and 2 cm otherwise. */
+    [[nodiscard]] double relative_pose_increment_sigma_lin_in_use() const;
+
     /** @} */
 
     // Implementation of RawDataConsumer
@@ -977,6 +982,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// keyframe `kf`, from the joint marginal of T_enu_to_map and its pose.
     std::optional<std::pair<double, double>> vehicle_enu_sigmas_locked(
         const gtsam::Values& values, frame_index_t kf) const;
+    double relative_pose_increment_sigma_lin_locked() const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
 

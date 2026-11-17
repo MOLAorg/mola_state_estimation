@@ -15,7 +15,8 @@
 /**
  * @file   test-imu-preintegration-without-imu.cpp
  * @brief  With imu_preintegration enabled but no IMU at all (odometry only), the
- *         estimates must be the same as with it disabled.
+ *         estimates must be the same as with it disabled, also with the
+ *         automatic relative_pose_increment_sigma_lin.
  * @author Jose Luis Blanco Claraco
  */
 
@@ -39,7 +40,7 @@ params:
     max_time_to_use_velocity_model: 2.0
     kinematic_model: KinematicModel::ConstantVelocity
     sliding_window_length: 2.0
-    relative_pose_increment_sigma_lin: 0.02
+    relative_pose_increment_sigma_lin: SIGMA_LIN
     relative_pose_increment_sigma_ang: 1e-5
     link_first_pose_to_reference_origin_sigma: 1e-6
     async_backend: false
@@ -48,10 +49,11 @@ params:
 )###";
 
 // The estimated poses for an accelerating, turning vehicle seen by odometry only:
-std::vector<mrpt::poses::CPose3D> run(bool preintegration)
+std::vector<mrpt::poses::CPose3D> run(bool preintegration, const std::string& sigmaLin)
 {
     std::string yaml = PARAMS;
     yaml.replace(yaml.find("ENABLED"), 7, preintegration ? "true" : "false");
+    yaml.replace(yaml.find("SIGMA_LIN"), 9, sigmaLin);
 
     mola::state_estimation_smoother::StateEstimationSmoother nav;
     nav.initialize(mrpt::containers::yaml::FromText(yaml));
@@ -85,17 +87,22 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     try
     {
-        const auto without = run(false);
-        const auto with    = run(true);
-        ASSERT_EQUAL_(without.size(), with.size());
-
-        double maxDiff = 0;
-        for (size_t i = 0; i < with.size(); i++)
+        // "0": automatic sigma, which must not assume an IMU that never came.
+        for (const std::string sigmaLin : {"0.02", "0"})
         {
-            maxDiff = std::max(maxDiff, (with[i].asTPose() - without[i].asTPose()).norm());
+            const auto without = run(false, sigmaLin);
+            const auto with    = run(true, sigmaLin);
+            ASSERT_EQUAL_(without.size(), with.size());
+
+            double maxDiff = 0;
+            for (size_t i = 0; i < with.size(); i++)
+            {
+                maxDiff = std::max(maxDiff, (with[i].asTPose() - without[i].asTPose()).norm());
+            }
+            std::cout << "relative_pose_increment_sigma_lin: " << sigmaLin
+                      << ", largest pose difference, enabled vs disabled: " << maxDiff << "\n";
+            ASSERT_LT_(maxDiff, 1e-6);
         }
-        std::cout << "Largest pose difference, enabled vs disabled: " << maxDiff << "\n";
-        ASSERT_LT_(maxDiff, 1e-6);
 
         std::cout << "All tests passed." << std::endl;
         return 0;
