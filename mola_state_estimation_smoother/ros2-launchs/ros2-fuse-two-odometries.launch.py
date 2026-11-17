@@ -38,6 +38,12 @@ def generate_launch_description():
         description="Sensor label for first odometry source")
     odom1_label_env = SetEnvironmentVariable(
         name='ODOM1_LABEL', value=LaunchConfiguration('odom1_label'))
+    odom1_as_robot_pose_arg = DeclareLaunchArgument(
+        "odom1_as_robot_pose", default_value="True",
+        description="True for SE(3) odometry (LiDAR, visual), False for planar wheel "
+                    "odometry (smoother wheel motion model)")
+    odom1_as_robot_pose_env = SetEnvironmentVariable(
+        name='ODOM1_AS_ROBOT_POSE', value=LaunchConfiguration('odom1_as_robot_pose'))
 
     odom2_topic_arg = DeclareLaunchArgument(
         "odom2_topic", default_value="/visual_odom",
@@ -50,6 +56,12 @@ def generate_launch_description():
         description="Sensor label for second odometry source")
     odom2_label_env = SetEnvironmentVariable(
         name='ODOM2_LABEL', value=LaunchConfiguration('odom2_label'))
+    odom2_as_robot_pose_arg = DeclareLaunchArgument(
+        "odom2_as_robot_pose", default_value="True",
+        description="True for SE(3) odometry (LiDAR, visual), False for planar wheel "
+                    "odometry (smoother wheel motion model)")
+    odom2_as_robot_pose_env = SetEnvironmentVariable(
+        name='ODOM2_AS_ROBOT_POSE', value=LaunchConfiguration('odom2_as_robot_pose'))
 
     imu_topic_arg = DeclareLaunchArgument(
         "imu_topic_name", default_value="/imu",
@@ -136,8 +148,10 @@ def generate_launch_description():
         declare_use_namespace_cmd,
         odom1_topic_arg, odom1_env,
         odom1_label_arg, odom1_label_env,
+        odom1_as_robot_pose_arg, odom1_as_robot_pose_env,
         odom2_topic_arg, odom2_env,
         odom2_label_arg, odom2_label_env,
+        odom2_as_robot_pose_arg, odom2_as_robot_pose_env,
         imu_topic_arg, imu_env,
         gnss_topic_arg, gnss_env,
         use_mola_gui_arg, use_mola_gui_env,

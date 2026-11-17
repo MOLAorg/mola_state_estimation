@@ -55,6 +55,10 @@ def generate_launch_description():
     odom1_label_arg = DeclareLaunchArgument(
         "odom1_label", default_value="odom1",
         description="Sensor label for 1st odometry source")
+    odom1_as_robot_pose_arg = DeclareLaunchArgument(
+        "odom1_as_robot_pose", default_value="True",
+        description="1st odometry: True for SE(3) odometry (LiDAR, visual), False for "
+                    "planar wheel odometry (smoother wheel motion model)")
 
     odom2_topic_arg = DeclareLaunchArgument(
         "odom2_topic", default_value="",
@@ -62,6 +66,10 @@ def generate_launch_description():
     odom2_label_arg = DeclareLaunchArgument(
         "odom2_label", default_value="odom2",
         description="Sensor label for 2nd odometry source")
+    odom2_as_robot_pose_arg = DeclareLaunchArgument(
+        "odom2_as_robot_pose", default_value="True",
+        description="2nd odometry: True for SE(3) odometry (LiDAR, visual), False for "
+                    "planar wheel odometry (smoother wheel motion model)")
 
     odom3_topic_arg = DeclareLaunchArgument(
         "odom3_topic", default_value="",
@@ -69,6 +77,19 @@ def generate_launch_description():
     odom3_label_arg = DeclareLaunchArgument(
         "odom3_label", default_value="odom3",
         description="Sensor label for 3rd odometry source")
+    odom3_as_robot_pose_arg = DeclareLaunchArgument(
+        "odom3_as_robot_pose", default_value="True",
+        description="3rd odometry: True for SE(3) odometry (LiDAR, visual), False for "
+                    "planar wheel odometry (smoother wheel motion model)")
+
+    imu_preintegration_gyro_only_arg = DeclareLaunchArgument(
+        "imu_preintegration_gyro_only", default_value="",
+        description="True: preintegrate only the gyroscopes (needed for 2 IMUs). "
+                    "Empty: use the params YAML value.")
+    imu_preintegration_max_imus_arg = DeclareLaunchArgument(
+        "imu_preintegration_max_imus", default_value="",
+        description="Number of IMUs whose gyroscopes are preintegrated (1-3; >1 needs "
+                    "imu_preintegration_gyro_only:=True). Empty: use the params YAML value.")
 
     def _set_optional_smoother_env_vars(context, *args, **kwargs):
         # Only override the params YAML when an argument is given: an env var
@@ -78,6 +99,8 @@ def generate_launch_description():
             'navstate_sliding_window_sec': 'MOLA_NAVSTATE_SLIDING_WINDOW_SEC',
             'navstate_sigma_random_walk_linacc': 'MOLA_NAVSTATE_SIGMA_RANDOM_WALK_LINACC',
             'navstate_sigma_random_walk_angacc': 'MOLA_NAVSTATE_SIGMA_RANDOM_WALK_ANGACC',
+            'imu_preintegration_gyro_only': 'MOLA_SMOOTHER_IMU_PREINTEGRATION_GYRO_ONLY',
+            'imu_preintegration_max_imus': 'MOLA_SMOOTHER_IMU_PREINTEGRATION_MAX_IMUS',
         }
         actions = []
         for arg, env in arg_to_env.items():
@@ -96,10 +119,16 @@ def generate_launch_description():
                                LaunchConfiguration('estimate_geo_reference')),
         SetEnvironmentVariable('ODOM1_TOPIC', LaunchConfiguration('odom1_topic')),
         SetEnvironmentVariable('ODOM1_LABEL', LaunchConfiguration('odom1_label')),
+        SetEnvironmentVariable('ODOM1_AS_ROBOT_POSE',
+                               LaunchConfiguration('odom1_as_robot_pose')),
         SetEnvironmentVariable('ODOM2_TOPIC', LaunchConfiguration('odom2_topic')),
         SetEnvironmentVariable('ODOM2_LABEL', LaunchConfiguration('odom2_label')),
+        SetEnvironmentVariable('ODOM2_AS_ROBOT_POSE',
+                               LaunchConfiguration('odom2_as_robot_pose')),
         SetEnvironmentVariable('ODOM3_TOPIC', LaunchConfiguration('odom3_topic')),
         SetEnvironmentVariable('ODOM3_LABEL', LaunchConfiguration('odom3_label')),
+        SetEnvironmentVariable('ODOM3_AS_ROBOT_POSE',
+                               LaunchConfiguration('odom3_as_robot_pose')),
     ]
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -114,7 +143,8 @@ def generate_launch_description():
 
     ignore_imu_pose_from_tf_arg = DeclareLaunchArgument(
         "ignore_imu_pose_from_tf", default_value="false",
-        description="If true, IMU pose is assumed at base_link origin.")
+        description="If true, the IMU poses are assumed at base_link origin, aligned "
+                    "with it (both IMUs).")
     ignore_imu_pose_from_tf_env = SetEnvironmentVariable(
         name='MOLA_USE_FIXED_IMU_POSE',
         value=LaunchConfiguration('ignore_imu_pose_from_tf'))
@@ -130,6 +160,28 @@ def generate_launch_description():
         description="IMU topic (empty to disable)")
     imu_topic_env = SetEnvironmentVariable(
         name='IMU_TOPIC', value=LaunchConfiguration('imu_topic_name'))
+
+    imu2_topic_name_arg = DeclareLaunchArgument(
+        "imu2_topic_name", default_value="",
+        description="2nd IMU topic (empty to disable). Both gyroscopes are preintegrated "
+                    "only with imu_preintegration_gyro_only:=True and "
+                    "imu_preintegration_max_imus:=2; otherwise only the first IMU heard is")
+    imu2_topic_env = SetEnvironmentVariable(
+        name='IMU2_TOPIC', value=LaunchConfiguration('imu2_topic_name'))
+
+    use_sim_time_arg = DeclareLaunchArgument(
+        "use_sim_time", default_value="False",
+        description="Use the /clock topic (e.g. 'ros2 bag play --clock'), and stamp the "
+                    "published poses and /tf with the input data times")
+
+    def _set_sim_time_env(context, *args, **kwargs):
+        # Only when enabled: otherwise keep any value the user exported.
+        value = LaunchConfiguration('use_sim_time').perform(context).strip().lower()
+        if value in ('true', '1', 'yes'):
+            return [SetEnvironmentVariable(name='MOLA_ROS2_PUBLISH_IN_SIM_TIME', value='true')]
+        return []
+
+    use_sim_time_env = OpaqueFunction(function=_set_sim_time_env)
 
     use_mola_gui_arg = DeclareLaunchArgument(
         "use_mola_gui", default_value="True",
@@ -222,6 +274,7 @@ def generate_launch_description():
             output='screen',
             remappings=tf_remaps,
             arguments=[mola_system_yaml_file],
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
             on_exit=Shutdown()
         )
     ])
@@ -235,9 +288,10 @@ def generate_launch_description():
         navstate_sigma_random_walk_linacc_arg,
         navstate_sigma_random_walk_angacc_arg,
         estimate_geo_reference_arg,
-        odom1_topic_arg, odom1_label_arg,
-        odom2_topic_arg, odom2_label_arg,
-        odom3_topic_arg, odom3_label_arg,
+        odom1_topic_arg, odom1_label_arg, odom1_as_robot_pose_arg,
+        odom2_topic_arg, odom2_label_arg, odom2_as_robot_pose_arg,
+        odom3_topic_arg, odom3_label_arg, odom3_as_robot_pose_arg,
+        imu_preintegration_gyro_only_arg, imu_preintegration_max_imus_arg,
         *smoother_env_vars,
         optional_smoother_env_vars,
         # BridgeROS2
@@ -247,6 +301,8 @@ def generate_launch_description():
         ignore_imu_pose_from_tf_arg, ignore_imu_pose_from_tf_env,
         ignore_lidar_pose_from_tf_arg, ignore_lidar_pose_from_tf_env,
         imu_topic_name_arg, imu_topic_env,
+        imu2_topic_name_arg, imu2_topic_env,
+        use_sim_time_arg, use_sim_time_env,
         mola_footprint_to_base_link_tf_arg, mola_footprint_to_base_link_tf_env,
         mola_se_reference_frame_arg, mola_tf_map_env,
         mola_tf_base_link_arg, mola_tf_base_link_env,
