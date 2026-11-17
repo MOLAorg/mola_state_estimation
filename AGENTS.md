@@ -82,7 +82,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (48) | `tests/test-*.cpp` |
+| Unit tests (50) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -97,7 +97,8 @@ Structure:
   `Z(k)` (`imuBias::ConstantBias`), chained by a random walk on every link
   between keyframes having them (prior if the closest one has none); with
   `gyro_only` and `max_imus` > 1, one chain per extra IMU (`Y(k)`, `X(k)`,
-  `bias_key()`).
+  `bias_key()`), also only once that IMU has been seen
+  (`test-imu-bias-chains-unseen-imu`).
 - Keyframes are created per timestamp, reusing an existing one closer than
   `min_time_difference_to_create_new_frame` (the first neighbor found; GNSS asks
   for the closest one); consecutive keyframes are linked
@@ -198,8 +199,9 @@ Relative formulation (wheel odometry and every non-`{map}` `fuse_pose()` source)
 - A factor whose previous keyframe was already marginalized is skipped.
 - For `fuse_pose()` sources, the increment covariance is diagonal, from
   `relative_pose_increment_sigma_lin`/`_ang` (defaults tuned for LiDAR odometry:
-  `_ang` 1e-5 rad; `_lin` 0 = automatic, resolved by `loadFrom()` to 0.1 mm with
-  full preintegration on and available, 2 cm otherwise); the supplied covariance is
+  `_ang` 1e-5 rad; `_lin` 0 = automatic, chosen per increment
+  (`relative_pose_increment_sigma_lin_in_use()`): 0.1 mm once an IMU is being
+  preintegrated (not `gyro_only`), 2 cm otherwise); the supplied covariance is
   only used by the anchor factor. `relative_pose_increment_sigma_per_sqrt_meter`/`_per_sqrt_rad` add
   a variance growing linearly with the increment size (random walk).
 

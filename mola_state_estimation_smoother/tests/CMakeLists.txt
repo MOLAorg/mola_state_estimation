@@ -63,6 +63,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-imu-bias-chains-unseen-imu
+  SOURCES test-imu-bias-chains-unseen-imu.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-pose-keyframe-decimation
   SOURCES test-pose-keyframe-decimation.cpp
   LINK_LIBRARIES

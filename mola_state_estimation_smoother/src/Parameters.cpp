@@ -271,12 +271,6 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         "relative_pose_increment_sigma_lin must be >= 0 (0: automatic) and "
         "relative_pose_increment_sigma_ang > 0: they define the uncertainty of "
         "each increment of an odometry source fused with fuse_pose()");
-    if (relative_pose_increment_sigma_lin == 0)
-    {
-        // The tight value pays off only together with full IMU preintegration:
-        relative_pose_increment_sigma_lin =
-            imu_preintegration.enabled && !imu_preintegration.gyro_only ? 1e-4 : 0.02;
-    }
     ASSERTMSG_(
         relative_pose_increment_sigma_per_sqrt_meter >= 0 &&
             relative_pose_increment_sigma_per_sqrt_rad >= 0,

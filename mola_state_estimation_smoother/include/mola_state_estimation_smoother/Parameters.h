@@ -306,8 +306,10 @@ class Parameters
      * relative_pose_increment_sigma_per_sqrt_meter, which scales with the
      * increment and so with pose_min_sample_period. [m]
      *
-     * 0 (default) = automatic, set by loadFrom(): 0.1 mm while IMU preintegration
-     * is enabled, 2 cm otherwise. Both values, and
+     * 0 (default) = automatic, chosen per increment: 0.1 mm once an IMU is
+     * being preintegrated (not gyro_only), 2 cm otherwise (e.g. no IMU at all).
+     * See StateEstimationSmoother::relative_pose_increment_sigma_lin_in_use().
+     * Both values, and
      * the default relative_pose_increment_sigma_ang, suit LiDAR odometry; wheel
      * or visual odometry needs its own (e.g. 2 cm and 5 mrad).
      */
