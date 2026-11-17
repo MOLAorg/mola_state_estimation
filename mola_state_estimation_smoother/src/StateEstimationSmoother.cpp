@@ -173,6 +173,10 @@ constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 // the square root of their original diagonal entry, i.e. a ratio above ~4096).
 constexpr double MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO = 1000.0;
 
+// Longest time between two fixes of a residual continuity chain [s] (see
+// Parameters::gnss_gate_reacquire_max_sigma).
+constexpr double GNSS_RESIDUAL_CHAIN_MAX_GAP = 5.0;
+
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
 
@@ -6785,8 +6789,76 @@ bool StateEstimationSmoother::gnss_gate_locked(
         return accept();
     };
 
+    // Continuity of the horizontal residual (fix minus prediction) from fix to
+    // fix. A residual that grew smoothly from within the nominal gate means the
+    // estimate drifted away from a receiver that kept tracking the vehicle; a
+    // receiver fault (e.g. a wrong RTK fix) makes it jump. Its step may grow with
+    // the predicted motion, for heading errors up to ~30 deg. Only precise fixes
+    // count as evidence (anchors, jumps, the length of a stretch): degraded ones
+    // may slide smoothly along with their error.
+    const double sigmaXY  = std::sqrt(std::max(enuVarFloored[0], enuVarFloored[1]));
+    const bool   useChain = params_.gnss_gate_reacquire_max_sigma > 0;
+    const bool   precise  = useChain && sigmaXY <= params_.gnss_gate_reacquire_max_sigma;
+    if (useChain)
+    {
+        const mrpt::math::TPoint2D rXY(r.x, r.y);
+        auto&                      chain      = gg.residualChain;
+        bool                       continuous = false;
+        bool                       jumped     = false;
+        if (chain)
+        {
+            const double dt = std::abs(mrpt::system::timeDifference(chain->t, gps.timestamp));
+            const double predStep =
+                std::hypot(predEnu.x - chain->predEnu.x, predEnu.y - chain->predEnu.y);
+            const double tol    = 3.0 * std::hypot(chain->sigma, sigmaXY) + 0.5 * predStep;
+            const bool   inTime = dt <= GNSS_RESIDUAL_CHAIN_MAX_GAP;
+            continuous          = inTime && (rXY - chain->residual).norm() <= tol;
+            // A jump is evidence only if a precise fix takes part in it:
+            const bool preciseStep =
+                precise || chain->sigma <= params_.gnss_gate_reacquire_max_sigma;
+            jumped = inTime && !continuous && preciseStep;
+        }
+        if (!continuous)
+        {
+            chain.emplace();
+            chain->afterJump = jumped;
+        }
+        if (precise &&
+            rXY.norm() <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaXY))
+        {
+            chain->anchored  = true;
+            chain->afterJump = false;
+        }
+        if (precise && chain->anchored)
+        {
+            chain->precise++;
+        }
+        chain->residual = rXY;
+        chain->predEnu  = predEnu;
+        chain->t        = gps.timestamp;
+        chain->sigma    = sigmaXY;
+        MRPT_LOG_DEBUG_FMT(
+            "[gate-chain] t=%.2f r=(%.2f %.2f) |r|=%.2f sigma=%.2f continuous=%d jumped=%d "
+            "anchored=%d precise=%zu afterJump=%d",
+            mrpt::Clock::toDouble(gps.timestamp), rXY.x, rXY.y, rXY.norm(), sigmaXY,
+            continuous ? 1 : 0, jumped ? 1 : 0, chain->anchored ? 1 : 0, chain->precise,
+            chain->afterJump ? 1 : 0);
+    }
+
     if (d2 <= params_.gnss_gate_chi2)
     {
+        return onAccepted();
+    }
+
+    if (params_.gnss_gate_reacquire_after > 0 && precise && gg.residualChain->anchored &&
+        gg.residualChain->precise >= static_cast<size_t>(params_.gnss_gate_reacquire_after))
+    {
+        st.reacquired++;
+        MRPT_LOG_WARN_FMT(
+            "[fuse_gnss] Accepting GNSS again: its residual (%.2f m, chi2 %.1f > %.1f) grew "
+            "smoothly over %zu precise fixes, so the estimate is deemed to have drifted.",
+            r.norm(), d2, params_.gnss_gate_chi2, gg.residualChain->precise);
+        gg.reacquiring = true;
         return onAccepted();
     }
 
@@ -6807,7 +6879,8 @@ bool StateEstimationSmoother::gnss_gate_locked(
         gg.runStartPredEnu = predEnu;
     }
     const bool movedEnough =
-        (predEnu - *gg.runStartPredEnu).norm() >= params_.gnss_gate_reacquire_min_path;
+        (predEnu - *gg.runStartPredEnu).norm() >= params_.gnss_gate_reacquire_min_path &&
+        !(useChain && gg.residualChain->afterJump);
     const auto why = mrpt::format(
         "%.2f m from the prediction (E %.2f, N %.2f, U %.2f), chi2 %.1f > %.1f", r.norm(), r.x, r.y,
         r.z, d2, params_.gnss_gate_chi2);

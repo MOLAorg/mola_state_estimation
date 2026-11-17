@@ -177,7 +177,11 @@ Sensor inputs:
   a short gap in it rejects; else `gnss_max_plausible_speed`); predictions only from solved keyframes; once converged (or relocalized), a chi2 innovation gate
   against the predicted antenna, whose sigma grows with the path since the last
   accepted fix; a run of `gnss_gate_reacquire_after` rejected fixes that move like
-  the prediction over `gnss_gate_reacquire_min_path` is reacquired. Counters in
+  the prediction over `gnss_gate_reacquire_min_path` is reacquired. The horizontal
+  residual is followed from fix to fix: a rejected fix is reacquired at once when it
+  grew smoothly since one within the nominal gate, over `gnss_gate_reacquire_after`
+  fixes with sigma up to `gnss_gate_reacquire_max_sigma` (RTK fixed); fixes after a
+  jump of it (involving a precise fix) are not reacquired by their motion. Counters in
   `gnss_gate_stats()` (kept across resets), throttled warnings. The fix goes
   to the closest keyframe within
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses

@@ -625,6 +625,20 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             /// After a reacquisition, the gate stays open while the estimate
             /// catches up with the fixes.
             bool reacquiring = false;
+
+            /// Horizontal residuals (fix minus prediction, ENU) of the last
+            /// fixes, while they change smoothly from fix to fix (a segment).
+            struct ResidualChain
+            {
+                mrpt::math::TPoint2D    residual;  //!< of the last fix [m]
+                mrpt::math::TPoint3D    predEnu;  //!< its predicted antenna position
+                mrpt::Clock::time_point t;
+                double                  sigma   = 0;  //!< its horizontal sigma [m]
+                size_t                  precise = 0;  //!< precise fixes since it was anchored
+                bool anchored  = false;  //!< a fix of it was within the nominal gate
+                bool afterJump = false;  //!< it began with a jump of the residual
+            };
+            std::optional<ResidualChain> residualChain;
         };
         GnssGate gnssGate;
 
