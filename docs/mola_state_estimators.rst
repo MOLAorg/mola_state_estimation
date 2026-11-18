@@ -372,6 +372,7 @@ changed as follows:
             # Launch MOLA-LO (CLI version) on KITTI, using default state estimator:
             mola-lidar-odometry-cli \
               -c $(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/pipelines/lidar3d-default.yaml \
+              --state-estimator-param-file $(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/state-estimator-params/state-estimation-simple.yaml \
               --input-kitti-seq 04
 
       .. tab-item:: Custom state estimator configuration
@@ -383,15 +384,9 @@ changed as follows:
             MOLA_STATE_ESTIMATOR_YAML="$(ros2 pkg prefix mola_state_estimation_smoother)/share/mola_state_estimation_smoother/params/state-estimation-smoother.yaml" \
               mola-lo-gui-kitti 04
 
-            # Launch MOLA-LO (CLI version) on KITTI, using the smoother state estimator:
-            mola-lidar-odometry-cli \
-              -c $(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/pipelines/lidar3d-default.yaml \
-              --state-estimator "mola::state_estimation_smoother::StateEstimationSmoother" \
-              --load-plugins libmola_state_estimation_smoother.so \
-              --input-kitti-seq 04
-
-            # idem, using the smoother parameter file. MOLA_ASYNC_BACKEND=false
-            # selects the deterministic (synchronous) solver, best for offline runs:
+            # Launch MOLA-LO (CLI version) on KITTI, using the smoother state estimator.
+            # MOLA_ASYNC_BACKEND=false selects the deterministic (synchronous) solver,
+            # best for offline runs:
             MOLA_ASYNC_BACKEND=false \
             mola-lidar-odometry-cli \
               -c $(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/pipelines/lidar3d-default.yaml \
@@ -680,8 +675,14 @@ MOLA LiDAR-odometry without state estimation):
 
 This is who is responsible of publishing each transformation:
 
-- ``odom_{i} → base_link``: One or more odometry sources.
 - ``map → base_link``: Published by **this state estimation package** (``mola_state_estimation_smoother``).
+  The odometry sources (``odom_{i}``) are fused from their ``nav_msgs/Odometry`` topics: their drivers must
+  not also publish ``odom → base_link`` on ``/tf``, or ``base_link`` would have two parents.
+- Alternatively, ``map → odom``, to keep the REP-105 ``map → odom → base_link`` chain of one odometry source
+  whose driver publishes ``odom → base_link``: enable ``publish_map_to_odom_tf``
+  (``MOLA_PUBLISH_MAP_TO_ODOM_TF=true``) and select it as the published ``/tf`` source
+  (``localization_publish_tf_source:=state_estimation/map_odom`` in the MOLA-LO launch file).
+  See :ref:`this complete example <localization-lo_georef_gnss_imu_kinematics>`.
 - ``enu → {map, utm}``: Published by either:
 
   - ``mola_lidar_odometry`` :ref:`map loading service <map_loading_saving>` if fed with a geo-referenced metric map (``.mm``) file; or
