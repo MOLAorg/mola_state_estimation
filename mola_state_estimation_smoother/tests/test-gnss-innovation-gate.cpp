@@ -777,8 +777,8 @@ void test_two_receivers_one_wrong()
 {
     Scenario sc;
     sc.name =
-        "Two receivers (RTK and no RTK) on the same input, the RTK one 7 m off for 25 s: not a "
-        "drift";
+        "Every other fix without RTK (e.g. a second receiver on the same input), the RTK ones "
+        "7 m off for 25 s: not a drift";
     sc.duration   = 70.0;
     sc.speed      = 1.0;
     sc.gnssPeriod = 0.5;

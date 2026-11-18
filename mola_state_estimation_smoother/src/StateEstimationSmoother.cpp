@@ -6805,7 +6805,8 @@ bool StateEstimationSmoother::gnss_gate_locked(
     const bool   precise    = useChain && sigmaXY <= params_.gnss_gate_reacquire_max_sigma;
     auto&        chain      = gg.residualChain;
     bool         chainBroke = false;
-    if (precise)
+    // A fix not newer than the chain tail (e.g. delivered again) adds nothing:
+    if (precise && !(chain && gps.timestamp <= chain->t))
     {
         const mrpt::math::TPoint2D rXY(r.x, r.y);
         const auto                 antenna    = gps.sensorPose.translation();
@@ -6832,9 +6833,12 @@ bool StateEstimationSmoother::gnss_gate_locked(
         {
             chain.emplace();
         }
-        const double sigmaZ = std::sqrt(enuVarFloored[2]);
-        if (rXY.norm() <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaXY) &&
-            std::abs(r.z) <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaZ))
+        // Anchors must pass the nominal gate (no growth with the path) in 3D:
+        const double nomVar = mrpt::square(params_.gnss_gate_prediction_sigma);
+        const double d2nom  = mrpt::square(r.x) / (enuVarFloored[0] + nomVar) +
+                             mrpt::square(r.y) / (enuVarFloored[1] + nomVar) +
+                             mrpt::square(r.z) / (enuVarFloored[2] + nomVar);
+        if (d2nom <= params_.gnss_gate_chi2)
         {
             chain->anchored       = true;
             chain->sinceAnchor    = 0;
