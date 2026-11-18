@@ -63,7 +63,7 @@ def generate_test_description():
             'MOLA_WITH_GUI': 'false',
             'MOLA_STATE_ESTIMATOR_YAML': static_params,
             'ODOM1_TOPIC': '/wheel_odom',
-            'ODOM1_LABEL': 'wheel_odom',
+            'ODOM1_LABEL': 'odom_wheels',
             'IMU_TOPIC': '/imu',
             'GNSS_TOPIC': '/gps',
             'ODOM2_TOPIC': '',  # remove after all distros have mola_yaml>=2.6.1

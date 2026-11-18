@@ -70,7 +70,7 @@ def _launch_setup(context, *args, **kwargs):
             os.path.join(myDir, 'ros2-launchs', 'ros2-state-estimator.launch.py')),
         launch_arguments={
             'odom1_topic': odom1,
-            'odom1_label': 'wheel_odom',
+            'odom1_label': 'odom_wheels',
             'odom2_topic': odom2,
             'odom2_label': 'visual_odom',
             'imu_topic_name': '/imu',

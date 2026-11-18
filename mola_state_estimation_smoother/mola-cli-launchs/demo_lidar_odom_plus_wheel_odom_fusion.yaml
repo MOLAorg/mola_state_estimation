@@ -107,7 +107,7 @@ modules:
         # External wheel odometry (directly consumed by smoother via onNewObservation)
         - topic: ${WHEEL_ODOM_TOPIC|/wheel_odom}
           msg_type: Odometry
-          output_sensor_label: "wheel_odom"
+          output_sensor_label: "odom_wheels"
 
         # IMU for gravity alignment
         - topic: ${IMU_TOPIC|/imu}

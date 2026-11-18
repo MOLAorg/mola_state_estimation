@@ -34,7 +34,7 @@ def generate_launch_description():
         name='ODOM1_TOPIC', value=LaunchConfiguration('odom1_topic'))
 
     odom1_label_arg = DeclareLaunchArgument(
-        "odom1_label", default_value="wheel_odom",
+        "odom1_label", default_value="odom_wheels",
         description="Sensor label for first odometry source")
     odom1_label_env = SetEnvironmentVariable(
         name='ODOM1_LABEL', value=LaunchConfiguration('odom1_label'))

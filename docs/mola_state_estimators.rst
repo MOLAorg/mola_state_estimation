@@ -261,7 +261,7 @@ custom copy of the file can be used instead:
         - ``/wheel_odom``
         - First ``nav_msgs/Odometry`` topic (e.g. wheel encoders)
       * - ``odom1_label``
-        - ``wheel_odom``
+        - ``odom_wheels``
         - Sensor label (and odometry frame name) of the first source
       * - ``odom2_topic``
         - ``/visual_odom``
