@@ -178,10 +178,11 @@ Sensor inputs:
   against the predicted antenna, whose sigma grows with the path since the last
   accepted fix; a run of `gnss_gate_reacquire_after` rejected fixes that move like
   the prediction over `gnss_gate_reacquire_min_path` is reacquired. The horizontal
-  residual is followed from fix to fix: a rejected fix is reacquired at once when it
-  grew smoothly since one within the nominal gate, over `gnss_gate_reacquire_after`
-  fixes with sigma up to `gnss_gate_reacquire_max_sigma` (RTK fixed); fixes after a
-  jump of it (involving a precise fix) are not reacquired by their motion. Counters in
+  residual is followed between precise fixes (sigma up to `gnss_gate_reacquire_max_sigma`,
+  RTK fixed): a rejected one (height within the gate) is reacquired at once when it grew
+  smoothly (noise + half the predicted path, per fix and in total) since one within the
+  nominal gate, over `gnss_gate_reacquire_after` fixes and `gnss_gate_reacquire_min_path`;
+  a jump restarts it and the rejected run; one chain per antenna; `reacquired_by_continuity` counts it. Counters in
   `gnss_gate_stats()` (kept across resets), throttled warnings. The fix goes
   to the closest keyframe within
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses

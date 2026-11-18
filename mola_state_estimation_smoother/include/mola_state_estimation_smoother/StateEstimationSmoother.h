@@ -46,6 +46,7 @@
 #include <mrpt/containers/bimap.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/pimpl.h>
+#include <mrpt/math/TPoint2D.h>
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/obs/CObservationGPS.h>
 #include <mrpt/obs/CObservationIMU.h>
@@ -273,8 +274,9 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         size_t rejected_admission   = 0;  //!< quality, covariance, sigma, height
         size_t rejected_innovation  = 0;  //!< innovation gate or fix-to-fix consistency
         size_t consecutive_rejected = 0;  //!< current run of rejections
-        size_t reacquired           = 0;  //!< runs accepted after gnss_gate_reacquire_after
-        size_t datum_restarts       = 0;  //!< datum candidates dropped as inconsistent
+        size_t reacquired = 0;  //!< rejected fixes accepted again (see gnss_gate_reacquire_*)
+        size_t reacquired_by_continuity = 0;  //!< of them, by gnss_gate_reacquire_max_sigma
+        size_t datum_restarts           = 0;  //!< datum candidates dropped as inconsistent
     };
     [[nodiscard]] GnssGateStats gnss_gate_stats() const;
 
@@ -627,16 +629,22 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             bool reacquiring = false;
 
             /// Horizontal residuals (fix minus prediction, ENU) of the last
-            /// fixes, while they change smoothly from fix to fix (a segment).
+            /// precise fixes, while they change smoothly from fix to fix.
             struct ResidualChain
             {
                 mrpt::math::TPoint2D    residual;  //!< of the last fix [m]
+                mrpt::math::TPoint3D    antenna;  //!< its antenna position on the vehicle
                 mrpt::math::TPoint3D    predEnu;  //!< its predicted antenna position
                 mrpt::Clock::time_point t;
                 double                  sigma   = 0;  //!< its horizontal sigma [m]
-                size_t                  precise = 0;  //!< precise fixes since it was anchored
-                bool anchored  = false;  //!< a fix of it was within the nominal gate
-                bool afterJump = false;  //!< it began with a jump of the residual
+                size_t                  precise = 0;  //!< fixes since it was anchored
+                size_t sinceAnchor              = 0;  //!< fixes since its last anchor (included)
+                bool   anchored = false;  //!< a fix of it was within the nominal gate
+                /// Residual and sigma of its last fix within the nominal gate:
+                mrpt::math::TPoint2D anchorResidual;
+                double               anchorSigma = 0;
+                /// Predicted path since then (including the estimate own corrections) [m]
+                double pathOutOfGate = 0;
             };
             std::optional<ResidualChain> residualChain;
         };
