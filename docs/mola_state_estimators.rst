@@ -659,7 +659,7 @@ geo-referencing must be estimated.
 5. Implementation: Factor graph smoother
 ------------------------------------------
 The package ``mola_state_estimation_smoother`` implements a sliding window optimization over the
-last few keyframes and sensor observations (odometry sources, IMU, GNNS) in order to being able to solve
+last few keyframes and sensor observations (odometry sources, IMU, GNSS) to solve
 for the optimal kinematic state (pose + velocity) at any desired time point, interpolating or extrapolating
 into the past or future.
 
@@ -673,7 +673,7 @@ MOLA LiDAR-odometry without state estimation):
     :width: 500
     :align: center
 
-This is who is responsible of publishing each transformation:
+These are the publishers of each transformation:
 
 - ``map → base_link``: Published by **this state estimation package** (``mola_state_estimation_smoother``).
   The odometry sources (``odom_{i}``) are fused from their ``nav_msgs/Odometry`` topics: their drivers must
