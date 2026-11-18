@@ -691,9 +691,14 @@ This is who is responsible of publishing each transformation:
     map.
 
 
-Add me: Pictures of factor graph model.
+The factor graph of a typical configuration (wheel odometry, IMUs and GNSS) is illustrated in
+:ref:`this tutorial <tutorial-wheels-imu-gnss-fusion>`.
 
-Write me: concept of adding temporary keyframes for querying the pose at a given time.
+**Queries at arbitrary times.** ``estimated_navstate(t)`` takes the keyframe closest to ``t``
+(before or after it) and extrapolates its pose with its estimated body twist, with the constant
+velocity model of :ref:`section 1 <mola_sta_est_index>`, so its uncertainty grows with the time
+difference. A request farther than ``max_time_to_use_velocity_model`` from every keyframe returns
+no estimate.
 
 
 5.1. Kinematic factors
@@ -705,11 +710,11 @@ A. Free motion kinematic factor
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 This is actually implemented as the combination of distinct GTSAM factors:
 
-- ``mola::state_estimation_smoother::FactorConstLocalVelocityPose``: between linear and the angular velocity components of both keyframes to
+- ``mola::factors::FactorConstLocalVelocityPose``: between linear and the angular velocity components of both keyframes to
   favor smooth velocities. See line 3 of eq (4) in the MOLA RSS2019 paper.
-- ``mola::state_estimation_smoother::FactorTrapezoidalIntegrator``: enforces fulfillment of numerical integration on the translational
+- ``mola::factors::FactorTrapezoidalIntegratorPose``: enforces fulfillment of numerical integration on the translational
   part of SE(3). See line 2 of eq (1) in the MOLA RSS2019 paper.
-- ``mola::state_estimation_smoother::FactorAngularVelocityIntegration``: enforces the fulfillment of numerical integration on the rotational
+- ``mola::factors::FactorAngularVelocityIntegrationPose``: enforces the fulfillment of numerical integration on the rotational
   part of SE(3). See line 1 of eq (4) in the MOLA RSS2019 paper.
 
 
@@ -717,10 +722,17 @@ B. Tricycle model kinematic factor
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 This is actually implemented as the combination of distinct GTSAM factors:
 
-- ``mola::state_estimation_smoother::FactorConstLocalVelocityPose``: between linear and the angular velocity components of both keyframes to
+- ``mola::factors::FactorConstLocalVelocityPose``: between linear and the angular velocity components of both keyframes to
   favor smooth velocities. See line 3 of eq (4) in the MOLA RSS2019 paper.
-- ``mola::state_estimation_smoother::FactorTricycleModelIntegrator``: enforces fulfillment of numerical integration assuming the robot moves
-  following the part of SE(3). TODO: Write equations!
+- ``mola::factors::FactorTricycleKinematic``: integrates the pose along a circular arc with the body
+  velocities of the first keyframe (Euler integration), :math:`\mathbf{T}_j = \mathbf{T}_i \oplus \Delta\mathbf{T}`,
+  where, with the forward velocity :math:`v = v_x` and the yaw rate :math:`\omega = \omega_z`, the increment
+  :math:`\Delta\mathbf{T}` is a rotation of :math:`\omega\,\Delta t` around :math:`z` and a translation
+
+  .. math::
+
+     \Delta\mathbf{p} = \frac{v}{\omega} \begin{bmatrix} \sin(\omega \Delta t) \\ 1-\cos(\omega \Delta t) \\ 0 \end{bmatrix}
+     \qquad \left( \Delta\mathbf{p} = \begin{bmatrix} v\,\Delta t & 0 & 0 \end{bmatrix}^\top \text{ for } \omega \approx 0 \right)
 - ``gtsam::PriorFactor``: to (gently) favor null components of the local velocity components ``vy``, ``vz``, ``wx``, ``wy``. Parameters can be
   used to tune how much these soft constraints are allowed to be broken, i.e. depending on how much wheel slippage exists.
 
