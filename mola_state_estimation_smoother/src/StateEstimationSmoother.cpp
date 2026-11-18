@@ -173,9 +173,12 @@ constexpr double TRICYCLE_LARGE_SIGMAS          = 1e6;
 // the square root of their original diagonal entry, i.e. a ratio above ~4096).
 constexpr double MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO = 1000.0;
 
-// Longest time between two fixes of a residual continuity chain [s] (see
-// Parameters::gnss_gate_reacquire_max_sigma).
-constexpr double GNSS_RESIDUAL_CHAIN_MAX_GAP = 5.0;
+// Residual continuity chain (see Parameters::gnss_gate_reacquire_max_sigma):
+// longest time between two of its fixes [s], and fewest fixes since its last
+// one within the nominal gate (included) to reacquire, so a single step out of
+// it is not enough.
+constexpr double GNSS_RESIDUAL_CHAIN_MAX_GAP         = 5.0;
+constexpr size_t GNSS_RESIDUAL_CHAIN_MIN_OUT_OF_GATE = 3;
 
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
@@ -6797,13 +6800,15 @@ bool StateEstimationSmoother::gnss_gate_locked(
     // restarts the chain, leaving the run reacquire below as the only way in.
     // Degraded fixes are left out: they may slide smoothly along with their
     // error.
-    const double sigmaXY  = std::sqrt(std::max(enuVarFloored[0], enuVarFloored[1]));
-    const bool   useChain = params_.gnss_gate_reacquire_max_sigma > 0;
-    const bool   precise  = useChain && sigmaXY <= params_.gnss_gate_reacquire_max_sigma;
-    auto&        chain    = gg.residualChain;
+    const double sigmaXY    = std::sqrt(std::max(enuVarFloored[0], enuVarFloored[1]));
+    const bool   useChain   = params_.gnss_gate_reacquire_max_sigma > 0;
+    const bool   precise    = useChain && sigmaXY <= params_.gnss_gate_reacquire_max_sigma;
+    auto&        chain      = gg.residualChain;
+    bool         chainBroke = false;
     if (precise)
     {
         const mrpt::math::TPoint2D rXY(r.x, r.y);
+        const auto                 antenna    = gps.sensorPose.translation();
         bool                       continuous = false;
         if (chain)
         {
@@ -6811,8 +6816,13 @@ bool StateEstimationSmoother::gnss_gate_locked(
             const double predStep =
                 std::hypot(predEnu.x - chain->predEnu.x, predEnu.y - chain->predEnu.y);
             const double noise = 3.0 * std::hypot(chain->sigma, sigmaXY);
-            continuous         = dt <= GNSS_RESIDUAL_CHAIN_MAX_GAP &&
-                         (rXY - chain->residual).norm() <= noise + 0.5 * predStep;
+            // The step between two antennas is not vehicle motion: each one
+            // starts its own chain.
+            const bool sameAntenna = (antenna - chain->antenna).norm() < 0.01;
+            const bool inTime      = dt <= GNSS_RESIDUAL_CHAIN_MAX_GAP;
+            const bool jumped      = (rXY - chain->residual).norm() > noise + 0.5 * predStep;
+            continuous             = inTime && sameAntenna && !jumped;
+            chainBroke             = inTime && sameAntenna && jumped;
             if (continuous && chain->anchored)
             {
                 chain->pathOutOfGate += predStep;
@@ -6822,9 +6832,12 @@ bool StateEstimationSmoother::gnss_gate_locked(
         {
             chain.emplace();
         }
-        if (rXY.norm() <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaXY))
+        const double sigmaZ = std::sqrt(enuVarFloored[2]);
+        if (rXY.norm() <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaXY) &&
+            std::abs(r.z) <= kSigma * std::hypot(params_.gnss_gate_prediction_sigma, sigmaZ))
         {
             chain->anchored       = true;
+            chain->sinceAnchor    = 0;
             chain->pathOutOfGate  = 0;
             chain->anchorResidual = rXY;
             chain->anchorSigma    = sigmaXY;
@@ -6832,8 +6845,10 @@ bool StateEstimationSmoother::gnss_gate_locked(
         if (chain->anchored)
         {
             chain->precise++;
+            chain->sinceAnchor++;
         }
         chain->residual = rXY;
+        chain->antenna  = antenna;
         chain->predEnu  = predEnu;
         chain->t        = gps.timestamp;
         chain->sigma    = sigmaXY;
@@ -6854,11 +6869,13 @@ bool StateEstimationSmoother::gnss_gate_locked(
         mrpt::square(r.z) <= params_.gnss_gate_chi2 * (enuVarFloored[2] + predVar);
     if (params_.gnss_gate_reacquire_after > 0 && precise && heightOk && chain->anchored &&
         chain->precise >= static_cast<size_t>(params_.gnss_gate_reacquire_after) &&
+        chain->sinceAnchor >= GNSS_RESIDUAL_CHAIN_MIN_OUT_OF_GATE &&
         chain->pathOutOfGate >= params_.gnss_gate_reacquire_min_path &&
         (mrpt::math::TPoint2D(r.x, r.y) - chain->anchorResidual).norm() <=
             3.0 * std::hypot(chain->anchorSigma, sigmaXY) + 0.5 * chain->pathOutOfGate)
     {
         st.reacquired++;
+        st.reacquired_by_continuity++;
         MRPT_LOG_THROTTLE_WARN_FMT(
             2.0,
             "[fuse_gnss] Accepting GNSS again: its residual (%.2f m, chi2 %.1f > %.1f) grew "
@@ -6871,8 +6888,9 @@ bool StateEstimationSmoother::gnss_gate_locked(
     // Rejected. Fixes that move like the predicted antenna mean the estimate is
     // the one off (a heading error only rotates the offset slowly); a source at
     // a fixed wrong place does not move with the vehicle at all:
+    // A jump of the residual of precise fixes also starts a new run:
     bool sameRun = false;
-    if (gg.runStartFixEnu && gg.runStartPredEnu)
+    if (gg.runStartFixEnu && gg.runStartPredEnu && !chainBroke)
     {
         const auto   fixMove  = fixEnu - *gg.runStartFixEnu;
         const auto   predMove = predEnu - *gg.runStartPredEnu;

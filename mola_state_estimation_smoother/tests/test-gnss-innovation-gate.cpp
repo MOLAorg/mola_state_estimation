@@ -543,7 +543,7 @@ void test_drift_with_fixes_reacquired()
     const auto r   = run(sc, 85.0);
     // Reacquired as soon as the fixes leave the gate, by the continuity of their
     // residual, instead of after a run of rejections:
-    ASSERT_GE_(r.stats.reacquired, 1U);
+    ASSERT_GE_(r.stats.reacquired_by_continuity, 1U);
     ASSERT_LT_(r.stats.rejected_innovation, 3U);
     ASSERT_LT_(r.maxHorizErr, 0.3);
 }
@@ -579,6 +579,7 @@ void test_wrong_rtk_fix_not_a_drift()
         const auto r = run(sc, 15.0);
         // Its jump breaks the residual continuity: at most a full run of
         // rejections reacquires it, as any fix moving with the vehicle.
+        ASSERT_EQUAL_(r.stats.reacquired_by_continuity, 0U);
         ASSERT_GE_(r.stats.rejected_innovation, 9U);
         ASSERT_LT_(r.stats.reacquired, 2U);
     }
@@ -767,6 +768,7 @@ void test_wrong_rtk_after_degraded_fix()
     const auto r = run(sc, 15.0);
     // Not reacquired by the continuity of its residual (a degraded fix in
     // between must not hide the jump), only after a full run, if at all:
+    ASSERT_EQUAL_(r.stats.reacquired_by_continuity, 0U);
     ASSERT_GE_(r.stats.rejected_innovation, 9U);
     ASSERT_LT_(r.stats.reacquired, 2U);
 }
@@ -791,6 +793,7 @@ void test_two_receivers_one_wrong()
     const auto r = run(sc, 15.0);
     // Not reacquired by the continuity of its residual (a degraded fix in
     // between must not hide the jump), only after a full run, if at all:
+    ASSERT_EQUAL_(r.stats.reacquired_by_continuity, 0U);
     ASSERT_GE_(r.stats.rejected_innovation, 9U);
     ASSERT_LT_(r.stats.reacquired, 2U);
 }
@@ -830,6 +833,7 @@ void test_wrong_rtk_with_degraded_break()
     const auto r = run(sc, 15.0);
     // Not reacquired by the continuity of its residual (a degraded fix in
     // between must not hide the jump), only after a full run, if at all:
+    ASSERT_EQUAL_(r.stats.reacquired_by_continuity, 0U);
     ASSERT_GE_(r.stats.rejected_innovation, 9U);
     ASSERT_LT_(r.stats.reacquired, 2U);
 }
@@ -883,6 +887,7 @@ void test_correct_fixes_back_after_followed_fault()
         return (t > 29.5 && t < 55.0) ? FixKind::WrongFix : FixKind::Real;
     };
     const auto r = run(sc, 15.0);
+    ASSERT_GT_(r.maxHorizErr, 3.0);  // the estimate did follow the wrong fixes
     ASSERT_LT_(r.lastErr, 3.0);
 }
 

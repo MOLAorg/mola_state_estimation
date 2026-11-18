@@ -182,7 +182,7 @@ Sensor inputs:
   RTK fixed): a rejected one (height within the gate) is reacquired at once when it grew
   smoothly (noise + half the predicted path, per fix and in total) since one within the
   nominal gate, over `gnss_gate_reacquire_after` fixes and `gnss_gate_reacquire_min_path`;
-  a jump restarts it, leaving only the run reacquire. Counters in
+  a jump restarts it and the rejected run; one chain per antenna; `reacquired_by_continuity` counts it. Counters in
   `gnss_gate_stats()` (kept across resets), throttled warnings. The fix goes
   to the closest keyframe within
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
