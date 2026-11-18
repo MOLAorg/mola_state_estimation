@@ -26,8 +26,12 @@
  *         - a GNSS outage during which the odometry heading drifts, so the
  *           returning fixes are far from the estimate (must be reacquired);
  *         - the odometry heading drifting away from fixes that keep coming
- *           (must be reacquired), and a wrong RTK fix moving with the vehicle
- *           (must never be);
+ *           (must be reacquired at once), and a wrong RTK fix moving with the
+ *           vehicle (must not be taken as such a drift: not with a degraded
+ *           fix in between, nor with a second, degraded receiver);
+ *         - an odometry jump with correct fixes (reacquired), height-only
+ *           spikes and a slowly drifting fix while standing still (rejected),
+ *           and correct fixes back after the estimate followed a wrong one;
  *         - the bogus source alone after the real receiver goes silent (must
  *           never be reacquired while the vehicle moves), also before the
  *           geo-reference converges;
@@ -101,6 +105,8 @@ enum class FixKind
     WrongFloat,  //!< the same offset, reporting a moderate sigma (RTK float after it)
     WrongNoRtk,  //!< the same offset, reporting a large sigma (no RTK solution)
     Float,  //!< unbiased, reporting a moderate sigma (RTK float)
+    NoRtk,  //!< unbiased, sigma 3 m
+    VertSpike,  //!< precise, +20 m in height only
     NaNCov,
     ZeroCov,
 };
@@ -119,6 +125,11 @@ struct Scenario
     double      gnssSigma           = 0.03;  // [m] (horizontal; vertical is 2x)
     int         fixQuality          = 4;
     double      gnssPeriod          = GNSS_PERIOD;  // [s]
+    /// East offset of the wrong fixes [m] as a function of time.
+    std::function<double(double)> wrongOffsetX = [](double) { return 7.0; };
+    double odomJumpAt = -1;  //!< time of a sideways odometry jump [s] (<0: none)
+    double odomJumpY  = 0;  //!< its size [m]
+    double stopAt     = 1e9;  //!< the vehicle stops after moving for this long [s]
 
     /// Odometry heading bias [rad/s] as a function of time (default none).
     std::function<double(double)>       odomYawBias = [](double) { return 0.0; };
@@ -140,7 +151,7 @@ struct Result
 mrpt::poses::CPose3D gtEnuAt(const Scenario& sc, double t)
 {
     const double yaw0 = mrpt::DEG2RAD(HEADING_DEG);
-    const double tm   = std::max(0.0, t - sc.stillTime);
+    const double tm   = std::min(sc.stopAt, std::max(0.0, t - sc.stillTime));
     const double w    = 0.03;  // [rad/s]
     const double r    = sc.speed / w;
     const double dx   = r * std::sin(w * tm);
@@ -284,12 +295,21 @@ Result run(const Scenario& sc, double checkFrom)
                     const double sigma = kind == FixKind::WrongFix     ? sc.gnssSigma
                                          : kind == FixKind::WrongFloat ? 0.5
                                                                        : 3.0;
-                    est.fuse_gnss(
-                        makeFix(toGeodetic({p.x + 7.0, p.y, p.z + 3.8}), t, sigma, sc.fixQuality));
+                    est.fuse_gnss(makeFix(
+                        toGeodetic(
+                            {p.x + sc.wrongOffsetX(t), p.y, p.z + 3.8 * sc.wrongOffsetX(t) / 7.0}),
+                        t, sigma, sc.fixQuality));
                     break;
                 }
                 case FixKind::Float:
                     est.fuse_gnss(makeFix(real, t, 0.5, sc.fixQuality));
+                    break;
+                case FixKind::NoRtk:
+                    est.fuse_gnss(makeFix(real, t, 3.0, sc.fixQuality));
+                    break;
+                case FixKind::VertSpike:
+                    est.fuse_gnss(makeFix(
+                        toGeodetic({p.x, p.y, p.z + 20.0}), t, sc.gnssSigma, sc.fixQuality));
                     break;
                 case FixKind::NaNCov:
                     est.fuse_gnss(makeFix(
@@ -310,7 +330,11 @@ Result run(const Scenario& sc, double checkFrom)
         const auto gt  = gtEnuAt(sc, t);
         const auto inc = gt - prevGt;
         prevGt         = gt;
-        odom           = odom +
+        if (sc.odomJumpAt >= 0 && t >= sc.odomJumpAt && t < sc.odomJumpAt + POSE_PERIOD - 1e-6)
+        {
+            odom = odom + mrpt::poses::CPose3D::FromXYZYawPitchRoll(0, sc.odomJumpY, 0, 0, 0, 0);
+        }
+        odom = odom +
                mrpt::poses::CPose3D::FromXYZYawPitchRoll(
                    0, 0, 0, sc.odomYawBias(t) * POSE_PERIOD, 0, 0) +
                inc;
@@ -524,14 +548,14 @@ void test_drift_with_fixes_reacquired()
     ASSERT_LT_(r.maxHorizErr, 0.3);
 }
 
-void test_wrong_rtk_fix_never_reacquired()
+void test_wrong_rtk_fix_not_a_drift()
 {
     for (const bool floatBefore : {false, true})
     {
         Scenario sc;
         sc.name = std::string("A wrong RTK fix (7 m off, moving with the vehicle) for 25 s") +
                   (floatBefore ? ", entered from and left as RTK float" : "") +
-                  ": never reacquired";
+                  ": not taken as a drift of the estimate";
         sc.duration   = 70.0;
         sc.speed      = 1.0;
         sc.gnssPeriod = 1.0;
@@ -553,10 +577,10 @@ void test_wrong_rtk_fix_never_reacquired()
             return (floatBefore && t > 20.0 && t < 30.0) ? FixKind::Float : FixKind::Real;
         };
         const auto r = run(sc, 15.0);
-        ASSERT_EQUAL_(r.stats.reacquired, 0U);
-        ASSERT_GE_(r.stats.rejected_innovation, 23U);
-        ASSERT_LT_(r.maxHorizErr, 0.5);
-        ASSERT_EQUAL_(r.stats.consecutive_rejected, 0U);
+        // Its jump breaks the residual continuity: at most a full run of
+        // rejections reacquires it, as any fix moving with the vehicle.
+        ASSERT_GE_(r.stats.rejected_innovation, 9U);
+        ASSERT_LT_(r.stats.reacquired, 2U);
     }
 }
 
@@ -721,6 +745,147 @@ void test_relocalization_impostor()
     ASSERT_LT_(r.maxVertErr, 0.5);
 }
 
+void test_wrong_rtk_after_degraded_fix()
+{
+    Scenario sc;
+    sc.name = "One fix without RTK, then a wrong RTK fix (7 m off) for 25 s: not taken as a drift";
+    sc.duration   = 70.0;
+    sc.speed      = 1.0;
+    sc.gnssPeriod = 1.0;
+    sc.fixKind    = [](double t, int)
+    {
+        if (t > 29.5 && t < 30.5)
+        {
+            return FixKind::NoRtk;
+        }
+        if (t > 30.5 && t < 55.0)
+        {
+            return FixKind::WrongFix;
+        }
+        return FixKind::Real;
+    };
+    const auto r = run(sc, 15.0);
+    // Not reacquired by the continuity of its residual (a degraded fix in
+    // between must not hide the jump), only after a full run, if at all:
+    ASSERT_GE_(r.stats.rejected_innovation, 9U);
+    ASSERT_LT_(r.stats.reacquired, 2U);
+}
+
+void test_two_receivers_one_wrong()
+{
+    Scenario sc;
+    sc.name =
+        "Two receivers (RTK and no RTK) on the same input, the RTK one 7 m off for 25 s: not a "
+        "drift";
+    sc.duration   = 70.0;
+    sc.speed      = 1.0;
+    sc.gnssPeriod = 0.5;
+    sc.fixKind    = [](double t, int k)
+    {
+        if (k % 2 == 1)
+        {
+            return FixKind::NoRtk;
+        }
+        return (t > 30.0 && t < 55.0) ? FixKind::WrongFix : FixKind::Real;
+    };
+    const auto r = run(sc, 15.0);
+    // Not reacquired by the continuity of its residual (a degraded fix in
+    // between must not hide the jump), only after a full run, if at all:
+    ASSERT_GE_(r.stats.rejected_innovation, 9U);
+    ASSERT_LT_(r.stats.reacquired, 2U);
+}
+
+void test_height_spikes_not_reacquired()
+{
+    Scenario sc;
+    sc.name    = "Isolated precise fixes 20 m off in height only: rejected";
+    sc.fixKind = [](double t, int k)
+    { return (t > 10.0 && k % 15 == 7) ? FixKind::VertSpike : FixKind::Real; };
+    const auto r = run(sc, 15.0);
+    ASSERT_EQUAL_(r.stats.reacquired, 0U);
+    ASSERT_GE_(r.stats.rejected_innovation, 9U);
+    ASSERT_LT_(r.maxVertErr, 0.2);
+}
+
+void test_wrong_rtk_with_degraded_break()
+{
+    Scenario sc;
+    sc.name =
+        "A wrong RTK fix for 25 s, with an unbiased and a wrong float in between: not a drift";
+    sc.duration   = 70.0;
+    sc.speed      = 1.0;
+    sc.gnssPeriod = 1.0;
+    sc.fixKind    = [](double t, int)
+    {
+        if (t > 34.5 && t < 35.5)
+        {
+            return FixKind::Float;
+        }
+        if (t > 35.5 && t < 36.5)
+        {
+            return FixKind::WrongFloat;
+        }
+        return (t > 30.0 && t < 55.0) ? FixKind::WrongFix : FixKind::Real;
+    };
+    const auto r = run(sc, 15.0);
+    // Not reacquired by the continuity of its residual (a degraded fix in
+    // between must not hide the jump), only after a full run, if at all:
+    ASSERT_GE_(r.stats.rejected_innovation, 9U);
+    ASSERT_LT_(r.stats.reacquired, 2U);
+}
+
+void test_estimate_jump_reacquired()
+{
+    Scenario sc;
+    sc.name     = "The odometry jumps 5 m sideways while correct RTK fixes keep coming: reacquired";
+    sc.duration = 90.0;
+    sc.speed    = 1.0;
+    sc.gnssPeriod = 1.0;
+    sc.odomJumpAt = 30.0;
+    sc.odomJumpY  = 5.0;
+    const auto r  = run(sc, 60.0);
+    ASSERT_GE_(r.stats.reacquired, 1U);
+    ASSERT_LT_(r.stats.rejected_innovation, 12U);
+    ASSERT_LT_(r.maxHorizErr, 1.0);
+}
+
+void test_wrong_rtk_slow_drift_standing_still()
+{
+    Scenario sc;
+    sc.name         = "Standing still, a precise fix drifts away at 0.3 m/s: never reacquired";
+    sc.duration     = 70.0;
+    sc.speed        = 1.0;
+    sc.stopAt       = 23.0;
+    sc.gnssPeriod   = 1.0;
+    sc.wrongOffsetX = [](double t) { return std::min(7.5, 0.3 * std::max(0.0, t - 30.0)); };
+    sc.fixKind      = [](double t, int)
+    { return (t > 30.0 && t < 60.0) ? FixKind::WrongFix : FixKind::Real; };
+    const auto r = run(sc, 15.0);
+    ASSERT_EQUAL_(r.stats.reacquired, 0U);
+    ASSERT_LT_(r.maxHorizErr, 2.0);
+}
+
+void test_correct_fixes_back_after_followed_fault()
+{
+    Scenario sc;
+    sc.name =
+        "Floats slide onto a wrong RTK fix the estimate follows: correct fixes are back after it";
+    sc.duration     = 70.0;
+    sc.speed        = 1.0;
+    sc.gnssPeriod   = 1.0;
+    sc.wrongOffsetX = [](double t) { return (t < 30.0) ? std::max(0.0, 0.7 * (t - 20.0)) : 7.0; };
+    sc.fixKind      = [](double t, int)
+    {
+        if (t > 20.5 && t < 30.0)
+        {
+            return FixKind::WrongFloat;
+        }
+        return (t > 29.5 && t < 55.0) ? FixKind::WrongFix : FixKind::Real;
+    };
+    const auto r = run(sc, 15.0);
+    ASSERT_LT_(r.lastErr, 3.0);
+}
+
 }  // namespace
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -737,7 +902,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_outage_with_heading_drift();
         test_large_drift_is_reacquired();
         test_drift_with_fixes_reacquired();
-        test_wrong_rtk_fix_never_reacquired();
+        test_wrong_rtk_fix_not_a_drift();
         test_impostor_alone_never_reacquired();
         test_impostor_alone_before_convergence();
         test_impostor_during_odometry_gap();
@@ -747,6 +912,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         test_relocalization_impostor();
         test_degraded_after_rtk();
         test_single_point_with_ratio_test();
+        test_wrong_rtk_after_degraded_fix();
+        test_two_receivers_one_wrong();
+        test_height_spikes_not_reacquired();
+        test_wrong_rtk_with_degraded_break();
+        test_estimate_jump_reacquired();
+        test_wrong_rtk_slow_drift_standing_still();
+        test_correct_fixes_back_after_followed_fault();
         std::cout << "All tests passed." << std::endl;
         return 0;
     }

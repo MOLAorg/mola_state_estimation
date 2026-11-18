@@ -504,8 +504,8 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
        odometry is better than those degraded fixes) and an innovation gate against the predicted antenna position
        (``gnss_gate_chi2``, 0 disables it); rejected fixes are logged and counted, and a run of
        fixes that keep moving like the vehicle is reacquired after a drift. Precise (RTK
-       fixed) fixes whose residual grew smoothly away from the estimate are reacquired at once,
-       while those whose residual jumped (e.g. a wrong RTK fix) are not. With
+       fixed) fixes whose residual grew smoothly away from the estimate while the vehicle moved
+       are reacquired at once; after a jump (e.g. a wrong RTK fix), only a run is. With
        ``estimate_geo_reference``, the datum is only set after a few mutually consistent fixes.
        Requires a geo-reference:
        either estimated (``estimate_geo_reference: true``) or fixed (``fixed_geo_reference``,
