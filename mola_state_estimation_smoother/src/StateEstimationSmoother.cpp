@@ -58,10 +58,12 @@
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
 #include <mola_gtsam_factors/FactorGnssMapEnuBias.h>
 #include <mola_gtsam_factors/FactorGnssMapEnuConstVel.h>
+#include <mola_gtsam_factors/FactorGnssMapEnuConstVelBias.h>
 #include <mola_gtsam_factors/FactorGyroPreintegration.h>
 #include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
+#include <mola_gtsam_factors/GaussMarkovPoint3.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
@@ -182,10 +184,8 @@ constexpr double GNSS_RESIDUAL_CHAIN_MAX_GAP         = 5.0;
 constexpr size_t GNSS_RESIDUAL_CHAIN_MIN_OUT_OF_GATE = 3;
 
 // GNSS receiver bias chains (Parameters::gnss_bias_sigma_xy): symbol characters of
-// their variables, one per receiver, and the sigma [m] that holds the vertical
-// component at zero when it is not estimated.
-constexpr std::array<char, 4> GNSS_BIAS_SYMBOLS        = {'G', 'H', 'J', 'K'};
-constexpr double              GNSS_BIAS_UNUSED_Z_SIGMA = 1e-3;
+// their variables, one per receiver.
+constexpr std::array<char, 4> GNSS_BIAS_SYMBOLS = {'G', 'H', 'J', 'K'};
 
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
@@ -441,11 +441,23 @@ gtsam::Key bias_key(size_t imuIdx, uint64_t id)
             THROW_EXCEPTION("Invalid IMU index");
     }
 }
+namespace
+{
 /// Bias variable of the GNSS receiver with bias chain `chainIdx` at keyframe `id`
 gtsam::Key gnss_bias_key(size_t chainIdx, uint64_t id)
 {
     return gtsam::Symbol(GNSS_BIAS_SYMBOLS.at(chainIdx), id);
 }
+
+/// The Gauss-Markov process of the GNSS receiver biases (vertical held at zero
+/// unless gnss_bias_sigma_z > 0)
+mola::factors::GaussMarkovPoint3 gnss_bias_process(const Parameters& p)
+{
+    return {
+        gtsam::Vector3(p.gnss_bias_sigma_xy, p.gnss_bias_sigma_xy, p.gnss_bias_sigma_z),
+        p.gnss_bias_time_constant};
+}
+}  // namespace
 
 constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
 
@@ -2126,9 +2138,7 @@ std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
     }
 
     const double  stamp = key_stamp_seconds(state_.stamp2frame_index.inverse(kf));
-    const double  sXY   = params_.gnss_bias_sigma_xy;
-    const bool    withZ = params_.gnss_bias_sigma_z > 0;
-    const double  sZ    = withZ ? params_.gnss_bias_sigma_z : GNSS_BIAS_UNUSED_Z_SIGMA;
+    const auto    gm    = gnss_bias_process(params_);
     gtsam::Point3 initialValue(0, 0, 0);
     auto          prevKey = chain.lastKf ? std::optional(gnss_bias_key(idx, *chain.lastKf))
                                          : std::optional<gtsam::Key>();
@@ -2137,8 +2147,9 @@ std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
     if (prevKey && chain.estimate && params_.gnss_bias_restart_sigmas > 0)
     {
         const auto&  m  = chain.estimate->first;
-        const double d2 = (mrpt::square(m.x()) + mrpt::square(m.y())) / mrpt::square(sXY) +
-                          (withZ ? mrpt::square(m.z()) / mrpt::square(sZ) : 0.0);
+        const auto&  s  = gm.stationary_sigmas();
+        const double d2 = (mrpt::square(m.x()) + mrpt::square(m.y())) / mrpt::square(s.x()) +
+                          (s.z() > 0 ? mrpt::square(m.z()) / mrpt::square(s.z()) : 0.0);
         if (d2 > mrpt::square(params_.gnss_bias_restart_sigmas))
         {
             gnssGateStats_.bias_restarts++;
@@ -2153,40 +2164,16 @@ std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
     }
     if (prevKey && g.has_key(*prevKey))
     {
-        const double dt  = std::abs(stamp - chain.lastStamp);
-        const double phi = std::exp(-dt / params_.gnss_bias_time_constant);
-        // Floored, so links between (almost) simultaneous fixes stay factorable:
-        const auto link = [&](double sigma)
-        {
-            return std::max(
-                sigma * std::sqrt(1.0 - phi * phi), sigma / MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO);
-        };
-        // A vertical component that is not estimated is not linked: each variable
-        // only gets its tight prior below, so it stays at zero.
-        const gtsam::Vector3 sigmaW(link(sXY), link(sXY), withZ ? link(sZ) : sZ);
-        const gtsam::Matrix3 Phi = gtsam::Vector3(phi, phi, withZ ? phi : 0.0).asDiagonal();
+        const double dt = std::abs(stamp - chain.lastStamp);
         if (chain.estimate)
         {
-            initialValue = Phi * chain.estimate->first;
+            initialValue = gm.transition(dt) * chain.estimate->first;
         }
-        const auto propagate = [Phi](const gtsam::Point3& b, gtsam::OptionalJacobian<3, 3> H)
-        {
-            if (H)
-            {
-                *H = Phi;
-            }
-            return gtsam::Point3(Phi * b);
-        };
-        const gtsam::Point3_ bPrev(propagate, gtsam::Point3_(*prevKey));
-        g.newFactors.emplace_shared<gtsam::ExpressionFactor<gtsam::Point3>>(
-            gtsam::noiseModel::Diagonal::Sigmas(sigmaW), gtsam::Point3(0, 0, 0),
-            gtsam::Point3_(key) - bPrev);
+        g.newFactors.push_back(gm.link(*prevKey, key, dt));
     }
     else
     {
-        g.newFactors.addPrior(
-            key, gtsam::Point3(0, 0, 0),
-            gtsam::noiseModel::Diagonal::Sigmas(gtsam::Vector3(sXY, sXY, sZ)));
+        g.newFactors.addPrior(key, gtsam::Point3(0, 0, 0), gm.prior_noise());
     }
 
     g.newValues.insert(key, initialValue);
@@ -2433,9 +2420,18 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
         mrpt::system::timeDifference(state_.stamp2frame_index.inverse(this_kf_id), gps.timestamp);
     if (const auto biasKey = gnss_bias_variable_locked(gps.sensorLabel, this_kf_id); biasKey)
     {
-        state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuBias>(
-            symbol_T_enu_to_map, T(this_kf_id), V(this_kf_id), W(this_kf_id), *biasKey,
-            sensorOnVehicle, std::abs(fixDt) > 1e-6 ? fixDt : 0.0, observedEnu, enuNoiseModel);
+        if (std::abs(fixDt) > 1e-6)
+        {
+            state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuConstVelBias>(
+                symbol_T_enu_to_map, T(this_kf_id), V(this_kf_id), W(this_kf_id), *biasKey,
+                sensorOnVehicle, fixDt, observedEnu, enuNoiseModel);
+        }
+        else
+        {
+            state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuBias>(
+                symbol_T_enu_to_map, T(this_kf_id), *biasKey, sensorOnVehicle, observedEnu,
+                enuNoiseModel);
+        }
     }
     else if (std::abs(fixDt) > 1e-6)
     {
@@ -4268,7 +4264,8 @@ void StateEstimationSmoother::solve_locked()
             else if (
                 dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p) ||
                 dynamic_cast<const mola::factors::FactorGnssMapEnuConstVel*>(p) ||
-                dynamic_cast<const mola::factors::FactorGnssMapEnuBias*>(p))
+                dynamic_cast<const mola::factors::FactorGnssMapEnuBias*>(p) ||
+                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVelBias*>(p))
             {
                 ++nGnss;
             }
@@ -6779,19 +6776,15 @@ std::optional<StateEstimationSmoother::GnssBiasEstimate>
         return {};
     }
     // The stationary distribution, until the chain has a solved estimate:
-    const double     varXY = mrpt::square(params_.gnss_bias_sigma_xy);
-    const double     varZ  = mrpt::square(params_.gnss_bias_sigma_z);
+    const auto       gm = gnss_bias_process(params_);
     GnssBiasEstimate b;
-    b.cov.setZero();
-    b.cov(0, 0) = varXY;
-    b.cov(1, 1) = varXY;
-    b.cov(2, 2) = varZ;
+    b.cov = mrpt::math::CMatrixDouble33(gm.stationary_cov());
 
     const auto& chain = state_.gtsam->gnssBiasChains.at(*chainIdx);
     if (chain.estimate)
     {
         const double dt  = std::abs(key_stamp_seconds(t) - chain.estimateStamp);
-        const double phi = std::exp(-dt / params_.gnss_bias_time_constant);
+        const double phi = gm.phi(dt);
         const auto&  m   = chain.estimate->first;
         b.mean           = {phi * m.x(), phi * m.y(), phi * m.z()};
         const mrpt::math::CMatrixDouble33 solved(chain.estimate->second);

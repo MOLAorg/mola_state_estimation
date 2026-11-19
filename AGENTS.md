@@ -192,16 +192,17 @@ Sensor inputs:
   `gnss_bias_labels_re`, empty by default: both needed; `_z`, `gnss_bias_time_constant`):
   an ENU bias per fused fix (`gnss_bias_key()`: symbols `G`, `H`, `J`, `K`, max 4 receivers,
   `gnss_bias_chain_locked()`; vertical held at 0 unless `_z` > 0), a first-order Gauss-Markov
-  chain whose tail key stamp is refreshed in `solve_locked()` (survives outages);
-  `FactorGnssMapEnuBias`. `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last
+  chain (`GaussMarkovPoint3`, `gnss_bias_process()`) whose tail key stamp is refreshed in
+  `solve_locked()` (survives outages); `FactorGnssMapEnuBias` (`...ConstVelBias` for a fix away
+  from its keyframe stamp). `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last
   estimate beyond `gnss_bias_restart_sigmas` (3) restarts the chain (`bias_restarts`). Gate:
   their fixes are predicted with the propagated bias, with only the bias change since its
   estimate as extra variance while its fixes are in the window (`predicted_gnss_bias_locked()`);
-  other fixes use at least the solved joint {enu} position variance (`solvedEnuPosVar`,
-  1 Hz, per axis); motion measures use the bias-free prediction; fix-to-fix tests add the
-  bias sigma.
+  other fixes use at least the solved joint {enu} position variance (`solvedEnuPosVar`, 1 Hz,
+  per axis); motion measures use the bias-free prediction; fix-to-fix tests add the bias sigma.
   `estimated_gnss_biases()`, `publish_gnss_bias`; feature macro
-  `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_GNSS_BIAS`. `test-gnss-bias-state`.
+  `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_GNSS_BIAS`. Theory and factor graph: docs, section 5.2.
+  `test-gnss-bias-state`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -424,7 +425,9 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `FactorGnssEnu` | `ExpressionFactorN` | GNSS position in ENU |
 | `FactorGnssMapEnu` | `ExpressionFactorN` | GNSS with explicit `T_enu_to_map` |
 | `FactorGnssMapEnuConstVel` | `ExpressionFactorN` | Same, fix time offset from its keyframe (uses `V`, `W`) |
-| `FactorGnssMapEnuBias` | `ExpressionFactorN` | Same as the above, plus a receiver position bias variable (Point3, ENU) |
+| `FactorGnssMapEnuBias` | `ExpressionFactorN` | `FactorGnssMapEnu` plus a receiver position bias variable (Point3, ENU) |
+| `FactorGnssMapEnuConstVelBias` | `ExpressionFactorN` | `FactorGnssMapEnuConstVel` plus that bias |
+| `GaussMarkovPoint3` | (helper) | Prior noise and link factors of a first-order Gauss-Markov Point3 chain (axes with sigma 0 held at zero) |
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |
