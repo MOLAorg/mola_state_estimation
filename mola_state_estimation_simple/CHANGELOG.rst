@@ -2,6 +2,11 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Create IMU bias variables only once an IMU has been seen.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.3.0 (2026-11-15)
 ------------------
 * Detect accelerometer readings in units of g, from the time-ordered reading history.

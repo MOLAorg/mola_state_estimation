@@ -2,6 +2,18 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Forthcoming
+-----------
+* Optional GNSS receiver bias state, for low-cost receivers.
+* Gyro-only IMU preintegration, with up to 3 IMUs.
+* GNSS gate: reacquire by the continuity of the residual.
+* Geo-reference convergence in ENU and tracking after convergence; robust wheel odometry.
+* IMU bias variables and IMU-specific choices only once an IMU has been seen; floor of the bias random-walk sigma on short links.
+* Better conditioning of the pose chain when {map} is only partially observed.
+* Generic launch file: second IMU, IMU preintegration args, use_sim_time, per-slot planar wheel odometry (odomN_as_robot_pose).
+* Requires mola_bridge_ros2 >= 3.6.0.
+* Contributors: Jose Luis Blanco-Claraco
+
 3.3.0 (2026-11-15)
 ------------------
 * IMU preintegration, on by default, with LiDAR-grade increment sigmas; accelerometer units detected; T_enu_to_map leveled from the accelerometer before the first solve.
