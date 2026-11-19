@@ -62,7 +62,7 @@
   <test_depend>tf2_ros</test_depend>
   <test_depend>mola_launcher</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
-  <exec_depend>mola_bridge_ros2</exec_depend>
+  <exec_depend version_gte="3.6.0">mola_bridge_ros2</exec_depend> <!-- per-topic odometry_as_robot_pose_observation -->
 
   <doc_depend>doxygen</doc_depend>
 
