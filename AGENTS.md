@@ -82,7 +82,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (51) | `tests/test-*.cpp` |
+| Unit tests (52) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -188,6 +188,12 @@ Sensor inputs:
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
   `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
   keyframe's `V`/`W`.
+- GNSS receiver bias states (off unless `gnss_bias_sigma_xy` > 0 and a receiver matches
+  `gnss_bias_labels_re`): a Gauss-Markov chain of ENU biases per receiver
+  (`gnss_bias_variable_locked()`, `gnss_bias_key()`, `GaussMarkovPoint3`) observed through
+  `FactorGnssMapEnuBias` / `...ConstVelBias`; gate in `predicted_gnss_bias_locked()` and
+  `solvedEnuPosVar`. Settings, gate and theory: docs, "GNSS receiver bias states".
+  `test-gnss-bias-state`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -261,7 +267,7 @@ Other behavior:
   centripetal included. An accurate odometry-frame pose source must come out
   unchanged (`test-odometry-pose-source-fidelity`).
 - iSAM2 relinearization: per variable type, `isam2_relinearize_threshold`
-  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B`
+  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B` and the GNSS biases
   (`test-imu-gyro-solver-stability`).
 - iSAM2 ordering (`isam2_newest_keys_last`, default on, GTSAM 4.2 only):
   `NewestLastFixedLagSmoother` re-implements 4.2's fixed-lag `update()` so the
@@ -410,6 +416,9 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `FactorGnssEnu` | `ExpressionFactorN` | GNSS position in ENU |
 | `FactorGnssMapEnu` | `ExpressionFactorN` | GNSS with explicit `T_enu_to_map` |
 | `FactorGnssMapEnuConstVel` | `ExpressionFactorN` | Same, fix time offset from its keyframe (uses `V`, `W`) |
+| `FactorGnssMapEnuBias` | `ExpressionFactorN` | `FactorGnssMapEnu` plus a receiver position bias variable (Point3, ENU) |
+| `FactorGnssMapEnuConstVelBias` | `ExpressionFactorN` | `FactorGnssMapEnuConstVel` plus that bias |
+| `GaussMarkovPoint3` | (helper) | Prior noise and link factors of a first-order Gauss-Markov Point3 chain (axes with sigma 0 held at zero) |
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |

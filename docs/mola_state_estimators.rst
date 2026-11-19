@@ -546,6 +546,32 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
    it (ROS 2: ``std_msgs/Float32`` ``mola_diagnostics/<module>/imu_yaw_bias_deg`` and
    ``imu_yaw_bias_sigma_deg``).
 
+   **GNSS receiver bias.** Most of the error of a low-cost (non-RTK) receiver is a slowly
+   varying offset of one or two meters, not white noise: fused as independent fixes, their
+   average looks ever more precise while it keeps that offset, the innovation gate cannot
+   tell it apart, and when a better source appears (RTK, map-based localization) the estimate
+   jumps. With ``gnss_bias_sigma_xy`` > 0, each receiver whose label matches
+   ``gnss_bias_labels_re`` (empty by default, so both must be set, e.g. only the low-cost
+   receiver when an RTK one is fused too) gets a bias state :math:`\mathbf{b}_k` (ENU, one per fused fix),
+   so that each fix observes the antenna position plus :math:`\mathbf{b}_k`, with the same
+   first-order Gauss-Markov model as above (:math:`\sigma_b` = ``gnss_bias_sigma_xy``, and
+   ``gnss_bias_sigma_z`` for the vertical, 0 = horizontal only; :math:`\tau` =
+   ``gnss_bias_time_constant``). The receiver sigmas must then describe only the white part
+   of its error (``gnss_bias_white_sigma_xy`` / ``_z`` replace the reported ones, which
+   usually include the bias). With a single receiver and an estimated geo-reference a
+   constant offset is not observable: the position sigma stays near :math:`\sigma_b`
+   (``convergence_max_position_sigma`` must be above it). With a second absolute reference,
+   e.g. RTK fixes from another receiver for a while, the bias is estimated and the low-cost
+   receiver keeps the estimate close to that reference for a time of the order of
+   :math:`\tau`. The innovation gate predicts those fixes with the bias, and does not lock
+   out the fixes of other receivers while the estimate is uncertain. The bias state helps
+   only while the odometry drifts less than the bias can: a drift of :math:`d` m/s ends up
+   about :math:`d\,\tau` meters inside the bias instead of being corrected, so a bias
+   estimate beyond ``gnss_bias_restart_sigmas`` (3 by default) restarts its chain.
+   ``publish_gnss_bias: true`` publishes the estimates
+   (``mola_diagnostics/<module>/gnss_bias_<label>_{e,n,u}_m``, ``..._sigma_m``). Model, factor
+   graph, observability and validation: :ref:`mola_sta_est_gnss_bias`.
+
 3.3. Outputs
 ~~~~~~~~~~~~~~
 - ``estimated_navstate()`` from C++, for any time and frame (see above).
@@ -738,3 +764,155 @@ This is actually implemented as the combination of distinct GTSAM factors:
 
 
 |
+
+.. _mola_sta_est_gnss_bias:
+
+5.2. GNSS receiver bias states
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Most of the error of a low-cost (non-RTK) receiver is a slowly varying offset, not white noise.
+On a ground robot with a u-blox 7 and an RTK ZED-F9P as reference, the u-blox error had a
+fix-to-fix (white) part of 0.06-0.13 m, and a colored part with a spread of 1-3 m per axis that
+decorrelates in 30-80 s, plus a mean offset of up to 2 m that persists across runs (part of it is
+the RTK correction frame against the receiver's WGS84). The sigma the receiver reports (4-5 m)
+is a total-error figure and is not correlated with its actual error. Fused as independent fixes,
+such a receiver makes the estimate look ever more precise while it keeps the offset, the
+innovation gate cannot reject it, and a better source (RTK, map-based localization) makes the
+estimate jump when it appears. This section describes the optional bias state that addresses it
+(``gnss_bias_sigma_xy`` > 0 and the receiver's label in ``gnss_bias_labels_re``; default off).
+
+**Measurement and process model.** For receiver :math:`r` with a bias state, a fix at time
+:math:`t_k`, attached to keyframe :math:`k` (stamp :math:`t_k - \Delta t_k`), observes:
+
+.. math::
+
+   \mathbf{z}_k = {}^{enu}\mathbf{T}_{map} \; \mathbf{T}_k \; \mathbf{l}(\Delta t_k)
+                  + \mathbf{b}_{r}(t_k) + \mathbf{n}_k, \qquad
+   \mathbf{n}_k \sim \mathcal{N}(\mathbf{0}, \mathbf{R}_k)
+
+with :math:`\mathbf{l}(\Delta t) = \mathbf{l} + \Delta t\,(\mathbf{v}_k + \boldsymbol{\omega}_k \times \mathbf{l})`
+the antenna (lever arm :math:`\mathbf{l}`) moved to the fix time with the keyframe body twist, and
+:math:`\mathbf{R}_k` only the white part of the receiver error (``gnss_bias_white_sigma_xy`` /
+``_z`` replace the reported sigmas; the floors ``gnss_min_sigma_floor_*`` still apply). The bias
+is a first-order Gauss-Markov process in ENU axes, one variable per fused fix:
+
+.. math::
+
+   \mathbf{b}_{r,k} = \boldsymbol{\Phi}_k \, \mathbf{b}_{r,k-1} + \mathbf{w}_k, \quad
+   \boldsymbol{\Phi}_k = \mathrm{diag}(\phi_k, \phi_k, \phi_k^{z}), \quad
+   \phi_k = e^{-\delta_k/\tau}, \quad
+   \mathbf{w}_k \sim \mathcal{N}\left(\mathbf{0}, \boldsymbol{\Sigma}_b (1-\phi_k^2)\right)
+
+.. math::
+
+   \mathbf{b}_{r,0} \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma}_b), \qquad
+   \boldsymbol{\Sigma}_b = \mathrm{diag}(\sigma_{xy}^2, \sigma_{xy}^2, \sigma_{z}^2)
+
+where :math:`\delta_k` is the time between the two fixes, :math:`\sigma_{xy}` =
+``gnss_bias_sigma_xy``, :math:`\sigma_z` = ``gnss_bias_sigma_z`` and :math:`\tau` =
+``gnss_bias_time_constant``. It is the sampled form of
+:math:`\dot{\mathbf{b}} = -\mathbf{b}/\tau + \mathbf{w}(t)`, with
+:math:`E[\mathbf{w}\mathbf{w}^\top] = (2/\tau)\,\boldsymbol{\Sigma}_b\,\delta(t)`: its marginal
+variance never exceeds :math:`\boldsymbol{\Sigma}_b`, and the random walk is the limit
+:math:`\tau \to \infty` with :math:`\sigma\sqrt{2/\tau}` per :math:`\sqrt{s}` fixed. If
+:math:`\sigma_z = 0`, the vertical component is not a process: :math:`\phi_k^z = 0` and each variable
+holds it at zero with a 1 mm prior. Links between (almost) simultaneous fixes are floored at
+:math:`\sigma/1000`, so the chain stays factorable.
+
+**Factor graph.** Variables (GTSAM keys): ``T(k)`` keyframe poses in ``{map}``, ``V(k)`` and
+``W(k)`` their body linear and angular velocities, ``F(0)`` = :math:`{}^{enu}\mathbf{T}_{map}`
+(never marginalized), and ``G(k)``, ``H(k)``, ``J(k)``, ``K(k)``: the bias (Point3, ENU) of up to
+four receivers, at the keyframe of each of their fused fixes. Factors added by this feature:
+
+- ``mola::factors::FactorGnssMapEnuBias`` on ``F(0), T(k), G(k)`` for a fix at its keyframe stamp,
+  or ``FactorGnssMapEnuConstVelBias`` on ``F(0), T(k), V(k), W(k), G(k)`` otherwise; the Jacobian
+  with respect to the bias is the identity. Robust kernel as for any GNSS fix.
+- ``mola::factors::GaussMarkovPoint3::link()`` between consecutive bias variables of a receiver
+  (``ExpressionFactor`` on :math:`\mathbf{b}_k - \boldsymbol{\Phi}\,\mathbf{b}_{k-1}`), and
+  ``GaussMarkovPoint3::prior_noise()`` for the prior of the first one. Both are in
+  ``mola_gtsam_factors``, for reuse by other graphs (e.g. a batch mapper).
+
+The rest of the graph (odometry increments, kinematic, IMU and gravity factors) is unchanged. In
+the fixed-lag smoother, the tail of each chain gets its key stamp refreshed at every solve, like
+``F(0)`` and the odometry frames: it is never marginalized while it is the tail, so the chain, and
+what it learned, survives GNSS outages of any length, and the next link uses the right
+:math:`\delta_k`. The earlier bias variables are marginalized with the window. The graph can be
+drawn from this Graphviz source (e.g. ``dot -Tsvg``), shown here as text only:
+
+.. code-block:: text
+
+   graph gnss_bias_state {
+     rankdir=LR;
+     node [shape=circle];
+     Tk [label="T(k)"]; Tk1 [label="T(k+1)"]; Tk2 [label="T(k+2)"];
+     F0 [label="T_enu_to_map\nF(0)"];
+     Gk [label="G(k)"]; Gk2 [label="G(k+2)"];
+     node [shape=box, width=0.15, height=0.15, label="", style=filled];
+     odo1; odo2;      // odometry / kinematic factors
+     gnss1; gnss2;    // FactorGnssMapEnuBias (fixes at k and k+2)
+     prior; gm;       // GaussMarkovPoint3: prior on the first bias, link
+     Tk -- odo1 -- Tk1;  Tk1 -- odo2 -- Tk2;
+     F0 -- gnss1;  Tk -- gnss1;  Gk -- gnss1;
+     F0 -- gnss2;  Tk2 -- gnss2; Gk2 -- gnss2;
+     prior -- Gk;  Gk -- gm -- Gk2;
+   }
+
+**Observability.**
+
+- *One receiver, estimated geo-reference.* The fixes depend on the translation of
+  :math:`{}^{enu}\mathbf{T}_{map}` and on the bias only through their sum, so a constant offset can
+  move from one to the other without changing any residual: the constant part of the bias is not
+  observable, only regularized by the zero-mean prior (and by the prior that the first GNSS
+  azimuth baseline puts on :math:`{}^{enu}\mathbf{T}_{map}`). Consequences: the absolute error
+  cannot drop below the receiver's own offset, and the solved position sigma in ``{enu}`` stays
+  of the order of :math:`\sigma_{xy}` instead of shrinking like :math:`1/\sqrt{N}`, i.e. it is
+  honest. It is not a hard floor: over times much longer than :math:`\tau`, the zero-mean process
+  model itself averages the bias towards zero, and the sigma slowly shrinks with it, which is only
+  as good as that model is for the receiver. ``convergence_max_position_sigma`` must then be above
+  :math:`\sigma_{xy}`.
+- *The time-varying part* is shared between the bias and the odometry drift according to their
+  noise models, as in a complementary filter: the odometry carries the short time scales and GNSS
+  the long ones. The cost is that odometry drifting at :math:`d` m/s leaves the bias about
+  :math:`d\,\tau` away from zero instead of being corrected; the state only pays off while the
+  odometry drifts well below :math:`\sigma_{xy}/\tau`. A bias estimate beyond
+  ``gnss_bias_restart_sigmas`` stationary sigmas (horizontal Mahalanobis distance, plus vertical if
+  estimated) is taken as odometry drift: the chain restarts from its prior at the next fix.
+- *A second absolute reference* (RTK fixes from another receiver, or a fixed geo-reference with
+  map-based localization) pins the translation, and the bias becomes observable: during the
+  reference it is estimated to about the white sigma over :math:`\sqrt{N}`, and afterwards its
+  variance relaxes as :math:`\phi^2(t)\,\mathrm{Var}_0 + \boldsymbol{\Sigma}_b\,(1-\phi^2(t))`, so the
+  low-cost receiver keeps the estimate on the reference for a time of the order of :math:`\tau`.
+
+**Innovation gate.** A fix of a receiver with a bias state is predicted as
+:math:`h(\hat{\mathbf{x}}) + \phi\,\hat{\mathbf{b}}`, with :math:`\phi` from the time since the bias
+estimate. While its fixes are in the window they pin the sum of position and bias much better
+than either part, so only the bias change is added to the usual prediction variance,
+:math:`(1-\phi)^2\,\mathrm{Var}(\hat{\mathbf{b}}) + (1-\phi^2)\,\boldsymbol{\Sigma}_b`; after a longer
+gap, :math:`\phi^2\,\mathrm{Var}(\hat{\mathbf{b}}) + (1-\phi^2)\,\boldsymbol{\Sigma}_b`. Fixes of
+other receivers use, per axis, at least the variance of the vehicle position in ``{enu}`` of the
+last solve (joint marginal of :math:`{}^{enu}\mathbf{T}_{map}` and the pose, refreshed once per
+second), so a better source is not locked out while the estimate is uncertain. Motion measures
+of the gate (re-acquisition) use the prediction without the bias, and the fix-to-fix tests before
+convergence add :math:`\sigma_{xy}` to the tolerance.
+
+**Settings and validation.** For a u-blox 7 class receiver: ``gnss_bias_sigma_xy`` 2 m,
+``gnss_bias_time_constant`` 60 s, ``gnss_bias_white_sigma_xy`` 0.3 m, ``gnss_bias_restart_sigmas``
+3, the receiver's label in ``gnss_bias_labels_re`` (not the RTK one), and
+``convergence_max_position_sigma`` above 2 m. Measured on three Husky A200 runs (9-38 min,
+wheel odometry + 2 gyroscopes, LiDAR odometry, or both; the u-blox 7 fused, the RTK F9P as ground
+truth), compared with the same configuration without the bias state:
+
+- the reported position covered the actual error better in all 18 cases (fraction inside the
+  95% ellipse, e.g. 0.55 to 0.98 with wheels and gyros on the longest run);
+- with two 15 s windows of RTK fixes, the median error in the 3 minutes after each window fell
+  from 1.37 to 0.45 m (longest run, wheels and gyros) and improved wherever the odometry was
+  sound during that time; worst-case errors shrank in most cases;
+- with the u-blox alone, the median error was 15-50% worse in every case: its offset is not
+  observable and odometry drift leaks into the bias. It is not an accuracy improvement for a
+  single low-cost receiver.
+
+A known limitation: if the first GNSS azimuth baseline happens far from the ``{map}`` origin (e.g.
+the odometry started far from where GNSS is first received, or after a ``reset()``) and only
+receivers with a bias state are fused, the azimuth error of that baseline times the distance goes
+into the bias. The first of the runs above is part of the public
+`Husky UAL dataset <https://w3.ual.es/~jlblanco/datasets/husky-ual-lidar-inertial-dataset/>`_
+(sequence 2026-11-16, with both receivers).

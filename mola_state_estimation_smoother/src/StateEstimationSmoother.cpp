@@ -56,11 +56,14 @@
 #include <mola_gtsam_factors/FactorAngularVelocityIntegration.h>
 #include <mola_gtsam_factors/FactorConstLocalVelocity.h>
 #include <mola_gtsam_factors/FactorGnssMapEnu.h>
+#include <mola_gtsam_factors/FactorGnssMapEnuBias.h>
 #include <mola_gtsam_factors/FactorGnssMapEnuConstVel.h>
+#include <mola_gtsam_factors/FactorGnssMapEnuConstVelBias.h>
 #include <mola_gtsam_factors/FactorGyroPreintegration.h>
 #include <mola_gtsam_factors/FactorImuPreintegrationBodyVel.h>
 #include <mola_gtsam_factors/FactorTrapezoidalIntegrator.h>
 #include <mola_gtsam_factors/FactorTricycleKinematic.h>
+#include <mola_gtsam_factors/GaussMarkovPoint3.h>
 #include <mola_gtsam_factors/MeasuredGravityFactor.h>
 #include <mola_gtsam_factors/Pose3RotationFactor.h>
 #include <mola_gtsam_factors/Pose3RotationYawBiasFactor.h>
@@ -179,6 +182,10 @@ constexpr double MAX_BIAS_PRIOR_TO_LINK_SIGMA_RATIO = 1000.0;
 // it is not enough.
 constexpr double GNSS_RESIDUAL_CHAIN_MAX_GAP         = 5.0;
 constexpr size_t GNSS_RESIDUAL_CHAIN_MIN_OUT_OF_GATE = 3;
+
+// GNSS receiver bias chains (Parameters::gnss_bias_sigma_xy): symbol characters of
+// their variables, one per receiver.
+constexpr std::array<char, 4> GNSS_BIAS_SYMBOLS = {'G', 'H', 'J', 'K'};
 
 // Appended to a wheel odometry's label when a pose source uses a frame of that name.
 constexpr const char* WHEELS_ODOMETRY_FRAME_SUFFIX = "_wheels";
@@ -434,7 +441,23 @@ gtsam::Key bias_key(size_t imuIdx, uint64_t id)
             THROW_EXCEPTION("Invalid IMU index");
     }
 }
-//  TODO: IMU bias
+namespace
+{
+/// Bias variable of the GNSS receiver with bias chain `chainIdx` at keyframe `id`
+gtsam::Key gnss_bias_key(size_t chainIdx, uint64_t id)
+{
+    return gtsam::Symbol(GNSS_BIAS_SYMBOLS.at(chainIdx), id);
+}
+
+/// The Gauss-Markov process of the GNSS receiver biases (vertical held at zero
+/// unless gnss_bias_sigma_z > 0)
+mola::factors::GaussMarkovPoint3 gnss_bias_process(const Parameters& p)
+{
+    return {
+        gtsam::Vector3(p.gnss_bias_sigma_xy, p.gnss_bias_sigma_xy, p.gnss_bias_sigma_z),
+        p.gnss_bias_time_constant};
+}
+}  // namespace
 
 constexpr unsigned int REFERENCE_FRAME_ID = 0;  // (for symbol_T_enu_to_map)
 
@@ -550,6 +573,28 @@ struct StateEstimationSmoother::GtsamImpl
     std::optional<std::pair<double, double>> yawBiasEstimate;
     double                                   yawBiasSigmaStamp = 0;
 
+    /// A GNSS receiver bias chain (Parameters::gnss_bias_sigma_xy): its tail
+    /// keyframe and key stamp, and its latest solved mean and covariance (ENU
+    /// axes) with the key stamp of its last covariance update.
+    struct GnssBiasChain
+    {
+        std::string                                             label;
+        std::optional<frame_index_t>                            lastKf;
+        double                                                  lastStamp = 0;
+        std::optional<std::pair<gtsam::Point3, gtsam::Matrix3>> estimate;
+        double                                                  estimateStamp = 0;
+        double                                                  covStamp      = 0;
+    };
+    /// By index in gnss_bias_key()
+    std::vector<GnssBiasChain> gnssBiasChains;
+
+    /// Whether `key` is a current variable (pending or in the smoother)
+    [[nodiscard]] bool has_key(const gtsam::Key key) const
+    {
+        return newValues.exists(key) ||
+               (smoother.has_value() && smoother->getLinearizationPoint().exists(key));
+    }
+
     /// Whether the reported orientation is pinned by a gauge anchor, not observed
     [[nodiscard]] bool rollPitchPinned() const { return odomFrameAnchor && !rollPitchObserved; }
     [[nodiscard]] bool yawPinned() const { return odomFrameAnchor && !yawObserved; }
@@ -630,9 +675,7 @@ struct StateEstimationSmoother::GtsamImpl
     /// one, see bias_key()), pending or in the smoother.
     [[nodiscard]] bool has_bias(const frame_index_t k, const size_t imuIdx = 0) const
     {
-        const auto key = bias_key(imuIdx, k);
-        return newValues.exists(key) ||
-               (smoother.has_value() && smoother->getLinearizationPoint().exists(key));
+        return has_key(bias_key(imuIdx, k));
     }
 
     /// An instant [s] and the vehicle attitude in {map} known for it, used to
@@ -751,6 +794,26 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 #endif
     }
 
+    if (params_.gnss_bias_sigma_xy > 0)
+    {
+        if (params_.gnss_bias_labels_re.empty())
+        {
+            MRPT_LOG_WARN(
+                "gnss_bias_sigma_xy > 0 but gnss_bias_labels_re is empty: no GNSS receiver gets "
+                "a bias state.");
+        }
+        try
+        {
+            (void)std::regex(params_.gnss_bias_labels_re);
+        }
+        catch (const std::regex_error& e)
+        {
+            THROW_EXCEPTION_FMT(
+                "Invalid gnss_bias_labels_re '%s': %s", params_.gnss_bias_labels_re.c_str(),
+                e.what());
+        }
+    }
+
     if (params_.imu_preintegration.enabled)
     {
         try
@@ -835,6 +898,10 @@ void StateEstimationSmoother::reinitialize_gtsam_locked()
         const auto chr = [](gtsam::Key k) { return gtsam::Symbol(k).chr(); };
 
         gtsam::FastMap<char, gtsam::Vector> thresholds;
+        for (const char c : GNSS_BIAS_SYMBOLS)
+        {
+            thresholds[c] = gtsam::Vector3::Constant(coarseThr);
+        }
         thresholds[chr(T(0))]            = gtsam::Vector6::Constant(poseThr);
         thresholds[chr(F(0))]            = gtsam::Vector6::Constant(poseThr);
         thresholds[chr(V(0))]            = gtsam::Vector3::Constant(coarseThr);
@@ -980,6 +1047,28 @@ void StateEstimationSmoother::spinOnce()
             module_publish_diagnostics({now, "imu_yaw_bias_deg", mrpt::RAD2DEG(bias->first)});
             module_publish_diagnostics(
                 {now, "imu_yaw_bias_sigma_deg", mrpt::RAD2DEG(bias->second)});
+        }
+    }
+
+    if (params_.publish_gnss_bias && diagnosticsTime)
+    {
+        const auto now = mrpt::Clock::now();
+        for (const auto& [label, b] : estimated_gnss_biases())
+        {
+            std::string key = label;
+            for (auto& c : key)
+            {
+                if (!std::isalnum(static_cast<unsigned char>(c)))
+                {
+                    c = '_';
+                }
+            }
+            key = "gnss_bias_" + key + "_";
+            module_publish_diagnostics({now, key + "e_m", b.mean.x});
+            module_publish_diagnostics({now, key + "n_m", b.mean.y});
+            module_publish_diagnostics({now, key + "u_m", b.mean.z});
+            module_publish_diagnostics(
+                {now, key + "sigma_m", std::sqrt(std::max(b.cov(0, 0), b.cov(1, 1)))});
         }
     }
 
@@ -1290,6 +1379,10 @@ void StateEstimationSmoother::reset_locked(bool keepFrames)
     {
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_.reset();
+    }
+    {
+        std::lock_guard<std::mutex> lck(lastGnssBiasesMutex_);
+        lastGnssBiases_.clear();
     }
     {
         std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
@@ -1993,6 +2086,109 @@ void StateEstimationSmoother::add_imu_yaw_bias_variable_locked(const frame_index
     g.lastYawBiasStamp  = stamp;
 }
 
+// One bias variable per fused fix of each receiver with a bias state, linked as a
+// first-order Gauss-Markov process (see Parameters::gnss_bias_sigma_xy). Unlike the
+// IMU yaw bias chain, the tail is never marginalized (solve_locked() keeps its key
+// stamp current), so the chain, and what it learned, survives GNSS outages.
+std::optional<size_t> StateEstimationSmoother::gnss_bias_chain_locked(const std::string& label)
+{
+    if (params_.gnss_bias_sigma_xy <= 0 || params_.gnss_bias_labels_re.empty())
+    {
+        return {};
+    }
+    auto&      chains = state_.gtsam->gnssBiasChains;
+    const auto it =
+        std::find_if(chains.begin(), chains.end(), [&](const auto& c) { return c.label == label; });
+    if (it != chains.end())
+    {
+        return static_cast<size_t>(it - chains.begin());
+    }
+    if (!std::regex_match(label, state_.gnss_bias_labels_re.get_regex(params_.gnss_bias_labels_re)))
+    {
+        return {};
+    }
+    if (chains.size() >= GNSS_BIAS_SYMBOLS.size())
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            60.0,
+            "[fuse_gnss] Receiver '%s' fused without a bias state: at most %zu receivers have "
+            "one.",
+            label.c_str(), GNSS_BIAS_SYMBOLS.size());
+        return {};
+    }
+    chains.emplace_back().label = label;
+    return chains.size() - 1;
+}
+
+std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
+    const std::string& label, const frame_index_t kf)
+{
+    const auto chainIdx = gnss_bias_chain_locked(label);
+    if (!chainIdx)
+    {
+        return {};
+    }
+    auto&            g     = *state_.gtsam;
+    const size_t     idx   = *chainIdx;
+    auto&            chain = g.gnssBiasChains[idx];
+    const gtsam::Key key   = gnss_bias_key(idx, kf);
+    if (g.has_key(key))
+    {
+        return key;  // another fix on the same keyframe
+    }
+
+    const double  stamp = key_stamp_seconds(state_.stamp2frame_index.inverse(kf));
+    const auto    gm    = gnss_bias_process(params_);
+    gtsam::Point3 initialValue(0, 0, 0);
+    auto          prevKey = chain.lastKf ? std::optional(gnss_bias_key(idx, *chain.lastKf))
+                                         : std::optional<gtsam::Key>();
+    // A late fix (older than the tail) hangs off the tail without becoming it,
+    // so the chain keeps growing from its newest variable.
+    const bool late = prevKey && stamp < chain.lastStamp;
+    // A bias far outside its stationary distribution is not a receiver error, but
+    // most likely odometry drift that the chain absorbed: start it again.
+    if (prevKey && !late && chain.estimate && params_.gnss_bias_restart_sigmas > 0)
+    {
+        const auto&  m  = chain.estimate->first;
+        const auto&  s  = gm.stationary_sigmas();
+        const double d2 = (mrpt::square(m.x()) + mrpt::square(m.y())) / mrpt::square(s.x()) +
+                          (s.z() > 0 ? mrpt::square(m.z()) / mrpt::square(s.z()) : 0.0);
+        if (d2 > mrpt::square(params_.gnss_bias_restart_sigmas))
+        {
+            gnssGateStats_.bias_restarts++;
+            MRPT_LOG_THROTTLE_WARN_FMT(
+                5.0,
+                "[fuse_gnss] Bias of receiver '%s' reached (%.2f, %.2f, %.2f) m, %.1f sigmas: "
+                "restarting it (the odometry may have drifted). %zu restarts so far.",
+                label.c_str(), m.x(), m.y(), m.z(), std::sqrt(d2), gnssGateStats_.bias_restarts);
+            prevKey.reset();
+            chain.estimate.reset();
+        }
+    }
+    if (prevKey && g.has_key(*prevKey))
+    {
+        const double dt = std::abs(stamp - chain.lastStamp);
+        if (chain.estimate)
+        {
+            initialValue = gm.transition(dt) * chain.estimate->first;
+        }
+        g.newFactors.push_back(gm.link(*prevKey, key, dt));
+    }
+    else
+    {
+        g.newFactors.addPrior(key, gtsam::Point3(0, 0, 0), gm.prior_noise());
+    }
+
+    g.newValues.insert(key, initialValue);
+    g.newKeyStamps[key] = stamp;
+    if (!late)
+    {
+        chain.lastKf    = kf;
+        chain.lastStamp = stamp;
+    }
+    return key;
+}
+
 void StateEstimationSmoother::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
     note_input_stamp("gnss:" + gps.sensorLabel, gps.timestamp);
@@ -2034,6 +2230,24 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     // Receiver covariance with the configured floors, used for everything below
     // (gate, factor noise and azimuth baselines alike):
     Eigen::Matrix3d enuCov = gps.covariance_enu->asEigen();
+    if (gnss_bias_chain_locked(gps.sensorLabel))
+    {
+        // Only the white part of its error: the bias state holds the rest.
+        const double sXY = params_.gnss_bias_white_sigma_xy;
+        const double sZ  = params_.gnss_bias_white_sigma_z;
+        if (sXY > 0)
+        {
+            enuCov.block<2, 2>(0, 0) = Eigen::Matrix2d::Identity() * sXY * sXY;
+            enuCov.block<2, 1>(0, 2).setZero();
+            enuCov.block<1, 2>(2, 0).setZero();
+        }
+        if (sZ > 0)
+        {
+            enuCov(2, 2) = sZ * sZ;
+            enuCov.block<2, 1>(0, 2).setZero();
+            enuCov.block<1, 2>(2, 0).setZero();
+        }
+    }
     {
         const double minVarXY = mrpt::square(params_.gnss_min_sigma_floor_xy);
         const double minVarZ  = mrpt::square(params_.gnss_min_sigma_floor_z);
@@ -2210,7 +2424,22 @@ void StateEstimationSmoother::fuse_gnss_locked(const mrpt::obs::CObservationGPS&
     // moving vehicle would be pulled by speed * dt towards where it was not.
     const double fixDt =
         mrpt::system::timeDifference(state_.stamp2frame_index.inverse(this_kf_id), gps.timestamp);
-    if (std::abs(fixDt) > 1e-6)
+    if (const auto biasKey = gnss_bias_variable_locked(gps.sensorLabel, this_kf_id); biasKey)
+    {
+        if (std::abs(fixDt) > 1e-6)
+        {
+            state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuConstVelBias>(
+                symbol_T_enu_to_map, T(this_kf_id), V(this_kf_id), W(this_kf_id), *biasKey,
+                sensorOnVehicle, fixDt, observedEnu, enuNoiseModel);
+        }
+        else
+        {
+            state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuBias>(
+                symbol_T_enu_to_map, T(this_kf_id), *biasKey, sensorOnVehicle, observedEnu,
+                enuNoiseModel);
+        }
+    }
+    else if (std::abs(fixDt) > 1e-6)
     {
         state_.gtsam->newFactors.emplace_shared<mola::factors::FactorGnssMapEnuConstVel>(
             symbol_T_enu_to_map, T(this_kf_id), V(this_kf_id), W(this_kf_id), sensorOnVehicle,
@@ -3863,6 +4092,20 @@ void StateEstimationSmoother::solve_locked()
             state_.gtsam->newKeyStamps[symbol_T_map_to_odom_i_base + frameId] =
                 lastObservationStamp_sec;
         }
+        // The tail of each GNSS bias chain, so it outlasts gaps in its fixes:
+        const auto& chains = state_.gtsam->gnssBiasChains;
+        for (size_t i = 0; i < chains.size(); i++)
+        {
+            if (!chains[i].lastKf)
+            {
+                continue;
+            }
+            const auto key = gnss_bias_key(i, *chains[i].lastKf);
+            if (state_.gtsam->has_key(key))
+            {
+                state_.gtsam->newKeyStamps[key] = lastObservationStamp_sec;
+            }
+        }
     }
 
     if (NAVSTATE_PRINT_FG)
@@ -3975,7 +4218,20 @@ void StateEstimationSmoother::solve_locked()
         size_t nPosePrior = 0, nPoseBetween = 0, nTwistPrior = 0;
         size_t nImuAttitude = 0, nImuGravity = 0, nGnss = 0;
         size_t nConstVel = 0, nTrapInt = 0, nAngVelInt = 0, nTricycle = 0;
-        size_t nOther = 0, nNullSlots = 0;
+        size_t nOther = 0, nNullSlots = 0, nGnssBias = 0;
+        // Priors and links of the GNSS bias chains: factors on bias variables only.
+        const auto onGnssBiasOnly = [](const gtsam::NonlinearFactor& f)
+        {
+            return std::all_of(
+                f.keys().begin(), f.keys().end(),
+                [](gtsam::Key k)
+                {
+                    const auto c = gtsam::Symbol(k).chr();
+                    return std::any_of(
+                        GNSS_BIAS_SYMBOLS.begin(), GNSS_BIAS_SYMBOLS.end(),
+                        [c](char b) { return static_cast<unsigned char>(b) == c; });
+                });
+        };
 
         for (const auto& f : smoother.getFactors())
         {
@@ -3986,42 +4242,70 @@ void StateEstimationSmoother::solve_locked()
             }
             const auto* p = f.get();
             if (dynamic_cast<const gtsam::PriorFactor<gtsam::Pose3>*>(p))
+            {
                 ++nPosePrior;
+            }
             else if (dynamic_cast<const gtsam::BetweenFactor<gtsam::Pose3>*>(p))
+            {
                 ++nPoseBetween;
+            }
+            else if (onGnssBiasOnly(*f))
+            {
+                ++nGnssBias;
+            }
             else if (dynamic_cast<const gtsam::PriorFactor<gtsam::Point3>*>(p))
+            {
                 ++nTwistPrior;
-            else if (dynamic_cast<const mola::factors::Pose3RotationFactor*>(p))
+            }
+            else if (
+                dynamic_cast<const mola::factors::Pose3RotationFactor*>(p) ||
+                dynamic_cast<const mola::factors::Pose3RotationYawBiasFactor*>(p))
+            {
                 ++nImuAttitude;
-            else if (dynamic_cast<const mola::factors::Pose3RotationYawBiasFactor*>(p))
-                ++nImuAttitude;
+            }
             else if (dynamic_cast<const mola::factors::MeasuredGravityFactor*>(p))
+            {
                 ++nImuGravity;
+            }
             else if (
                 dynamic_cast<const mola::factors::FactorGnssMapEnu*>(p) ||
-                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVel*>(p))
+                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVel*>(p) ||
+                dynamic_cast<const mola::factors::FactorGnssMapEnuBias*>(p) ||
+                dynamic_cast<const mola::factors::FactorGnssMapEnuConstVelBias*>(p))
+            {
                 ++nGnss;
+            }
             else if (dynamic_cast<const mola::factors::FactorConstLocalVelocityPose*>(p))
+            {
                 ++nConstVel;
+            }
             else if (dynamic_cast<const mola::factors::FactorTrapezoidalIntegratorPose*>(p))
+            {
                 ++nTrapInt;
+            }
             else if (dynamic_cast<const mola::factors::FactorAngularVelocityIntegrationPose*>(p))
+            {
                 ++nAngVelInt;
+            }
             else if (dynamic_cast<const mola::factors::FactorTricycleKinematic*>(p))
+            {
                 ++nTricycle;
+            }
             else
+            {
                 ++nOther;
+            }
         }
 
         MRPT_LOG_DEBUG_FMT(
             "[sliding-window factors] KFs=%zu  odom-frames=%zu | "
             "pose priors=%zu  pose between (odom)=%zu  twist priors=%zu | "
-            "IMU attitude=%zu  IMU gravity=%zu  GNSS=%zu | "
+            "IMU attitude=%zu  IMU gravity=%zu  GNSS=%zu  GNSS bias=%zu | "
             "kinematics: const-vel=%zu trap-int=%zu ang-vel-int=%zu tricycle=%zu | "
             "other=%zu  null-slots=%zu  total-active=%zu",
             state_.last_estimated_states.size(), state_.known_odom_frames.size(), nPosePrior,
-            nPoseBetween, nTwistPrior, nImuAttitude, nImuGravity, nGnss, nConstVel, nTrapInt,
-            nAngVelInt, nTricycle, nOther, nNullSlots, smoother.getFactors().nrFactors());
+            nPoseBetween, nTwistPrior, nImuAttitude, nImuGravity, nGnss, nGnssBias, nConstVel,
+            nTrapInt, nAngVelInt, nTricycle, nOther, nNullSlots, smoother.getFactors().nrFactors());
     }
 
     gtsam::Values optValues;
@@ -4114,6 +4398,41 @@ void StateEstimationSmoother::solve_locked()
 
         std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
         lastYawBias_ = g.yawBiasEstimate;
+    }
+
+    if (auto& chains = state_.gtsam->gnssBiasChains; !chains.empty())
+    {
+        std::map<std::string, GnssBiasEstimate> biases;
+        for (size_t i = 0; i < chains.size(); i++)
+        {
+            auto& c = chains[i];
+            if (!c.lastKf)
+            {
+                continue;
+            }
+            const auto key = gnss_bias_key(i, *c.lastKf);
+            if (!optValues.exists(key))
+            {
+                continue;
+            }
+            // Its marginal costs about a solve: refreshed at most once per second of data.
+            constexpr double covPeriod = 1.0;
+            gtsam::Matrix3   cov       = c.estimate ? c.estimate->second : gtsam::Matrix3::Zero();
+            if (!c.estimate || c.lastStamp - c.covStamp >= covPeriod)
+            {
+                cov        = smoother.marginalCovariance(key);
+                c.covStamp = c.lastStamp;
+            }
+            const gtsam::Point3 mean = optValues.at<gtsam::Point3>(key);
+            c.estimate               = {mean, cov};
+            c.estimateStamp          = c.lastStamp;
+
+            auto& b = biases[c.label];
+            b.mean  = {mean.x(), mean.y(), mean.z()};
+            b.cov   = mrpt::math::CMatrixDouble33(cov);
+        }
+        std::lock_guard<std::mutex> lck(lastGnssBiasesMutex_);
+        lastGnssBiases_ = std::move(biases);
     }
 
     state_.gtsam->mapObservedSolved         = state_.gtsam->mapObserved;
@@ -4262,6 +4581,27 @@ void StateEstimationSmoother::solve_locked()
                 std::lock_guard<std::mutex> lck(lastGeorefConvergenceMutex_);
                 lastGeorefConvergence_ = GeorefConvergence{
                     convPos, convOri, azimuthPinned, state_.geo_reference.has_value()};
+            }
+        }
+    }
+
+    // With GNSS bias states, the gate needs the solved {enu} position sigma of the
+    // vehicle (see gnss_gate_locked()), with an estimated or a fixed geo-reference.
+    // A joint marginal: refreshed at most once per second of data. Only once some
+    // receiver has a bias state, so the gate is unchanged otherwise.
+    if (!state_.gtsam->gnssBiasChains.empty() && !state_.stamp2frame_index.empty())
+    {
+        const auto& [latestStamp, latestIdx] = *state_.stamp2frame_index.getDirectMap().rbegin();
+        const double t                       = key_stamp_seconds(latestStamp);
+        auto&        gg                      = state_.gnssGate;
+        if ((!gg.solvedEnuPosSigmaStamp || t - *gg.solvedEnuPosSigmaStamp >= 1.0) &&
+            optValues.exists(T(latestIdx)) && optValues.exists(symbol_T_enu_to_map))
+        {
+            std::array<double, 3> var{};
+            if (vehicle_enu_sigmas_locked(optValues, latestIdx, &var))
+            {
+                gg.solvedEnuPosVar        = var;
+                gg.solvedEnuPosSigmaStamp = t;
             }
         }
     }
@@ -5018,7 +5358,7 @@ size_t StateEstimationSmoother::num_imu_bias_chains() const
 }
 
 std::optional<std::pair<double, double>> StateEstimationSmoother::vehicle_enu_sigmas_locked(
-    const gtsam::Values& values, frame_index_t kf) const
+    const gtsam::Values& values, frame_index_t kf, std::array<double, 3>* posVarEnu) const
 {
     try
     {
@@ -5046,6 +5386,10 @@ std::optional<std::pair<double, double>> StateEstimationSmoother::vehicle_enu_si
             return {};
         }
         const double pos = std::sqrt(Cpos.diagonal().maxCoeff());
+        if (posVarEnu != nullptr)
+        {
+            *posVarEnu = {Cpos(0, 0), Cpos(1, 1), Cpos(2, 2)};
+        }
         // Roll and pitch that nothing observes keep a level prior: they do not count.
         const auto observedOrNot = [](double sigma)
         { return sigma < UNOBSERVED_ENU2MAP_ANGLE_SIGMA ? sigma : 0.0; };
@@ -5729,6 +6073,13 @@ std::optional<std::pair<double, double>> StateEstimationSmoother::estimated_imu_
 {
     std::lock_guard<std::mutex> lck(lastYawBiasMutex_);
     return lastYawBias_;
+}
+
+std::map<std::string, StateEstimationSmoother::GnssBiasEstimate>
+    StateEstimationSmoother::estimated_gnss_biases() const
+{
+    std::lock_guard<std::mutex> lck(lastGnssBiasesMutex_);
+    return lastGnssBiases_;
 }
 
 #if defined(MOLA_KERNEL_NAVSTATE_FILTER_HAS_GEO_REFERENCE)
@@ -6422,6 +6773,41 @@ std::optional<mrpt::math::TPoint3D> StateEstimationSmoother::predicted_antenna_i
     return ret;
 }
 
+std::optional<StateEstimationSmoother::GnssBiasEstimate>
+    StateEstimationSmoother::predicted_gnss_bias_locked(
+        const std::string& label, const mrpt::Clock::time_point& t)
+{
+    const auto chainIdx = gnss_bias_chain_locked(label);
+    if (!chainIdx)
+    {
+        return {};
+    }
+    // The stationary distribution, until the chain has a solved estimate:
+    const auto       gm = gnss_bias_process(params_);
+    GnssBiasEstimate b;
+    b.cov = mrpt::math::CMatrixDouble33(gm.stationary_cov());
+
+    const auto& chain = state_.gtsam->gnssBiasChains.at(*chainIdx);
+    if (chain.estimate)
+    {
+        const double dt  = std::abs(key_stamp_seconds(t) - chain.estimateStamp);
+        const double phi = gm.phi(dt);
+        const auto&  m   = chain.estimate->first;
+        b.mean           = {phi * m.x(), phi * m.y(), phi * m.z()};
+        const mrpt::math::CMatrixDouble33 solved(chain.estimate->second);
+        const mrpt::math::CMatrixDouble33 stationary = b.cov;
+        // While its fixes are in the window, they pin the sum of vehicle position and
+        // bias much better than either: the prediction of that sum is as good as for
+        // any receiver, plus the bias change since the estimate. After a longer gap,
+        // the bias is as uncertain as its marginal says.
+        // Var = (1 - phi)^2 or phi^2 Var(solved), plus (1 - phi^2) Var(stationary):
+        const bool   anchored = dt <= params_.sliding_window_length;
+        const double k        = anchored ? (1 - phi) : phi;
+        b.cov                 = solved * (k * k) + stationary * (1 - phi * phi);
+    }
+    return b;
+}
+
 StateEstimationSmoother::GnssGateStats StateEstimationSmoother::gnss_gate_stats() const
 {
     auto lck = mrpt::lockHelper(stateMutex_);
@@ -6585,13 +6971,20 @@ bool StateEstimationSmoother::gnss_gate_locked(
     fix.sigma = std::sqrt(*std::max_element(enuVarFloored.begin(), enuVarFloored.end()));
     fix.t     = gps.timestamp;
     fix.geo   = geo;
+    if (gnss_bias_chain_locked(gps.sensorLabel))
+    {
+        // Fixes of other receivers may differ by this receiver's bias:
+        fix.biasSigma = std::max(params_.gnss_bias_sigma_xy, params_.gnss_bias_sigma_z);
+    }
 
     const double kSigma     = params_.gnss_gate_chi2 > 0 ? std::sqrt(params_.gnss_gate_chi2) : 5.0;
     const auto   consistent = [&](const State::GnssGate::Fix& a, const State::GnssGate::Fix& b)
     {
         const double dist = (a.ecef - b.ecef).norm();
         const double dt   = std::abs(mrpt::system::timeDifference(a.t, b.t));
-        return dist <= kSigma * std::sqrt(mrpt::square(a.sigma) + mrpt::square(b.sigma)) +
+        return dist <= kSigma * std::sqrt(
+                                    mrpt::square(a.sigma) + mrpt::square(b.sigma) +
+                                    mrpt::square(a.biasSigma) + mrpt::square(b.biasSigma)) +
                            params_.gnss_max_plausible_speed * dt;
     };
 
@@ -6615,9 +7008,11 @@ bool StateEstimationSmoother::gnss_gate_locked(
         }
         const double odoMove = (*antennaMapNow - *gg.lastAcceptedAntennaMap).norm();
         const double dist    = (gg.lastAccepted->ecef - fix.ecef).norm();
-        return dist <=
-               kSigma * std::sqrt(mrpt::square(gg.lastAccepted->sigma) + mrpt::square(fix.sigma)) +
-                   params_.gnss_gate_prediction_sigma + 1.5 * odoMove;
+        const auto&  last    = *gg.lastAccepted;
+        return dist <= kSigma * std::sqrt(
+                                    mrpt::square(last.sigma) + mrpt::square(fix.sigma) +
+                                    mrpt::square(last.biasSigma) + mrpt::square(fix.biasSigma)) +
+                           params_.gnss_gate_prediction_sigma + 1.5 * odoMove;
     };
 
     // --- Datum: only after a few mutually consistent fixes ---
@@ -6745,8 +7140,31 @@ bool StateEstimationSmoother::gnss_gate_locked(
 
     mrpt::math::TPoint3D fixEnu;
     mrpt::topography::geodeticToENU_WGS84(geo, fixEnu, *datum);
-    const auto predEnu = T_enu_to_map->composePoint(*predMap);
-    const auto r       = fixEnu - predEnu;
+    // A receiver with a bias state is predicted with its bias, whose uncertainty
+    // adds to that of the prediction:
+    // The vehicle-only prediction measures motion below: a change of the bias
+    // estimate is not vehicle motion.
+    auto                  enuVarGate     = enuVarFloored;
+    const auto            predEnuVehicle = T_enu_to_map->composePoint(*predMap);
+    auto                  predEnu        = predEnuVehicle;
+    std::array<double, 3> solvedVar{};
+    if (const auto b = predicted_gnss_bias_locked(gps.sensorLabel, gps.timestamp); b)
+    {
+        predEnu = predEnu + b->mean;
+        for (int i = 0; i < 3; i++)
+        {
+            enuVarGate[i] += b->cov(i, i);
+        }
+    }
+    else if (gg.solvedEnuPosVar)
+    {
+        // Other fixes (e.g. RTK while a low-cost receiver with a bias state is the
+        // only other one): the estimate, honest about the bias that its fixes share,
+        // must not be deemed more precise than its solved covariance says, or a
+        // better source would be locked out.
+        solvedVar = *gg.solvedEnuPosVar;
+    }
+    const auto r = fixEnu - predEnu;
 
     // Predicted position uncertainty: base, plus what may have drifted since
     // the last accepted fix.
@@ -6761,12 +7179,16 @@ bool StateEstimationSmoother::gnss_gate_locked(
     gg.lastPredictedAntenna = *predMap;
     const double driftSigma =
         gg.postSigma + params_.gnss_gate_drift_per_meter * gg.pathSinceAccepted;
-    const double predVar =
+    const double predVarModel =
         mrpt::square(params_.gnss_gate_prediction_sigma) + mrpt::square(driftSigma);
+    // Per axis (E, N, U), at least what the solve says (see solvedVar above):
+    const std::array<double, 3> predVar = {
+        std::max(predVarModel, solvedVar[0]), std::max(predVarModel, solvedVar[1]),
+        std::max(predVarModel, solvedVar[2])};
 
-    const double d2 = mrpt::square(r.x) / (enuVarFloored[0] + predVar) +
-                      mrpt::square(r.y) / (enuVarFloored[1] + predVar) +
-                      mrpt::square(r.z) / (enuVarFloored[2] + predVar);
+    const double d2 = mrpt::square(r.x) / (enuVarGate[0] + predVar[0]) +
+                      mrpt::square(r.y) / (enuVarGate[1] + predVar[1]) +
+                      mrpt::square(r.z) / (enuVarGate[2] + predVar[2]);
 
     const auto onAccepted = [&]()
     {
@@ -6813,9 +7235,9 @@ bool StateEstimationSmoother::gnss_gate_locked(
         bool                       continuous = false;
         if (chain)
         {
-            const double dt = std::abs(mrpt::system::timeDifference(chain->t, gps.timestamp));
-            const double predStep =
-                std::hypot(predEnu.x - chain->predEnu.x, predEnu.y - chain->predEnu.y);
+            const double dt       = std::abs(mrpt::system::timeDifference(chain->t, gps.timestamp));
+            const double predStep = std::hypot(
+                predEnuVehicle.x - chain->predEnu.x, predEnuVehicle.y - chain->predEnu.y);
             const double noise = 3.0 * std::hypot(chain->sigma, sigmaXY);
             // The step between two antennas is not vehicle motion: each one
             // starts its own chain.
@@ -6835,9 +7257,9 @@ bool StateEstimationSmoother::gnss_gate_locked(
         }
         // Anchors must pass the nominal gate (no growth with the path) in 3D:
         const double nomVar = mrpt::square(params_.gnss_gate_prediction_sigma);
-        const double d2nom  = mrpt::square(r.x) / (enuVarFloored[0] + nomVar) +
-                             mrpt::square(r.y) / (enuVarFloored[1] + nomVar) +
-                             mrpt::square(r.z) / (enuVarFloored[2] + nomVar);
+        const double d2nom  = mrpt::square(r.x) / (enuVarGate[0] + nomVar) +
+                             mrpt::square(r.y) / (enuVarGate[1] + nomVar) +
+                             mrpt::square(r.z) / (enuVarGate[2] + nomVar);
         if (d2nom <= params_.gnss_gate_chi2)
         {
             chain->anchored       = true;
@@ -6853,7 +7275,7 @@ bool StateEstimationSmoother::gnss_gate_locked(
         }
         chain->residual = rXY;
         chain->antenna  = antenna;
-        chain->predEnu  = predEnu;
+        chain->predEnu  = predEnuVehicle;
         chain->t        = gps.timestamp;
         chain->sigma    = sigmaXY;
         MRPT_LOG_DEBUG_FMT(
@@ -6870,7 +7292,7 @@ bool StateEstimationSmoother::gnss_gate_locked(
 
     // The chain only covers the horizontal residual: the height must still pass.
     const bool heightOk =
-        mrpt::square(r.z) <= params_.gnss_gate_chi2 * (enuVarFloored[2] + predVar);
+        mrpt::square(r.z) <= params_.gnss_gate_chi2 * (enuVarGate[2] + predVar[2]);
     if (params_.gnss_gate_reacquire_after > 0 && precise && heightOk && chain->anchored &&
         chain->precise >= static_cast<size_t>(params_.gnss_gate_reacquire_after) &&
         chain->sinceAnchor >= GNSS_RESIDUAL_CHAIN_MIN_OUT_OF_GATE &&
@@ -6897,17 +7319,17 @@ bool StateEstimationSmoother::gnss_gate_locked(
     if (gg.runStartFixEnu && gg.runStartPredEnu && !chainBroke)
     {
         const auto   fixMove  = fixEnu - *gg.runStartFixEnu;
-        const auto   predMove = predEnu - *gg.runStartPredEnu;
+        const auto   predMove = predEnuVehicle - *gg.runStartPredEnu;
         const double noise    = 3.0 * std::sqrt(2.0) * fix.sigma;
         sameRun               = (fixMove - predMove).norm() <= noise + 0.5 * predMove.norm();
     }
     if (!sameRun)
     {
         gg.runStartFixEnu  = fixEnu;
-        gg.runStartPredEnu = predEnu;
+        gg.runStartPredEnu = predEnuVehicle;
     }
     const bool movedEnough =
-        (predEnu - *gg.runStartPredEnu).norm() >= params_.gnss_gate_reacquire_min_path;
+        (predEnuVehicle - *gg.runStartPredEnu).norm() >= params_.gnss_gate_reacquire_min_path;
     const auto why = mrpt::format(
         "%.2f m from the prediction (E %.2f, N %.2f, U %.2f), chi2 %.1f > %.1f", r.norm(), r.x, r.y,
         r.z, d2, params_.gnss_gate_chi2);

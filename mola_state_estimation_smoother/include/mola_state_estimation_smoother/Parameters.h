@@ -33,6 +33,10 @@
 /// solver indeterminate:
 #define MOLA_STATE_ESTIMATION_SMOOTHER_HAS_ORIENTATION_GAUGE 1
 
+/// GNSS receiver bias states (Parameters::gnss_bias_sigma_xy) and
+/// StateEstimationSmoother::estimated_gnss_biases():
+#define MOLA_STATE_ESTIMATION_SMOOTHER_HAS_GNSS_BIAS 1
+
 namespace mola::state_estimation_smoother
 {
 
@@ -121,6 +125,12 @@ class Parameters
      * `mola_diagnostics/<module>/imu_yaw_bias_deg` and `.../imu_yaw_bias_sigma_deg`).
      * Default off. */
     bool publish_imu_yaw_bias = false;
+
+    /** If true, publish the estimated GNSS receiver biases (see `gnss_bias_sigma_xy`) as
+     * module diagnostics, once per diagnostics period: `gnss_bias_<label>_{e,n,u}_m` and
+     * `gnss_bias_<label>_sigma_m` (largest horizontal sigma), with the label's
+     * non-alphanumeric characters replaced by `_`. Default off. */
+    bool publish_gnss_bias = false;
 
     /** If true (and `imu_bias_tracking`), publish the gyroscope bias of each tracked IMU as
      * module diagnostics, once per diagnostics period: `imu_bias_<label>_gyro_{x,y,z}_deg_s`
@@ -827,6 +837,67 @@ class Parameters
 
     /// Same floor for the vertical (Up) component [m].
     double gnss_min_sigma_floor_z = 0.30;  // [m]
+
+    /** \name GNSS receiver bias states
+     *  Most of the error of a low-cost (non-RTK) receiver is a slowly varying
+     *  offset, not white noise. With `gnss_bias_sigma_xy > 0`, each receiver
+     *  whose sensor label matches `gnss_bias_labels_re` gets a position bias
+     *  state (ENU axes, one variable per fix, `gnss_bias_key()`), added to the
+     *  predicted antenna position of its fixes (`FactorGnssMapEnuBias`), whose
+     *  sigmas then stand for the white part of the error only (see
+     *  `gnss_bias_white_sigma_xy`). The bias is a
+     *  first-order Gauss-Markov process, as the IMU attitude yaw bias:
+     *  b(k) = phi * b(k-1) + w, phi = exp(-dt/tau), var(w) = sigma^2 (1 - phi^2),
+     *  with a prior N(0, sigma^2) on the first variable. Fused fixes then never
+     *  bring the position sigma below the bias sigma, a slow wander bends the
+     *  trajectory less, and with another absolute reference (e.g. RTK fixes from
+     *  a second receiver, or a fixed geo-reference with map-based localization)
+     *  the bias becomes observable, so the receiver stays consistent with it.
+     *  With one receiver and an estimated geo-reference, a constant bias is not
+     *  observable: the convergence threshold `convergence_max_position_sigma`
+     *  must then be above `gnss_bias_sigma_xy`. The innovation gate predicts
+     *  these fixes with the bias, and, for the fixes of other receivers, never
+     *  takes the prediction as more precise than the solved vehicle position in
+     *  {enu}, so a better source (e.g. RTK) is not locked out.
+     * @{ */
+
+    /** Stationary sigma of the horizontal (East, North) bias [m], e.g. ~1-3 m
+     *  for a u-blox 7 class receiver. 0 = no bias states (default). */
+    double gnss_bias_sigma_xy = 0.0;  // [m]
+
+    /** Stationary sigma of the vertical (Up) bias [m]. 0 = horizontal bias
+     *  only (the vertical component is held at zero). */
+    double gnss_bias_sigma_z = 0.0;  // [m]
+
+    /** Correlation time of the bias [s]: how long a bias, once observed,
+     *  keeps being known (e.g. after the RTK fixes of another receiver stop). */
+    double gnss_bias_time_constant = 300.0;  // [s]
+
+    /** Sensor labels of the receivers that get a bias state (regex), e.g. only
+     *  the low-cost one when an RTK receiver is fused as well. Empty (default):
+     *  none, so enabling the feature needs both this and gnss_bias_sigma_xy. */
+    std::string gnss_bias_labels_re;
+
+    /** Horizontal sigma of the white part of the error of the receivers with a
+     *  bias state [m], replacing their reported one (0 = keep it). Receivers
+     *  usually report their total error, bias included: with a bias state,
+     *  that would count the bias twice, and a reference (e.g. RTK) could not
+     *  observe it. Low-cost receivers have ~0.1 m of fix-to-fix noise. The
+     *  floors (gnss_min_sigma_floor_xy) still apply. */
+    double gnss_bias_white_sigma_xy = 0.0;  // [m]
+
+    /// Same, for the vertical (Up) sigma [m] (0 = keep the reported one).
+    double gnss_bias_white_sigma_z = 0.0;  // [m]
+
+    /** A bias whose last estimate lies farther than this many stationary
+     *  sigmas from zero (horizontal Mahalanobis distance, plus vertical if
+     *  estimated) is not a plausible receiver error: most likely the odometry
+     *  drifted and the bias absorbed it (a drift of d m/s leaves the bias about
+     *  d * tau away). The chain then starts again from its prior at the next
+     *  fix, so the fixes correct the trajectory instead. 0 = never. */
+    double gnss_bias_restart_sigmas = 3.0;
+
+    /** @} */
 
     /** If not empty, the final geo-reference (geodetic datum + T_enu_to_map,
      *  fixed or estimated) is written to this YAML file when the estimator is
