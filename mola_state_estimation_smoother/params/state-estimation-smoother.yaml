@@ -60,6 +60,10 @@ params:
   # std_msgs/Float32 mola_diagnostics/<module>/imu_yaw_bias_deg and imu_yaw_bias_sigma_deg.
   publish_imu_yaw_bias: ${MOLA_NAVSTATE_PUBLISH_IMU_YAW_BIAS|false}
 
+  # If true, publish the estimated GNSS receiver biases (gnss_bias_sigma_xy > 0) as module
+  # diagnostics (gnss_bias_<label>_{e,n,u}_m, gnss_bias_<label>_sigma_m).
+  publish_gnss_bias: ${MOLA_NAVSTATE_PUBLISH_GNSS_BIAS|false}
+
   # If true (and imu_bias_tracking), publish each IMU gyroscope bias as module diagnostics:
   # mola_diagnostics/<module>/imu_bias_<label>_gyro_{x,y,z}_deg_s and ..._gyro_sigma_deg_s.
   publish_imu_biases: ${MOLA_NAVSTATE_PUBLISH_IMU_BIASES|false}
@@ -411,6 +415,21 @@ params:
   gnss_gate_reacquire_max_sigma: ${MOLA_NAVSTATE_GNSS_GATE_REACQUIRE_MAX_SIGMA|0.2}  # [m], 0 = off
   gnss_max_plausible_speed: ${MOLA_NAVSTATE_GNSS_MAX_SPEED|50.0}  # [m/s]
   gnss_datum_min_consistent_fixes: ${MOLA_NAVSTATE_GNSS_DATUM_MIN_FIXES|3}
+
+  # GNSS receiver bias states (see Parameters.h): a slowly varying position offset
+  # per receiver (Gauss-Markov, stationary sigma and correlation time), for low-cost
+  # receivers whose error is mostly bias. The receiver sigmas then stand for the white
+  # part of the error only. With one receiver and an estimated geo-reference,
+  # convergence_max_position_sigma must be above gnss_bias_sigma_xy.
+  gnss_bias_sigma_xy: ${MOLA_NAVSTATE_GNSS_BIAS_SIGMA_XY|0.0}  # [m], 0 = no bias states
+  gnss_bias_sigma_z: ${MOLA_NAVSTATE_GNSS_BIAS_SIGMA_Z|0.0}  # [m], 0 = horizontal only
+  gnss_bias_time_constant: ${MOLA_NAVSTATE_GNSS_BIAS_TIME_CONSTANT|300.0}  # [s]
+  gnss_bias_labels_re: "${MOLA_NAVSTATE_GNSS_BIAS_LABELS|.*}"  # receivers with a bias state
+  # Sigmas of the white part of their error, replacing the reported ones (0 = keep them):
+  gnss_bias_white_sigma_xy: ${MOLA_NAVSTATE_GNSS_BIAS_WHITE_SIGMA_XY|0.0}  # [m]
+  gnss_bias_white_sigma_z: ${MOLA_NAVSTATE_GNSS_BIAS_WHITE_SIGMA_Z|0.0}  # [m]
+  # A bias estimate this many sigmas away restarts its chain (odometry drift), 0 = never:
+  gnss_bias_restart_sigmas: ${MOLA_NAVSTATE_GNSS_BIAS_RESTART_SIGMAS|3.0}
 
   # If set, the final geo-reference (datum + T_enu_to_map) is written to this YAML
   # file (mp2p_icp georeferencing format) when the estimator is destroyed.

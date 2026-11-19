@@ -546,6 +546,30 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
    it (ROS 2: ``std_msgs/Float32`` ``mola_diagnostics/<module>/imu_yaw_bias_deg`` and
    ``imu_yaw_bias_sigma_deg``).
 
+   **GNSS receiver bias.** Most of the error of a low-cost (non-RTK) receiver is a slowly
+   varying offset of one or two meters, not white noise: fused as independent fixes, their
+   average looks ever more precise while it keeps that offset, the innovation gate cannot
+   tell it apart, and when a better source appears (RTK, map-based localization) the estimate
+   jumps. With ``gnss_bias_sigma_xy`` > 0, each receiver whose label matches
+   ``gnss_bias_labels_re`` gets a bias state :math:`\mathbf{b}_k` (ENU, one per fused fix),
+   so that each fix observes the antenna position plus :math:`\mathbf{b}_k`, with the same
+   first-order Gauss-Markov model as above (:math:`\sigma_b` = ``gnss_bias_sigma_xy``, and
+   ``gnss_bias_sigma_z`` for the vertical, 0 = horizontal only; :math:`\tau` =
+   ``gnss_bias_time_constant``). The receiver sigmas must then describe only the white part
+   of its error (``gnss_bias_white_sigma_xy`` / ``_z`` replace the reported ones, which
+   usually include the bias). With a single receiver and an estimated geo-reference a
+   constant offset is not observable: the position sigma stays near :math:`\sigma_b`
+   (``convergence_max_position_sigma`` must be above it). With a second absolute reference,
+   e.g. RTK fixes from another receiver for a while, the bias is estimated and the low-cost
+   receiver keeps the estimate close to that reference for a time of the order of
+   :math:`\tau`. The innovation gate predicts those fixes with the bias, and does not lock
+   out the fixes of other receivers while the estimate is uncertain. The bias state helps
+   only while the odometry drifts less than the bias can: a drift of :math:`d` m/s ends up
+   about :math:`d\,\tau` meters inside the bias instead of being corrected, so a bias
+   estimate beyond ``gnss_bias_restart_sigmas`` (3 by default) restarts its chain.
+   ``publish_gnss_bias: true`` publishes the estimates
+   (``mola_diagnostics/<module>/gnss_bias_<label>_{e,n,u}_m``, ``..._sigma_m``).
+
 3.3. Outputs
 ~~~~~~~~~~~~~~
 - ``estimated_navstate()`` from C++, for any time and frame (see above).

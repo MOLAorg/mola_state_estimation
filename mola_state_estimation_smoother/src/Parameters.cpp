@@ -38,6 +38,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, publish_fused_vehicle_tf);
     MCP_LOAD_OPT(cfg, fused_vehicle_frame_name);
     MCP_LOAD_OPT(cfg, publish_imu_yaw_bias);
+    MCP_LOAD_OPT(cfg, publish_gnss_bias);
     MCP_LOAD_OPT(cfg, publish_imu_biases);
     MCP_LOAD_OPT(cfg, publish_georef_convergence);
 
@@ -215,6 +216,19 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, gnss_min_sigma_floor_z);
     ASSERT_GE_(gnss_min_sigma_floor_xy, 0.0);
     ASSERT_GE_(gnss_min_sigma_floor_z, 0.0);
+    MCP_LOAD_OPT(cfg, gnss_bias_sigma_xy);
+    MCP_LOAD_OPT(cfg, gnss_bias_sigma_z);
+    MCP_LOAD_OPT(cfg, gnss_bias_time_constant);
+    MCP_LOAD_OPT(cfg, gnss_bias_labels_re);
+    MCP_LOAD_OPT(cfg, gnss_bias_white_sigma_xy);
+    MCP_LOAD_OPT(cfg, gnss_bias_white_sigma_z);
+    ASSERT_GE_(gnss_bias_white_sigma_xy, 0.0);
+    ASSERT_GE_(gnss_bias_white_sigma_z, 0.0);
+    MCP_LOAD_OPT(cfg, gnss_bias_restart_sigmas);
+    ASSERT_GE_(gnss_bias_restart_sigmas, 0.0);
+    ASSERT_GE_(gnss_bias_sigma_xy, 0.0);
+    ASSERT_GE_(gnss_bias_sigma_z, 0.0);
+    ASSERT_GT_(gnss_bias_time_constant, 0.0);
     MCP_LOAD_OPT(cfg, save_final_georef_to_file);
     MCP_LOAD_OPT(cfg, estimate_geo_reference);
 

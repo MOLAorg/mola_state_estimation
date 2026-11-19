@@ -82,7 +82,7 @@ Sliding-window factor-graph smoother on GTSAM's iSAM2
 | ROS 2 launches | `ros2-launchs/ros2-state-estimator.launch.py`, `ros2-fuse-two-odometries.launch.py`, `ros2-demo-simulated-sensors.launch.py` (+ `rviz2/state_estimation_demo.rviz`) |
 | MOLA-CLI launches | `mola-cli-launchs/state_estimator_ros2.yaml`, `demo_lidar_odom_plus_wheel_odom_fusion.yaml` |
 | CLI app | `apps/mola-navstate-cli.cpp` |
-| Unit tests (51) | `tests/test-*.cpp` |
+| Unit tests (52) | `tests/test-*.cpp` |
 | Integration tests | `test/integration/test_*.py` (real time; run serially) |
 
 Structure:
@@ -188,6 +188,17 @@ Sensor inputs:
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
   `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
   keyframe's `V`/`W`.
+- GNSS receiver bias states (`gnss_bias_sigma_xy` > 0, default 0 = off; `_z`,
+  `gnss_bias_time_constant`, `gnss_bias_labels_re`): matching receivers get an ENU bias per
+  fused fix (`gnss_bias_key()`: symbols `G`, `H`, `J`, `K`, max 4 receivers; vertical held
+  at 0 unless `_z` > 0), a first-order Gauss-Markov chain whose tail key stamp is refreshed in
+  `solve_locked()` (never marginalized, survives outages); `FactorGnssMapEnuBias`.
+  `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last estimate beyond
+  `gnss_bias_restart_sigmas` (3) restarts the chain from its prior (`bias_restarts`). Gate:
+  their fixes are predicted with the propagated bias (`predicted_gnss_bias_locked()`) plus its
+  variance; other fixes use at least the solved joint {enu} position variance
+  (`solvedEnuPosSigmaXY`). `estimated_gnss_biases()`, `publish_gnss_bias`.
+  `test-gnss-bias-state`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -410,6 +421,7 @@ Headers in `include/mola_gtsam_factors/`, sources in `src/`.
 | `FactorGnssEnu` | `ExpressionFactorN` | GNSS position in ENU |
 | `FactorGnssMapEnu` | `ExpressionFactorN` | GNSS with explicit `T_enu_to_map` |
 | `FactorGnssMapEnuConstVel` | `ExpressionFactorN` | Same, fix time offset from its keyframe (uses `V`, `W`) |
+| `FactorGnssMapEnuBias` | `ExpressionFactorN` | Same as the above, plus a receiver position bias variable (Point3, ENU) |
 | `MeasuredGravityFactor` | `ExpressionFactorN` | Up-vector leveling relative to `T_enu_to_map` |
 | `MapGravityFactor` | `ExpressionFactorN` | Up-vector leveling in a z-up map frame (no geo-reference) |
 | `Pose3RotationFactor` | `ExpressionFactorN` | Rotation-only constraint |

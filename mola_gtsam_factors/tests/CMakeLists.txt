@@ -42,6 +42,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test_gnss_map_enu_bias_factor
+  SOURCES test_gnss_map_enu_bias_factor.cpp
+  LINK_LIBRARIES
+    mola::mola_gtsam_factors
+)
+
+mola_add_test(
   TARGET  test_imu_integrate_readings
   SOURCES test_imu_integrate_readings.cpp
   LINK_LIBRARIES

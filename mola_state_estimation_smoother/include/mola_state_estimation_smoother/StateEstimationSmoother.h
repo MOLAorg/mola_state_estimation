@@ -46,6 +46,7 @@
 #include <mrpt/containers/bimap.h>
 #include <mrpt/containers/yaml.h>
 #include <mrpt/core/pimpl.h>
+#include <mrpt/math/CMatrixFixed.h>
 #include <mrpt/math/TPoint2D.h>
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/obs/CObservationGPS.h>
@@ -277,6 +278,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         size_t reacquired = 0;  //!< rejected fixes accepted again (see gnss_gate_reacquire_*)
         size_t reacquired_by_continuity = 0;  //!< of them, by gnss_gate_reacquire_max_sigma
         size_t datum_restarts           = 0;  //!< datum candidates dropped as inconsistent
+        size_t bias_restarts = 0;  //!< GNSS bias chains restarted (gnss_bias_restart_sigmas)
     };
     [[nodiscard]] GnssGateStats gnss_gate_stats() const;
 
@@ -336,6 +338,19 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  it is not estimated (`imu_attitude_yaw_bias_sigma_deg` = 0) or not solved yet.
      *  A reading's ENU yaw is the true one plus this bias. */
     [[nodiscard]] std::optional<std::pair<double, double>> estimated_imu_yaw_bias() const;
+
+    /// A GNSS receiver bias estimate (see Parameters::gnss_bias_sigma_xy)
+    struct GnssBiasEstimate
+    {
+        mrpt::math::TPoint3D        mean;  //!< ENU axes [m]
+        mrpt::math::CMatrixDouble33 cov;  //!< [m^2]
+    };
+
+    /** Gets the latest estimated GNSS receiver biases, by sensor label: a fix is the true
+     *  antenna position plus the bias (plus white noise). Empty for receivers without a bias
+     *  state (`gnss_bias_sigma_xy` = 0, or a label not matching `gnss_bias_labels_re`) or
+     *  not solved yet. */
+    [[nodiscard]] std::map<std::string, GnssBiasEstimate> estimated_gnss_biases() const;
 
     /// Gets the latest estimated transform of "T_map_to_odometry_frame_i", by frame ID name.
     [[nodiscard]] std::optional<mrpt::poses::CPose3DPDFGaussian> estimated_T_map_to_odometry_frame(
@@ -616,7 +631,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             std::optional<mrpt::math::TPoint3D> runStartPredEnu;
 
             // Prediction uncertainty model:
-            double                              postSigma         = -1;  //!< < 0: not initialized
+            double postSigma = -1;  //!< < 0: not initialized
+            /// With GNSS bias states: the largest horizontal sigma of the vehicle
+            /// position in {enu} as of the last solve (joint marginal) [m]
+            std::optional<double>               solvedEnuPosSigmaXY;
             double                              pathSinceAccepted = 0;  //!< [m]
             std::optional<mrpt::math::TPoint3D> lastPredictedAntenna;  //!< in {map}
 
@@ -657,6 +675,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         RegexCache do_process_imu_labels_re;
         RegexCache do_process_odometry_labels_re;
         RegexCache do_process_gnss_labels_re;
+        RegexCache gnss_bias_labels_re;
     };
 
     State      state_;
@@ -666,6 +685,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// mutex so readers never wait for a solve holding stateMutex_.
     std::optional<std::pair<double, double>> lastYawBias_;
     mutable std::mutex                       lastYawBiasMutex_;
+
+    /// Copy of the latest solved GNSS receiver biases, by sensor label, with its own mutex.
+    std::map<std::string, GnssBiasEstimate> lastGnssBiases_;
+    mutable std::mutex                      lastGnssBiasesMutex_;
 
     /// Latest geo-reference convergence state (see publish_georef_convergence).
     struct GeorefConvergence
@@ -919,6 +942,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     void fuse_imu_locked(const mrpt::obs::CObservationIMU& imu);
     /// Creates the yaw bias variable of keyframe `kf`, if it does not exist yet
     void add_imu_yaw_bias_variable_locked(frame_index_t kf);
+    /** The bias variable of GNSS receiver `label` at keyframe `kf`, created (and chained
+     *  to the previous one) if it does not exist yet; empty if that receiver has no bias
+     *  state. */
+    std::optional<uint64_t> gnss_bias_variable_locked(const std::string& label, frame_index_t kf);
+    /// Whether receiver `label` has a bias state (Parameters::gnss_bias_sigma_xy)
+    bool has_gnss_bias_state_locked(const std::string& label);
+    /** The bias of receiver `label` expected at time `t` (the stationary prior until its
+     *  chain is solved), or empty if it has no bias state. */
+    std::optional<GnssBiasEstimate> predicted_gnss_bias_locked(
+        const std::string& label, const mrpt::Clock::time_point& t);
     void fuse_gnss_locked(const mrpt::obs::CObservationGPS& gps);
     void fuse_twist_locked(
         const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
@@ -1016,9 +1049,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Number of IMU bias variable chains (0 without preintegration)
     size_t num_imu_bias_chains() const;
     /// Position [m] and orientation [deg] sigmas of the vehicle pose in {enu} at
-    /// keyframe `kf`, from the joint marginal of T_enu_to_map and its pose.
+    /// keyframe `kf`, from the joint marginal of T_enu_to_map and its pose, and
+    /// optionally the largest horizontal position sigma [m].
     std::optional<std::pair<double, double>> vehicle_enu_sigmas_locked(
-        const gtsam::Values& values, frame_index_t kf) const;
+        const gtsam::Values& values, frame_index_t kf, double* posSigmaXY = nullptr) const;
     double relative_pose_increment_sigma_lin_locked() const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
