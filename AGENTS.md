@@ -188,17 +188,20 @@ Sensor inputs:
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
   `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
   keyframe's `V`/`W`.
-- GNSS receiver bias states (`gnss_bias_sigma_xy` > 0, default 0 = off; `_z`,
-  `gnss_bias_time_constant`, `gnss_bias_labels_re`): matching receivers get an ENU bias per
-  fused fix (`gnss_bias_key()`: symbols `G`, `H`, `J`, `K`, max 4 receivers; vertical held
-  at 0 unless `_z` > 0), a first-order Gauss-Markov chain whose tail key stamp is refreshed in
-  `solve_locked()` (never marginalized, survives outages); `FactorGnssMapEnuBias`.
-  `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last estimate beyond
-  `gnss_bias_restart_sigmas` (3) restarts the chain from its prior (`bias_restarts`). Gate:
-  their fixes are predicted with the propagated bias (`predicted_gnss_bias_locked()`) plus its
-  variance; other fixes use at least the solved joint {enu} position variance
-  (`solvedEnuPosSigmaXY`). `estimated_gnss_biases()`, `publish_gnss_bias`.
-  `test-gnss-bias-state`.
+- GNSS receiver bias states (`gnss_bias_sigma_xy` > 0 and receivers matching
+  `gnss_bias_labels_re`, empty by default: both needed; `_z`, `gnss_bias_time_constant`):
+  an ENU bias per fused fix (`gnss_bias_key()`: symbols `G`, `H`, `J`, `K`, max 4 receivers,
+  `gnss_bias_chain_locked()`; vertical held at 0 unless `_z` > 0), a first-order Gauss-Markov
+  chain whose tail key stamp is refreshed in `solve_locked()` (survives outages);
+  `FactorGnssMapEnuBias`. `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last
+  estimate beyond `gnss_bias_restart_sigmas` (3) restarts the chain (`bias_restarts`). Gate:
+  their fixes are predicted with the propagated bias, with only the bias change since its
+  estimate as extra variance while its fixes are in the window (`predicted_gnss_bias_locked()`);
+  other fixes use at least the solved joint {enu} position variance (`solvedEnuPosVar`,
+  1 Hz, per axis); motion measures use the bias-free prediction; fix-to-fix tests add the
+  bias sigma.
+  `estimated_gnss_biases()`, `publish_gnss_bias`; feature macro
+  `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_GNSS_BIAS`. `test-gnss-bias-state`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all
   IMUs matching `imu_bias_labels_re` (raw readings from `onNewObservation()`, even if not
@@ -272,7 +275,7 @@ Other behavior:
   centripetal included. An accurate odometry-frame pose source must come out
   unchanged (`test-odometry-pose-source-fidelity`).
 - iSAM2 relinearization: per variable type, `isam2_relinearize_threshold`
-  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B`
+  (0.01) for poses `T`/`F`, a fixed 0.1 for `V`/`W`/`Z`/`B` and the GNSS biases
   (`test-imu-gyro-solver-stability`).
 - iSAM2 ordering (`isam2_newest_keys_last`, default on, GTSAM 4.2 only):
   `NewestLastFixedLagSmoother` re-implements 4.2's fixed-lag `update()` so the

@@ -605,8 +605,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
             /// A fix as a geocentric point, for fix-to-fix consistency tests.
             struct Fix
             {
-                mrpt::math::TPoint3D              ecef;
-                double                            sigma = 0;  //!< isotropic [m]
+                mrpt::math::TPoint3D ecef;
+                double               sigma = 0;  //!< isotropic [m]
+                /// Its receiver's bias sigma (GNSS bias states), else 0 [m]
+                double                            biasSigma = 0;
                 mrpt::Clock::time_point           t;
                 mrpt::topography::TGeodeticCoords geo;
             };
@@ -632,11 +634,12 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
             // Prediction uncertainty model:
             double postSigma = -1;  //!< < 0: not initialized
-            /// With GNSS bias states: the largest horizontal sigma of the vehicle
-            /// position in {enu} as of the last solve (joint marginal) [m]
-            std::optional<double>               solvedEnuPosSigmaXY;
-            double                              pathSinceAccepted = 0;  //!< [m]
-            std::optional<mrpt::math::TPoint3D> lastPredictedAntenna;  //!< in {map}
+            /// With GNSS bias states: the variances of the vehicle position in {enu}
+            /// as of the last solve (joint marginal)
+            std::optional<std::array<double, 3>> solvedEnuPosVar;  //!< E, N, U [m^2]
+            std::optional<double>                solvedEnuPosSigmaStamp;  //!< its key stamp [s]
+            double                               pathSinceAccepted = 0;  //!< [m]
+            std::optional<mrpt::math::TPoint3D>  lastPredictedAntenna;  //!< in {map}
 
             /// With a fixed geo-reference: the vehicle position has converged
             /// (sticky), so there is a prediction worth gating against.
@@ -946,8 +949,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
      *  to the previous one) if it does not exist yet; empty if that receiver has no bias
      *  state. */
     std::optional<uint64_t> gnss_bias_variable_locked(const std::string& label, frame_index_t kf);
-    /// Whether receiver `label` has a bias state (Parameters::gnss_bias_sigma_xy)
-    bool has_gnss_bias_state_locked(const std::string& label);
+    /** The bias chain (index in gnss_bias_key()) of receiver `label`, created on first
+     *  use; empty if it has no bias state (Parameters::gnss_bias_sigma_xy and
+     *  gnss_bias_labels_re), including when all chains are taken. */
+    std::optional<size_t> gnss_bias_chain_locked(const std::string& label);
     /** The bias of receiver `label` expected at time `t` (the stationary prior until its
      *  chain is solved), or empty if it has no bias state. */
     std::optional<GnssBiasEstimate> predicted_gnss_bias_locked(
@@ -1050,9 +1055,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     size_t num_imu_bias_chains() const;
     /// Position [m] and orientation [deg] sigmas of the vehicle pose in {enu} at
     /// keyframe `kf`, from the joint marginal of T_enu_to_map and its pose, and
-    /// optionally the largest horizontal position sigma [m].
+    /// optionally the position variances along E, N, U [m^2].
     std::optional<std::pair<double, double>> vehicle_enu_sigmas_locked(
-        const gtsam::Values& values, frame_index_t kf, double* posSigmaXY = nullptr) const;
+        const gtsam::Values& values, frame_index_t kf,
+        std::array<double, 3>* posVarEnu = nullptr) const;
     double relative_pose_increment_sigma_lin_locked() const;
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();

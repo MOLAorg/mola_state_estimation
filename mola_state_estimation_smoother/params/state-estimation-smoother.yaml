@@ -424,7 +424,7 @@ params:
   gnss_bias_sigma_xy: ${MOLA_NAVSTATE_GNSS_BIAS_SIGMA_XY|0.0}  # [m], 0 = no bias states
   gnss_bias_sigma_z: ${MOLA_NAVSTATE_GNSS_BIAS_SIGMA_Z|0.0}  # [m], 0 = horizontal only
   gnss_bias_time_constant: ${MOLA_NAVSTATE_GNSS_BIAS_TIME_CONSTANT|300.0}  # [s]
-  gnss_bias_labels_re: "${MOLA_NAVSTATE_GNSS_BIAS_LABELS|.*}"  # receivers with a bias state
+  gnss_bias_labels_re: "${MOLA_NAVSTATE_GNSS_BIAS_LABELS|}"  # receivers with a bias state (regex), empty = none
   # Sigmas of the white part of their error, replacing the reported ones (0 = keep them):
   gnss_bias_white_sigma_xy: ${MOLA_NAVSTATE_GNSS_BIAS_WHITE_SIGMA_XY|0.0}  # [m]
   gnss_bias_white_sigma_z: ${MOLA_NAVSTATE_GNSS_BIAS_WHITE_SIGMA_Z|0.0}  # [m]

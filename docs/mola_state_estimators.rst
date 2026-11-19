@@ -551,7 +551,8 @@ taken from ``/tf`` (or from ``fixed_sensor_pose`` if ``use_fixed_sensor_pose: tr
    average looks ever more precise while it keeps that offset, the innovation gate cannot
    tell it apart, and when a better source appears (RTK, map-based localization) the estimate
    jumps. With ``gnss_bias_sigma_xy`` > 0, each receiver whose label matches
-   ``gnss_bias_labels_re`` gets a bias state :math:`\mathbf{b}_k` (ENU, one per fused fix),
+   ``gnss_bias_labels_re`` (empty by default, so both must be set, e.g. only the low-cost
+   receiver when an RTK one is fused too) gets a bias state :math:`\mathbf{b}_k` (ENU, one per fused fix),
    so that each fix observes the antenna position plus :math:`\mathbf{b}_k`, with the same
    first-order Gauss-Markov model as above (:math:`\sigma_b` = ``gnss_bias_sigma_xy``, and
    ``gnss_bias_sigma_z`` for the vertical, 0 = horizontal only; :math:`\tau` =

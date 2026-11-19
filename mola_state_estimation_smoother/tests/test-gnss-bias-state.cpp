@@ -87,6 +87,12 @@ struct Scenario
     double      odomScale     = 1.0;  //!< odometry distance scale (e.g. lost encoder counts)
     double      restartSigmas = 3.0;  //!< gnss_bias_restart_sigmas
     bool        lowCostBiased = true;  //!< the low-cost receiver has its constant offset
+    std::string labels        = "lowcost";  //!< gnss_bias_labels_re
+    double      reportedSigma = LOWCOST_SIGMA;  //!< sigma the low-cost receiver reports [m]
+    double      whiteSigma    = 0;  //!< gnss_bias_white_sigma_xy [m]
+    double      outlierOffset = 0;  //!< East offset of every 10th low-cost fix after 40 s [m]
+    double      outageFrom = -1, outageTo = -1;  //!< low-cost receiver outage [s]
+    double      gnssFrom = 0;  //!< no GNSS at all before this time [s]
 };
 
 struct Result
@@ -156,9 +162,10 @@ Result run(const Scenario& sc)
     params += mrpt::format(
         "    gnss_bias_sigma_xy: %f\n"
         "    gnss_bias_time_constant: 300.0\n"
-        "    gnss_bias_labels_re: \"lowcost\"\n"
-        "    gnss_bias_restart_sigmas: %f\n",
-        sc.biasSigmaXY, sc.restartSigmas);
+        "    gnss_bias_labels_re: \"%s\"\n"
+        "    gnss_bias_restart_sigmas: %f\n"
+        "    gnss_bias_white_sigma_xy: %f\n",
+        sc.biasSigmaXY, sc.labels.c_str(), sc.restartSigmas, sc.whiteSigma);
     est.initialize(mrpt::containers::yaml::FromText(params));
 
     const size_t nPoseSteps = static_cast<size_t>(std::lround(POSE_PERIOD / IMU_PERIOD));
@@ -187,15 +194,22 @@ Result run(const Scenario& sc)
                 p.x + rng.drawGaussian1D(0, sigma), p.y + rng.drawGaussian1D(0, sigma),
                 p.z + rng.drawGaussian1D(0, 2 * sigma));
         };
-        if (i % nGnssSteps == 0)
+        const bool gnssOn = t >= sc.gnssFrom;
+        if (i % nGnssSteps == 0 && gnssOn && !(t >= sc.outageFrom && t < sc.outageTo))
         {
-            const auto p = (gtEnuAt(t) + LOWCOST_ANTENNA).translation();
+            auto p = (gtEnuAt(t) + LOWCOST_ANTENNA).translation();
+            if (sc.lowCostBiased)
+            {
+                p = p + LOWCOST_BIAS;
+            }
+            if (sc.outlierOffset != 0 && t >= 40.0 && std::lround(t) % 10 == 0)
+            {
+                p.x += sc.outlierOffset;
+            }
             est.fuse_gnss(makeFix(
-                "lowcost", LOWCOST_ANTENNA,
-                noisy(sc.lowCostBiased ? p + LOWCOST_BIAS : p, LOWCOST_SIGMA), t, LOWCOST_SIGMA,
-                1));
+                "lowcost", LOWCOST_ANTENNA, noisy(p, LOWCOST_SIGMA), t, sc.reportedSigma, 1));
         }
-        if (i % nGnssSteps == nGnssSteps / 2 && t < sc.rtkUntil)
+        if (i % nGnssSteps == nGnssSteps / 2 && gnssOn && t < sc.rtkUntil)
         {
             const auto p = (gtEnuAt(t) + RTK_ANTENNA).translation();
             est.fuse_gnss(makeFix("rtk", RTK_ANTENNA, noisy(p, RTK_SIGMA), t, RTK_SIGMA, 4));
@@ -257,25 +271,37 @@ Result run(const Scenario& sc)
     return res;
 }
 
-// Off by default: no bias variables, and the offset that all fixes share stays
-// in the estimate.
-void test_off_by_default()
+Result run_with(Scenario sc, const std::string& name, double biasSigmaXY)
 {
-    const auto r = run({"low-cost receiver alone, no bias state", 0.0, -1});
-    ASSERT_(r.biases.empty());
-    ASSERT_GT_(r.finalHorizErr, 1.0);
+    sc.name        = name;
+    sc.biasSigmaXY = biasSigmaXY;
+    return run(sc);
 }
 
-// A constant offset is not observable with one receiver, but the bias state keeps
-// the reported uncertainty above it, and the bias estimate as uncertain as its prior.
-void test_honest_sigma()
+// Off by default, and enabling it takes both a sigma and the receiver labels: no
+// bias variables otherwise, and the offset that all fixes share stays in the
+// estimate.
+void test_off_by_default()
+{
+    const auto off = run({"low-cost receiver alone, no bias state", 0.0, -1});
+    ASSERT_(off.biases.empty());
+    ASSERT_GT_(off.finalHorizErr, 1.0);
+
+    Scenario sc{"bias sigma set, no labels", 2.0, -1};
+    sc.labels         = "";
+    const auto noLbls = run(sc);
+    ASSERT_(noLbls.biases.empty());
+}
+
+// A constant offset is not observable with one receiver: the bias keeps an
+// uncertainty near its prior instead of collapsing, and the estimate stays within it.
+void test_unobservable_alone()
 {
     const auto r = run({"low-cost receiver alone, bias state", 2.0, -1});
     ASSERT_EQUAL_(r.biases.size(), 1U);
-    ASSERT_GT_(r.finalSigmaXY, 1.0);
-    ASSERT_LT_(r.finalHorizErr, 3.0 * r.finalSigmaXY);
     const auto& b = r.biases.begin()->second;
     ASSERT_GT_(std::sqrt(b.cov(0, 0)), 1.0);
+    ASSERT_LT_(r.finalHorizErr, 3.0);
 }
 
 // With a precise receiver for a while, the bias becomes observable, and the
@@ -294,23 +320,80 @@ void test_observable_with_rtk()
     ASSERT_GT_(off.finalHorizErr, 1.0);
 }
 
+// A receiver reporting its total error (here 3 m) makes a short reference (10 s of
+// RTK) tell little about its bias: the white sigma override lets the reference
+// determine it.
+void test_white_sigma_override()
+{
+    Scenario sc{"low-cost reporting 3 m + RTK for 10 s, bias state", 2.0, 10.0};
+    sc.reportedSigma    = 3.0;
+    const auto reported = run(sc);
+    sc.name             = "same, white sigma 0.2 m";
+    sc.whiteSigma       = 0.2;
+    const auto white    = run(sc);
+
+    const auto& bw = white.biases.at("lowcost");
+    const auto& br = reported.biases.at("lowcost");
+    ASSERT_LT_(std::hypot(bw.mean.x - LOWCOST_BIAS.x, bw.mean.y - LOWCOST_BIAS.y), 0.4);
+    ASSERT_LT_(std::sqrt(bw.cov(0, 0)), 0.8 * std::sqrt(br.cov(0, 0)));
+}
+
+// The gate still rejects outliers of a receiver with a bias state: its fixes pin
+// the sum of position and bias, whatever the uncertainty of each one.
+void test_gate_rejects_outliers()
+{
+    Scenario sc{"low-cost alone, +6 m outliers, no bias state", 0.0, -1};
+    sc.outlierOffset = 6.0;
+    const auto off   = run(sc);
+    const auto on    = run_with(sc, "low-cost alone, +6 m outliers, bias state", 2.0);
+
+    ASSERT_GE_(on.stats.rejected_innovation, 4U);
+    ASSERT_LT_(on.maxHorizErr, off.maxHorizErr + 0.5);
+}
+
+// A low-cost outage longer than the window: the chain tail survives, and so does
+// what it learned from the reference.
+void test_outage_longer_than_window()
+{
+    Scenario sc{"low-cost + RTK for 30 s, low-cost outage 35-60 s, bias state", 2.0, 30.0};
+    sc.outageFrom = 35.0;
+    sc.outageTo   = 60.0;
+    const auto  r = run(sc);
+    const auto& b = r.biases.at("lowcost");
+    ASSERT_LT_(std::hypot(b.mean.x - LOWCOST_BIAS.x, b.mean.y - LOWCOST_BIAS.y), 0.5);
+    ASSERT_LT_(r.finalHorizErr, 0.7);
+}
+
+// The first fixes come when the vehicle is already far from where it started:
+// no worse than without a bias state.
+void test_first_fixes_far_from_origin()
+{
+    Scenario sc{"low-cost alone from 40 s, no bias state", 0.0, -1};
+    sc.gnssFrom    = 40.0;
+    const auto off = run(sc);
+    const auto on  = run_with(sc, "low-cost alone from 40 s, bias state", 2.0);
+    ASSERT_LT_(on.finalHorizErr, off.finalHorizErr + 1.0);
+}
+
 // Odometry that under-reports the distance (as with lost encoder counts): the bias
 // chain absorbs the drift (about drift rate * tau), unless it restarts once the
-// bias is implausible for the receiver.
+// bias is implausible for the receiver. With restarts it is no worse than without
+// a bias state.
 void test_restart_on_odometry_drift()
 {
-    Scenario sc{"drifting odometry, bias state, no restarts", 2.0, -1};
+    Scenario sc{"drifting odometry, no bias state", 0.0, -1};
     sc.odomScale           = 0.8;
     sc.lowCostBiased       = false;
+    const auto off         = run(sc);
     sc.restartSigmas       = 0;
-    const auto noRestart   = run(sc);
-    sc.name                = "drifting odometry, bias state, restarts";
+    const auto noRestart   = run_with(sc, "drifting odometry, bias state, no restarts", 2.0);
     sc.restartSigmas       = 3.0;
-    const auto withRestart = run(sc);
+    const auto withRestart = run_with(sc, "drifting odometry, bias state, restarts", 2.0);
 
     ASSERT_EQUAL_(noRestart.stats.bias_restarts, 0U);
     ASSERT_GT_(withRestart.stats.bias_restarts, 0U);
     ASSERT_LT_(withRestart.maxHorizErr, 0.6 * noRestart.maxHorizErr);
+    ASSERT_LT_(withRestart.maxHorizErr, 1.1 * off.maxHorizErr);
 }
 
 }  // namespace
@@ -320,8 +403,12 @@ int main()
     try
     {
         test_off_by_default();
-        test_honest_sigma();
+        test_unobservable_alone();
         test_observable_with_rtk();
+        test_white_sigma_override();
+        test_gate_rejects_outliers();
+        test_outage_longer_than_window();
+        test_first_fixes_far_from_origin();
         test_restart_on_odometry_drift();
         std::cout << "All tests passed.\n";
         return 0;

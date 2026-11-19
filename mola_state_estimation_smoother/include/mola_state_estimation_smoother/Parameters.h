@@ -873,9 +873,10 @@ class Parameters
      *  keeps being known (e.g. after the RTK fixes of another receiver stop). */
     double gnss_bias_time_constant = 300.0;  // [s]
 
-    /** Sensor labels of the receivers that get a bias state (regex), e.g. to
-     *  leave out an RTK receiver fused alongside a low-cost one. */
-    std::string gnss_bias_labels_re = ".*";
+    /** Sensor labels of the receivers that get a bias state (regex), e.g. only
+     *  the low-cost one when an RTK receiver is fused as well. Empty (default):
+     *  none, so enabling the feature needs both this and gnss_bias_sigma_xy. */
+    std::string gnss_bias_labels_re;
 
     /** Horizontal sigma of the white part of the error of the receivers with a
      *  bias state [m], replacing their reported one (0 = keep it). Receivers
