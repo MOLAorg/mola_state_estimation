@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.4.0 (2026-11-20)
+------------------
 * Create IMU bias variables only once an IMU has been seen.
 * Contributors: Jose Luis Blanco-Claraco
 

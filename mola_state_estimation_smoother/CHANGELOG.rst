@@ -2,8 +2,8 @@
 Changelog for package mola_state_estimation_smoother
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.4.0 (2026-11-20)
+------------------
 * Optional GNSS receiver bias state, for low-cost receivers.
 * Gyro-only IMU preintegration, with up to 3 IMUs.
 * GNSS gate: reacquire by the continuity of the residual.

@@ -2,8 +2,8 @@
 Changelog for package mola_gtsam_factors
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+3.4.0 (2026-11-20)
+------------------
 * Reusable GNSS receiver bias factors and a Gauss-Markov helper.
 * Factors for gyro-only IMU preintegration.
 * Contributors: Jose Luis Blanco-Claraco
