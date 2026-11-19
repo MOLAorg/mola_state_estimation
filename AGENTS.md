@@ -188,20 +188,11 @@ Sensor inputs:
   `gnss_nearby_keyframe_stamp_tolerance`; a nonzero time offset uses
   `FactorGnssMapEnuConstVel`, which moves the antenna to the fix time with that
   keyframe's `V`/`W`.
-- GNSS receiver bias states (`gnss_bias_sigma_xy` > 0 and receivers matching
-  `gnss_bias_labels_re`, empty by default: both needed; `_z`, `gnss_bias_time_constant`):
-  an ENU bias per fused fix (`gnss_bias_key()`: symbols `G`, `H`, `J`, `K`, max 4 receivers,
-  `gnss_bias_chain_locked()`; vertical held at 0 unless `_z` > 0), a first-order Gauss-Markov
-  chain (`GaussMarkovPoint3`, `gnss_bias_process()`) whose tail key stamp is refreshed in
-  `solve_locked()` (survives outages); `FactorGnssMapEnuBias` (`...ConstVelBias` for a fix away
-  from its keyframe stamp). `gnss_bias_white_sigma_xy`/`_z` replace their reported sigmas. A last
-  estimate beyond `gnss_bias_restart_sigmas` (3) restarts the chain (`bias_restarts`). Gate:
-  their fixes are predicted with the propagated bias, with only the bias change since its
-  estimate as extra variance while its fixes are in the window (`predicted_gnss_bias_locked()`);
-  other fixes use at least the solved joint {enu} position variance (`solvedEnuPosVar`, 1 Hz,
-  per axis); motion measures use the bias-free prediction; fix-to-fix tests add the bias sigma.
-  `estimated_gnss_biases()`, `publish_gnss_bias`; feature macro
-  `MOLA_STATE_ESTIMATION_SMOOTHER_HAS_GNSS_BIAS`. Theory and factor graph: docs, section 5.2.
+- GNSS receiver bias states (off unless `gnss_bias_sigma_xy` > 0 and a receiver matches
+  `gnss_bias_labels_re`): a Gauss-Markov chain of ENU biases per receiver
+  (`gnss_bias_variable_locked()`, `gnss_bias_key()`, `GaussMarkovPoint3`) observed through
+  `FactorGnssMapEnuBias` / `...ConstVelBias`; gate in `predicted_gnss_bias_locked()` and
+  `solvedEnuPosVar`. Settings, gate and theory: docs, "GNSS receiver bias states".
   `test-gnss-bias-state`.
 - `fuse_twist()`: velocity priors.
 - IMU biases (`imu_bias_tracking`, default off): one `mola::imu::ImuBiasTracker` for all

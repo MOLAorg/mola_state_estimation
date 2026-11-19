@@ -2142,9 +2142,12 @@ std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
     gtsam::Point3 initialValue(0, 0, 0);
     auto          prevKey = chain.lastKf ? std::optional(gnss_bias_key(idx, *chain.lastKf))
                                          : std::optional<gtsam::Key>();
+    // A late fix (older than the tail) hangs off the tail without becoming it,
+    // so the chain keeps growing from its newest variable.
+    const bool late = prevKey && stamp < chain.lastStamp;
     // A bias far outside its stationary distribution is not a receiver error, but
     // most likely odometry drift that the chain absorbed: start it again.
-    if (prevKey && chain.estimate && params_.gnss_bias_restart_sigmas > 0)
+    if (prevKey && !late && chain.estimate && params_.gnss_bias_restart_sigmas > 0)
     {
         const auto&  m  = chain.estimate->first;
         const auto&  s  = gm.stationary_sigmas();
@@ -2178,8 +2181,11 @@ std::optional<uint64_t> StateEstimationSmoother::gnss_bias_variable_locked(
 
     g.newValues.insert(key, initialValue);
     g.newKeyStamps[key] = stamp;
-    chain.lastKf        = kf;
-    chain.lastStamp     = stamp;
+    if (!late)
+    {
+        chain.lastKf    = kf;
+        chain.lastStamp = stamp;
+    }
     return key;
 }
 
@@ -4581,8 +4587,9 @@ void StateEstimationSmoother::solve_locked()
 
     // With GNSS bias states, the gate needs the solved {enu} position sigma of the
     // vehicle (see gnss_gate_locked()), with an estimated or a fixed geo-reference.
-    // A joint marginal: refreshed at most once per second of data.
-    if (params_.gnss_bias_sigma_xy > 0 && !state_.stamp2frame_index.empty())
+    // A joint marginal: refreshed at most once per second of data. Only once some
+    // receiver has a bias state, so the gate is unchanged otherwise.
+    if (!state_.gtsam->gnssBiasChains.empty() && !state_.stamp2frame_index.empty())
     {
         const auto& [latestStamp, latestIdx] = *state_.stamp2frame_index.getDirectMap().rbegin();
         const double t                       = key_stamp_seconds(latestStamp);

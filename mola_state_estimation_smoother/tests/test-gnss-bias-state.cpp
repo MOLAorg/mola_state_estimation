@@ -100,6 +100,7 @@ struct Result
     double                                                           finalHorizErr = 0;  // [m]
     double                                                           maxHorizErr   = 0;  // [m]
     double                                                           finalSigmaXY  = 0;  // [m]
+    double                                                           lastEstimateT = -1;  // [s]
     std::map<std::string, StateEstimationSmoother::GnssBiasEstimate> biases;
     StateEstimationSmoother::GnssGateStats                           stats;
 };
@@ -251,11 +252,14 @@ Result run(const Scenario& sc)
         {
             res.maxHorizErr = std::max(res.maxHorizErr, res.finalHorizErr);
         }
-        res.finalSigmaXY = std::sqrt(std::max(pose.cov(0, 0), pose.cov(1, 1)));
+        res.finalSigmaXY  = std::sqrt(std::max(pose.cov(0, 0), pose.cov(1, 1)));
+        res.lastEstimateT = t;
     }
     res.biases = est.estimated_gnss_biases();
     res.stats  = est.gnss_gate_stats();
     ASSERT_EQUAL_(est.solve_failures(), 0U);
+    // The final metrics must come from an estimate at the end of the run:
+    ASSERT_GT_(res.lastEstimateT, DURATION - 1.5 * POSE_PERIOD);
 
     std::cout << mrpt::format(
         "    final horizontal error %.3f m (max %.3f m after 30 s), reported sigma %.3f m, GNSS "

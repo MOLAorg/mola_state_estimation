@@ -864,8 +864,11 @@ drawn from this Graphviz source (e.g. ``dot -Tsvg``), shown here as text only:
   observable, only regularized by the zero-mean prior (and by the prior that the first GNSS
   azimuth baseline puts on :math:`{}^{enu}\mathbf{T}_{map}`). Consequences: the absolute error
   cannot drop below the receiver's own offset, and the solved position sigma in ``{enu}`` stays
-  near :math:`\sigma_{xy}` instead of shrinking like :math:`1/\sqrt{N}`, i.e. it is honest.
-  ``convergence_max_position_sigma`` must then be above :math:`\sigma_{xy}`.
+  of the order of :math:`\sigma_{xy}` instead of shrinking like :math:`1/\sqrt{N}`, i.e. it is
+  honest. It is not a hard floor: over times much longer than :math:`\tau`, the zero-mean process
+  model itself averages the bias towards zero, and the sigma slowly shrinks with it, which is only
+  as good as that model is for the receiver. ``convergence_max_position_sigma`` must then be above
+  :math:`\sigma_{xy}`.
 - *The time-varying part* is shared between the bias and the odometry drift according to their
   noise models, as in a complementary filter: the odometry carries the short time scales and GNSS
   the long ones. The cost is that odometry drifting at :math:`d` m/s leaves the bias about
