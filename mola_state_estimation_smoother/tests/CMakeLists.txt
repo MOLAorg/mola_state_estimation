@@ -21,6 +21,13 @@ mola_add_test(
 )
 
 mola_add_test(
+  TARGET  test-odometry-vote
+  SOURCES test-odometry-vote.cpp
+  LINK_LIBRARIES
+    mola::mola_state_estimation_smoother
+)
+
+mola_add_test(
   TARGET  test-odometry-pose-source-fidelity
   SOURCES test-odometry-pose-source-fidelity.cpp
   LINK_LIBRARIES
