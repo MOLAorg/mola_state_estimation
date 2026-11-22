@@ -222,6 +222,12 @@ Other behavior:
 - `pose_robust_huber_threshold` (0 = off): Huber kernel on every per-reading
   `fuse_pose()` factor, not on the one-time anchor. `odometry_robust_huber_threshold`
   (0 = off): the same on the wheel odometry increments (`fuse_odometry()`).
+- `odometry_vote` (off by default; `src/OdometryConsistencyVote`): over a sliding
+  window, the path length of one `fuse_pose()` odometry source (`pose_frame`) vs the
+  wheel odometry, and its heading change vs one gyroscope (`imu_label`, bias averaged
+  while the wheels stand still); while they disagree, that source's increments get
+  `sigma_scale` times their translation (resp. rotation) sigmas. Inputs are the raw
+  readings, never the estimate, so there is no feedback. It trusts the wheels.
 - `pose_max_lead_time` (0.5 s, 0 = off): a `fuse_pose()` reading stamped more than
   this after both its source's previous reading and the newest reading of the other
   inputs that delivered readings since then is dropped (`accept_pose_stamp()`, in

@@ -85,6 +85,7 @@ namespace mola::state_estimation_smoother
 // Defined in src/, kept out of the public API (used only via pointer here):
 struct Snapshot;
 class FastPredictor;
+class OdometryConsistencyVote;
 
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
@@ -570,6 +571,13 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
         /// Created on first use. See ImuDecimator.
         std::shared_ptr<ImuDecimator> imu_decimator;
+
+        /// With Parameters::odometry_vote, created on first use. Reset with the
+        /// estimator, like the rest of this state.
+        std::shared_ptr<OdometryConsistencyVote> odometry_vote;
+        /// Last verdict, to log its changes.
+        bool odometry_vote_translation = false;
+        bool odometry_vote_rotation    = false;
 
         /// Per IMU sensor label, stamp of its last fused attitude reading
         std::map<std::string, mrpt::Clock::time_point> last_imu_attitude_stamp;
@@ -1060,6 +1068,14 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         const gtsam::Values& values, frame_index_t kf,
         std::array<double, 3>* posVarEnu = nullptr) const;
     double relative_pose_increment_sigma_lin_locked() const;
+
+    /// The vote of Parameters::odometry_vote (created on first use), or nullptr if disabled.
+    OdometryConsistencyVote* odometry_vote_locked();
+
+    /// Sigma multipliers {rotation, translation} for an increment of the voted
+    /// source (1 unless it is outvoted), logging the changes of the verdict.
+    std::array<double, 2> odometry_vote_scales_locked(
+        const std::string& frame_id, const mrpt::Clock::time_point& timestamp);
     /// Pins {map} to the first odometry frame, if nothing anchors it yet.
     void anchor_map_to_first_odom_frame_locked();
 

@@ -85,6 +85,7 @@
 
 #include "FastPredictor.h"
 #include "NewestLastFixedLagSmoother.h"
+#include "OdometryConsistencyVote.h"
 #include "Snapshot.h"
 #include "extrapolation.h"
 
@@ -1553,6 +1554,11 @@ void StateEstimationSmoother::fuse_odometry_locked(
     //  fuse_pose(), but computing the uncertainty of odometry increments
     //  according to a given motion model.
 
+    if (auto* vote = odometry_vote_locked(); vote)
+    {
+        vote->add_wheels(mrpt::Clock::toDouble(odom.timestamp), odom.odometry);
+    }
+
     mrpt::poses::CPose2D lastOdom;
     if (state_.last_wheels_odometry_name.has_value())
     {
@@ -1771,6 +1777,18 @@ void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& 
     if (params_.imu_preintegration.enabled)
     {
         buffer_raw_imu_locked(rawImu);
+    }
+
+    // The odometry vote integrates the raw angular velocity about the vehicle z axis:
+    if (auto* vote = odometry_vote_locked();
+        vote && !params_.odometry_vote.imu_label.empty() &&
+        rawImu.sensorLabel == params_.odometry_vote.imu_label && rawImu.has(mrpt::obs::IMU_WX) &&
+        rawImu.has(mrpt::obs::IMU_WY) && rawImu.has(mrpt::obs::IMU_WZ))
+    {
+        const auto w = rawImu.sensorPose.rotateVector(
+            {rawImu.get(mrpt::obs::IMU_WX), rawImu.get(mrpt::obs::IMU_WY),
+             rawImu.get(mrpt::obs::IMU_WZ)});
+        vote->add_gyro(mrpt::Clock::toDouble(rawImu.timestamp), w.z);
     }
 
     // Ignore an IMU reading with no usable content up front, before touching the
@@ -2574,6 +2592,14 @@ void StateEstimationSmoother::fuse_pose_locked(
             frame_id.c_str());
     }
 
+    // The voted source of the odometry vote: every reading counts, decimated or not.
+    const bool voted = frame_id_idx != REFERENCE_FRAME_ID && params_.odometry_vote.enabled &&
+                       frame_id == params_.odometry_vote.pose_frame;
+    if (voted)
+    {
+        odometry_vote_locked()->add_pose(mrpt::Clock::toDouble(timestamp), poseSanitized.mean);
+    }
+
     // High-rate decimation: drop this reading if it arrives too soon after the
     // last kept one of the same source. Done BEFORE the keyframe is created, so
     // a dropped reading costs nothing and, for an odometry frame,
@@ -2738,6 +2764,16 @@ void StateEstimationSmoother::fuse_pose_locked(
                     // current pose: with the previous pose held fixed, that is
                     // also the right tangent of the increment.
                     incrCov_out = cov_out;
+                }
+
+                // Outvoted by the wheels (distance) or the gyroscope (heading):
+                // its sigmas are scaled, so the other sources carry the estimate.
+                if (voted)
+                {
+                    const auto     k = odometry_vote_scales_locked(frame_id, timestamp);
+                    gtsam::Vector6 d;
+                    d << k[0], k[0], k[0], k[1], k[1], k[1];
+                    incrCov_out = d.asDiagonal() * incrCov_out * d.asDiagonal();
                 }
 
                 state_.gtsam->newFactors.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -5327,6 +5363,46 @@ void StateEstimationSmoother::check_kept_geo_reference_locked()
     state_.last_estimated_frames[REFERENCE_FRAME_ID] = kept.georef.T_enu_to_map;
 
     MRPT_LOG_INFO("reset_motion(): {map} is the same frame, so the geo-reference is kept");
+}
+
+OdometryConsistencyVote* StateEstimationSmoother::odometry_vote_locked()
+{
+    if (!params_.odometry_vote.enabled)
+    {
+        return nullptr;
+    }
+    if (!state_.odometry_vote)
+    {
+        state_.odometry_vote = std::make_shared<OdometryConsistencyVote>(params_.odometry_vote);
+    }
+    return state_.odometry_vote.get();
+}
+
+std::array<double, 2> StateEstimationSmoother::odometry_vote_scales_locked(
+    const std::string& frame_id, const mrpt::Clock::time_point& timestamp)
+{
+    const auto   v = odometry_vote_locked()->verdict(mrpt::Clock::toDouble(timestamp));
+    const double k = params_.odometry_vote.sigma_scale;
+
+    if (v.translation != state_.odometry_vote_translation)
+    {
+        MRPT_LOG_INFO_FMT(
+            "[odometry_vote] '%s' distance %s the wheels: %.2f m vs %.2f m in %.0f s%s",
+            frame_id.c_str(), v.translation ? "disagrees with" : "agrees again with",
+            v.pose_distance, v.wheels_distance, params_.odometry_vote.window,
+            v.translation ? mrpt::format(" (translation sigmas x%.0f)", k).c_str() : "");
+        state_.odometry_vote_translation = v.translation;
+    }
+    if (v.rotation != state_.odometry_vote_rotation)
+    {
+        MRPT_LOG_INFO_FMT(
+            "[odometry_vote] '%s' heading %s the gyroscope: %+.1f deg in %.0f s%s",
+            frame_id.c_str(), v.rotation ? "disagrees with" : "agrees again with",
+            mrpt::RAD2DEG(v.yaw_difference), params_.odometry_vote.window,
+            v.rotation ? mrpt::format(" (rotation sigmas x%.0f)", k).c_str() : "");
+        state_.odometry_vote_rotation = v.rotation;
+    }
+    return {v.rotation ? k : 1.0, v.translation ? k : 1.0};
 }
 
 double StateEstimationSmoother::relative_pose_increment_sigma_lin_locked() const

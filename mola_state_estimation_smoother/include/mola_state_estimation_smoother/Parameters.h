@@ -664,6 +664,36 @@ class Parameters
      * bound. Default off. */
     bool relative_pose_increment_from_source_covariance = false;
 
+    /** Consistency vote between one fuse_pose() odometry source (e.g. LiDAR
+     * odometry), the wheel odometry and a gyroscope. Over a sliding window, the
+     * distance traveled by the pose source is compared with that of the wheels,
+     * and its heading change with the integrated gyroscope (bias averaged while
+     * the wheels stand still). While they disagree, the increments of the pose
+     * source get their translation (resp. rotation) sigmas multiplied by
+     * sigma_scale, so the other sources carry the estimate. The window catches
+     * slow drifts (e.g. a LiDAR odometry under-reading the distance in a scene
+     * with little structure) that no single increment, nor a robust kernel on
+     * it, shows. Wheels that lose encoder counts would be taken as right: use
+     * it only where the wheel odometry is trusted. Default off. */
+    struct OdometryVote
+    {
+        bool enabled = false;
+
+        /// fuse_pose() frame_id of the voted source.
+        std::string pose_frame = "lidar_odom";
+
+        /// Sensor label of the gyroscope for the heading vote; empty: no heading vote.
+        std::string imu_label;
+
+        double window            = 10.0;  //!< [s]
+        double min_distance      = 1.0;  //!< [m] no vote while both moved less
+        double tolerance_abs     = 0.3;  //!< [m] distance disagreement allowed...
+        double tolerance_rel     = 0.05;  //!< ...plus this fraction of the wheels distance
+        double yaw_tolerance_deg = 2.0;  //!< [deg] heading disagreement allowed in the window
+        double sigma_scale       = 10.0;  //!< sigma multiplier while outvoted (>= 1)
+    };
+    OdometryVote odometry_vote;
+
     /** @} */
 
     /** @name Geo-referencing

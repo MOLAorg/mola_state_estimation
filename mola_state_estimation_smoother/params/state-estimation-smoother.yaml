@@ -547,6 +547,24 @@ params:
   # relative_pose_increment_sigma_* values above.
   relative_pose_increment_from_source_covariance: ${MOLA_REL_POSE_INCR_FROM_SOURCE_COV|false}
 
+  # Consistency vote between one pose source (pose_frame, e.g. LiDAR odometry),
+  # the wheel odometry and a gyroscope (imu_label; empty: distance vote only):
+  # over a sliding window, while the distance traveled by the pose source
+  # disagrees with the wheels (by more than tolerance_abs + tolerance_rel times
+  # the wheel distance), or its heading change with the gyroscope (by more than
+  # yaw_tolerance_deg), its increments get their translation (resp. rotation)
+  # sigmas multiplied by sigma_scale. Use it only with trusted wheel odometry.
+  odometry_vote:
+    enabled: ${MOLA_SE_ODOMETRY_VOTE|false}
+    pose_frame: "${MOLA_SE_ODOMETRY_VOTE_POSE_FRAME|lidar_odom}"
+    imu_label: "${MOLA_SE_ODOMETRY_VOTE_IMU|}"
+    window: ${MOLA_SE_ODOMETRY_VOTE_WINDOW|10.0}  # [s]
+    min_distance: 1.0  # [m]
+    tolerance_abs: 0.3  # [m]
+    tolerance_rel: 0.05
+    yaw_tolerance_deg: 2.0  # [deg]
+    sigma_scale: ${MOLA_SE_ODOMETRY_VOTE_SIGMA_SCALE|10.0}
+
   # Huber m-estimator threshold for fuse_pose() factors ("map" priors and
   # odometry increments alike), in whitened units (sigmas of the covariance given for each factor,
   # so only meaningful with calibrated covariances). A dead-reckoning source

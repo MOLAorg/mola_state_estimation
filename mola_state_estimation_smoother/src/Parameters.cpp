@@ -295,6 +295,30 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
         "relative_pose_increment_sigma_per_sqrt_meter/_rad must be >= 0");
     ASSERTMSG_(pose_robust_huber_threshold >= 0, "pose_robust_huber_threshold must be >= 0");
 
+    if (cfg.has("odometry_vote"))
+    {
+        const mrpt::containers::yaml c  = cfg["odometry_vote"];
+        auto&                        ov = odometry_vote;
+        ov.enabled                      = c.getOrDefault("enabled", ov.enabled);
+        ov.pose_frame                   = c.getOrDefault("pose_frame", ov.pose_frame);
+        ov.imu_label                    = c.getOrDefault("imu_label", ov.imu_label);
+        ov.window                       = c.getOrDefault("window", ov.window);
+        ov.min_distance                 = c.getOrDefault("min_distance", ov.min_distance);
+        ov.tolerance_abs                = c.getOrDefault("tolerance_abs", ov.tolerance_abs);
+        ov.tolerance_rel                = c.getOrDefault("tolerance_rel", ov.tolerance_rel);
+        ov.yaw_tolerance_deg            = c.getOrDefault("yaw_tolerance_deg", ov.yaw_tolerance_deg);
+        ov.sigma_scale                  = c.getOrDefault("sigma_scale", ov.sigma_scale);
+        ASSERTMSG_(ov.window > 0, "odometry_vote.window must be > 0");
+        ASSERTMSG_(
+            ov.min_distance >= 0 && ov.tolerance_abs >= 0 && ov.tolerance_rel >= 0 &&
+                ov.yaw_tolerance_deg > 0,
+            "odometry_vote: distances and tolerances must be >= 0 (yaw_tolerance_deg > 0)");
+        ASSERTMSG_(ov.sigma_scale >= 1, "odometry_vote.sigma_scale must be >= 1");
+        ASSERTMSG_(
+            !ov.enabled || !ov.pose_frame.empty(),
+            "odometry_vote.pose_frame must name the voted fuse_pose() source");
+    }
+
     if (cfg.has("initial_twist"))
     {
         ASSERT_(cfg["initial_twist"].isSequence() && cfg["initial_twist"].asSequence().size() == 6);
