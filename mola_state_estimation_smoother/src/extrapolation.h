@@ -146,7 +146,7 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
  *  history, a backwards extrapolation, or readings not covering the interval).
  *  Only the predicted pose uses it: the returned twist stays the anchor's
  *  (filtered) one, since its consumers want a smooth velocity estimate, not the
- *  raw rate over one interval. */
+ *  raw rate over one interval. With enforce_planar_motion, only its yaw. */
 inline std::optional<Eigen::Matrix3d> gyro_rotation_for_prediction(
     const Parameters& params, const GyroHistory* gyro, double t0, double t1)
 {
@@ -154,7 +154,13 @@ inline std::optional<Eigen::Matrix3d> gyro_rotation_for_prediction(
     {
         return std::nullopt;
     }
-    return gyro->rotation_between(t0, t1);
+    auto R = gyro->rotation_between(t0, t1);
+    if (R && params.enforce_planar_motion)
+    {
+        const double yaw = std::atan2((*R)(1, 0), (*R)(0, 0));
+        R                = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    }
+    return R;
 }
 
 /// Prediction errors an odometry source must have accumulated before they set

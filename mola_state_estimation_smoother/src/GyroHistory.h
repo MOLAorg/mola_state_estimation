@@ -19,6 +19,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <cmath>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -57,11 +58,13 @@ class GyroHistory
 
     /** Adds one reading (time [s], angular velocity [rad/s] in the vehicle
      *  frame). Only the first matching label seen is used; readings not newer
-     *  than the last one are ignored. */
+     *  than the last one, or not finite, are ignored (a non-finite one leaves
+     *  a gap, bridged up to MAX_GAP like any other). */
     void add(const std::string& label, double t, const Eigen::Vector3d& w)
     {
         std::lock_guard<std::mutex> lck(mtx_);
-        if (labelRe_ && !std::regex_match(label, *labelRe_))
+        if (!w.allFinite() || !std::isfinite(t) ||
+            (labelRe_ && !std::regex_match(label, *labelRe_)))
         {
             return;
         }
@@ -78,6 +81,13 @@ class GyroHistory
         {
             readings_.pop_front();
         }
+    }
+
+    /// The sensor label in use (empty before the first matching reading).
+    [[nodiscard]] std::string label() const
+    {
+        std::lock_guard<std::mutex> lck(mtx_);
+        return label_;
     }
 
     /// Sets the gyroscope bias [rad/s] (vehicle frame) subtracted from the readings.
@@ -97,9 +107,12 @@ class GyroHistory
     }
 
     /** The vehicle rotation from t0 to t1 [s] (R_{t0,t1}, in the frame at t0),
-     *  or nothing if t1 <= t0 or the readings do not cover the interval. Each
-     *  reading holds from the previous one's stamp to its own; the newest one
-     *  also holds up to t1. */
+     *  or nothing if t1 <= t0 or the readings do not cover the interval. A
+     *  reading inside the interval holds from the previous one's stamp (or t0)
+     *  to its own. After the last reading inside, or over an interval with
+     *  none inside, the newest reading not after that point holds up to t1: a
+     *  reading stamped after t1 is never used, so the result does not depend
+     *  on whether it has been received yet. */
     [[nodiscard]] std::optional<Eigen::Matrix3d> rotation_between(double t0, double t1) const
     {
         if (t1 <= t0)

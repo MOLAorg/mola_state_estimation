@@ -878,7 +878,10 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
     }
 
     gyroHistory_->clear();
-    gyroHistory_->set_label_regex(params_.imu_preintegration.sensor_label_re);
+    if (params_.imu_preintegration.enabled || params_.imu_propagation)
+    {
+        gyroHistory_->set_label_regex(params_.imu_preintegration.sensor_label_re);
+    }
     params_loaded_ = true;
     reinitialize_gtsam_locked();
 
@@ -1800,6 +1803,12 @@ void StateEstimationSmoother::update_gyro_history_bias_locked()
         return;
     }
     const auto& g = *state_.gtsam;
+    if (g.rawImuLabel.empty() || g.rawImuLabel != gyroHistory_->label())
+    {
+        // The preintegrated IMU is not the one in the history (yet):
+        gyroHistory_->set_bias(Eigen::Vector3d::Zero());
+        return;
+    }
     gyroHistory_->set_bias(g.rawImuRotation.rotate(g.lastBias.gyroscope()));
 }
 
