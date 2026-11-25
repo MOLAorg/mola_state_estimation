@@ -141,7 +141,11 @@ std::optional<NavState> FastPredictor::predict(
         {
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(ret.pose);
-            auto mapPdf = extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params, gyro_.get(), mrpt::Clock::toDouble(snap->anchorStamp),
+                mrpt::Clock::toDouble(t_query));
+            auto mapPdf = extrapolate_pose_pdf(
+                params, anchorPose, ret.twist, anchorTwistCov, dt, true, gyroR);
             apply_pose_sigma_floor(params, mapPdf);
             ret.pose.copyFrom(mapPdf);
             return ret;
@@ -157,8 +161,11 @@ std::optional<NavState> FastPredictor::predict(
             }
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(ret.pose);
-            const auto mapPdf =
-                extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params, gyro_.get(), mrpt::Clock::toDouble(snap->anchorStamp),
+                mrpt::Clock::toDouble(t_query));
+            const auto mapPdf = extrapolate_pose_pdf(
+                params, anchorPose, ret.twist, anchorTwistCov, dt, true, gyroR);
             auto enuPdf = snap->currentGeoReference->T_enu_to_map + mapPdf;
             apply_pose_sigma_floor(params, enuPdf);
             ret.pose.copyFrom(enuPdf);
@@ -188,8 +195,11 @@ std::optional<NavState> FastPredictor::predict(
             }
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(ret.pose);
-            const auto mapPred =
-                extrapolate_pose_pdf(params, anchorPose, ret.twist, anchorTwistCov, dt);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params, gyro_.get(), mrpt::Clock::toDouble(snap->anchorStamp),
+                mrpt::Clock::toDouble(t_query));
+            const auto mapPred = extrapolate_pose_pdf(
+                params, anchorPose, ret.twist, anchorTwistCov, dt, true, gyroR);
             // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
             // The floor goes on AFTER the conversion, for the same reason as in
             // the synchronous path: it is a statement about the frame the caller
@@ -207,18 +217,21 @@ std::optional<NavState> FastPredictor::predict(
             return std::nullopt;
         }
 
+        const auto gyroR = gyro_rotation_for_prediction(
+            params, gyro_.get(), mrpt::Clock::toDouble(rawAnchor.stamp),
+            mrpt::Clock::toDouble(t_query));
         mrpt::poses::CPose3DPDFGaussian rawPdf;
         const auto                      itRes = snap->predictionVarRate.find(itRaw->first);
         if (params.predict_covariance_from_residuals && itRes != snap->predictionVarRate.end())
         {
             rawPdf = extrapolate_pose_pdf(
                 params, rawAnchor.pose, ret.twist, twist_cov_from_residuals(itRes->second), dtPred,
-                false /* no random walk: in the residuals already */);
+                false /* no random walk: in the residuals already */, gyroR);
         }
         else
         {
-            rawPdf =
-                extrapolate_pose_pdf(params, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred);
+            rawPdf = extrapolate_pose_pdf(
+                params, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred, true, gyroR);
         }
         apply_pose_sigma_floor(params, rawPdf);
         ret.pose.copyFrom(rawPdf);

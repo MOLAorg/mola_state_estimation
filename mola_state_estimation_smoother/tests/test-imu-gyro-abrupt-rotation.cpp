@@ -68,6 +68,7 @@ params:
     estimate_geo_reference: false
     async_backend: false
     predict_twist_filter_enabled: false
+    imu_propagation: false
     imu_normalized_gravity_alignment_sigma: 0
     imu_angular_velocity_sigma: )###") +
            std::to_string(gyroSigma) + "\n";

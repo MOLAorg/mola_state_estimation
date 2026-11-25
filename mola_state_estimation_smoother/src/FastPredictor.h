@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 
+#include "GyroHistory.h"
 #include "Snapshot.h"
 
 namespace mola::state_estimation_smoother
@@ -81,9 +82,13 @@ class FastPredictor
     /// Drops the snapshot and the observation-stamp tracking (used on reset()).
     void clear();
 
+    /// The gyroscope readings for the rotation of predictions (Parameters::imu_propagation).
+    void set_gyro_history(std::shared_ptr<const GyroHistory> gyro) { gyro_ = std::move(gyro); }
+
    private:
-    mutable std::mutex              mtx_;
-    std::shared_ptr<const Snapshot> snapshot_;
+    mutable std::mutex                 mtx_;
+    std::shared_ptr<const Snapshot>    snapshot_;
+    std::shared_ptr<const GyroHistory> gyro_;
 
     std::optional<mrpt::Clock::time_point> lastObsStamp_;
     mrpt::Clock::time_point                lastObsWallclock_;
