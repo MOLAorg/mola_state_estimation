@@ -255,6 +255,17 @@ Other behavior:
   `Snapshot::predictTwist`). In async mode a query right after `fuse_pose()`
   may still hit the snapshot of the previous keyframe and get the filtered
   twist.
+- Gyroscope propagation of predictions (`imu_propagation`, default on, shared
+  env var `MOLA_NAVSTATE_IMU_PROPAGATION` with the simple estimator): the rotation
+  of every extrapolation since its anchor (keyframe or a source's raw pose) is
+  the integral of the gyroscope readings since then (`src/GyroHistory.h`, fed in
+  `fuse_imu()` before the async queue, bias from the first preintegrated IMU);
+  translation, covariance and the returned twist are unchanged (the LO's
+  map-update thresholds and de-skew read that twist: the raw interval rate is
+  too noisy for them). Readings that do not cover the interval (gap over
+  50 ms) fall back to the constant twist. Without it, a hand-held sensor
+  swinging between scans seeds ICP several degrees off, and a registration can
+  take a wrong basin.
 - Prediction covariance in an odometry source's frame
   (`predict_covariance_from_residuals`, default on): twist covariance from the
   running mean (`predict_residual_time_const`) of that source's squared

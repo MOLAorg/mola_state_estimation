@@ -405,6 +405,17 @@ class Parameters
      * pull the registration into a heading error. */
     double predict_twist_filter_time_const = 0.1;
 
+    /** If true, the rotation of a prediction since its anchor (a keyframe, or
+     * a front end's last pose) integrates the gyroscope readings received
+     * since then, bias corrected with the imu_preintegration estimate when
+     * there is one, instead of extrapolating the anchor angular velocity. The
+     * returned twist is unchanged. A constant angular velocity
+     * cannot follow a turn that reverses between scans (a hand-held or legged
+     * sensor), and the error seeds the registration. Without readings that
+     * cover the interval, the constant-twist model is used. The IMU is the
+     * first one matching imu_preintegration.sensor_label_re. */
+    bool imu_propagation = true;
+
     /** If true, the covariance of a prediction in an odometry source's own
      * frame (the motion prior a front end such as a LiDAR odometry receives)
      * grows with that source's measured one-step prediction error, instead of

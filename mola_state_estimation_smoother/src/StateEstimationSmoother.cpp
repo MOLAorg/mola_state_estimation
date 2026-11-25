@@ -84,6 +84,7 @@
 #endif
 
 #include "FastPredictor.h"
+#include "GyroHistory.h"
 #include "NewestLastFixedLagSmoother.h"
 #include "Snapshot.h"
 #include "extrapolation.h"
@@ -725,6 +726,10 @@ StateEstimationSmoother::StateEstimationSmoother()
     profiler_.setName("StateEstimationSmoother");
     ExecutableBase::setModuleInstanceName("StateEstimationSmoother");
     fastPredictor_ = std::make_unique<FastPredictor>();
+    // Readings kept: longer than any extrapolation (max_time_to_use_velocity_model).
+    constexpr double GYRO_HISTORY_SECONDS = 5.0;
+    gyroHistory_                          = std::make_shared<GyroHistory>(GYRO_HISTORY_SECONDS);
+    fastPredictor_->set_gyro_history(gyroHistory_);
 }
 
 StateEstimationSmoother::~StateEstimationSmoother()
@@ -814,7 +819,7 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
         }
     }
 
-    if (params_.imu_preintegration.enabled)
+    if (params_.imu_preintegration.enabled || params_.imu_propagation)
     {
         try
         {
@@ -872,6 +877,8 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
             });
     }
 
+    gyroHistory_->clear();
+    gyroHistory_->set_label_regex(params_.imu_preintegration.sensor_label_re);
     params_loaded_ = true;
     reinitialize_gtsam_locked();
 
@@ -1392,6 +1399,7 @@ void StateEstimationSmoother::reset_locked(bool keepFrames)
     {
         fastPredictor_->clear();
     }
+    update_gyro_history_bias_locked();
     // Drop any queued (and any already-detached) async work: it targets the old
     // graph and must not repopulate the fresh one (required across
     // set_geo_reference(), see coding guidelines).
@@ -1754,6 +1762,8 @@ void StateEstimationSmoother::fuse_odometry_relative_locked(
 void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
     note_input_stamp("imu:" + imu.sensorLabel, imu.timestamp);
+    // Before the async queue, so that predictions use it right away:
+    add_to_gyro_history(imu);
     if (params_.async_backend)
     {
         fastPredictor_->note_observation_stamp(imu.timestamp);
@@ -1763,6 +1773,34 @@ void StateEstimationSmoother::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     }
     auto lck = mrpt::lockHelper(stateMutex_);
     fuse_imu_locked(imu);
+}
+
+void StateEstimationSmoother::add_to_gyro_history(const mrpt::obs::CObservationIMU& imu)
+{
+    if (!params_.imu_propagation || !imu.has(mrpt::obs::IMU_WX) || !imu.has(mrpt::obs::IMU_WY) ||
+        !imu.has(mrpt::obs::IMU_WZ))
+    {
+        return;
+    }
+    const Eigen::Vector3d wSensor(
+        imu.get(mrpt::obs::IMU_WX), imu.get(mrpt::obs::IMU_WY), imu.get(mrpt::obs::IMU_WZ));
+    const Eigen::Matrix3d R_bs = imu.sensorPose.getRotationMatrix().asEigen();
+    gyroHistory_->add(imu.sensorLabel, mrpt::Clock::toDouble(imu.timestamp), R_bs * wSensor);
+}
+
+void StateEstimationSmoother::update_gyro_history_bias_locked()
+{
+    if (!gyroHistory_)
+    {
+        return;
+    }
+    if (!params_.imu_preintegration.enabled || !state_.gtsam)
+    {
+        gyroHistory_->set_bias(Eigen::Vector3d::Zero());
+        return;
+    }
+    const auto& g = *state_.gtsam;
+    gyroHistory_->set_bias(g.rawImuRotation.rotate(g.lastBias.gyroscope()));
 }
 
 void StateEstimationSmoother::fuse_imu_locked(const mrpt::obs::CObservationIMU& rawImu)
@@ -2881,6 +2919,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
     std::optional<double>        closestFrameDt;
     double                       closestFrameDtSigned = 0;
     std::optional<frame_index_t> closesFrameIdx;
+    mrpt::Clock::time_point      closestFrameStamp;
 
     const auto closestPrior = find_before_after(timestamp, true);
     for (const auto& it : {closestPrior.first, closestPrior.second})
@@ -2898,6 +2937,7 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             closestFrameDt       = dtAbs;
             closesFrameIdx       = frame_idx;
             closestFrameDtSigned = dt;
+            closestFrameStamp    = existing_t;
         }
     }
 
@@ -2981,8 +3021,11 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             // forward with the configured kinematic model, propagating covariance.
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(retKf.pose);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params_, gyroHistory_.get(), mrpt::Clock::toDouble(closestFrameStamp),
+                mrpt::Clock::toDouble(timestamp));
             auto mapPdf = extrapolate_pose_pdf(
-                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned, true, gyroR);
             apply_pose_sigma_floor(params_, mapPdf);
             ret.pose.copyFrom(mapPdf);
             navstate_dump_row(timestamp, closestFrameDtSigned, ret);
@@ -2999,8 +3042,11 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             }
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(retKf.pose);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params_, gyroHistory_.get(), mrpt::Clock::toDouble(closestFrameStamp),
+                mrpt::Clock::toDouble(timestamp));
             const auto mapPdf = extrapolate_pose_pdf(
-                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned, true, gyroR);
             auto enuPdf = georef->T_enu_to_map + mapPdf;
             apply_pose_sigma_floor(params_, enuPdf);
             ret.pose.copyFrom(enuPdf);
@@ -3043,8 +3089,11 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
             }
             mrpt::poses::CPose3DPDFGaussian anchorPose;
             anchorPose.copyFrom(retKf.pose);
+            const auto gyroR = gyro_rotation_for_prediction(
+                params_, gyroHistory_.get(), mrpt::Clock::toDouble(closestFrameStamp),
+                mrpt::Clock::toDouble(timestamp));
             const auto mapPred = extrapolate_pose_pdf(
-                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned);
+                params_, anchorPose, ret.twist, anchorTwistCov, closestFrameDtSigned, true, gyroR);
             // Transform the {map}-frame prediction into {odom_i}: pred (-) T_frame_wrt_map.
             // The floor goes on AFTER the conversion: it is a statement about the
             // frame the caller asked for, and the composition mixes the angular
@@ -3068,6 +3117,9 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         // The anchor is the front end's own near-exact pose in {odom_i}, so
         // prediction uncertainty is dominated by the one-step extrapolation, not
         // the absolute {map}-frame keyframe covariance.
+        const auto gyroR = gyro_rotation_for_prediction(
+            params_, gyroHistory_.get(), mrpt::Clock::toDouble(rawAnchor.stamp),
+            mrpt::Clock::toDouble(timestamp));
         mrpt::poses::CPose3DPDFGaussian rawPdf;
         const auto                      itRes = state_.prediction_residuals.find(requestedFrameIdx);
         if (params_.predict_covariance_from_residuals &&
@@ -3076,12 +3128,12 @@ std::optional<NavState> StateEstimationSmoother::estimated_navstate(
         {
             rawPdf = extrapolate_pose_pdf(
                 params_, rawAnchor.pose, ret.twist, twist_cov_from_residuals(itRes->second.varRate),
-                dtPred, false /* no random walk: in the residuals already */);
+                dtPred, false /* no random walk: in the residuals already */, gyroR);
         }
         else
         {
-            rawPdf =
-                extrapolate_pose_pdf(params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred);
+            rawPdf = extrapolate_pose_pdf(
+                params_, rawAnchor.pose, ret.twist, anchorTwistCov, dtPred, true, gyroR);
         }
         apply_pose_sigma_floor(params_, rawPdf);
         ret.pose.copyFrom(rawPdf);
@@ -4341,6 +4393,7 @@ void StateEstimationSmoother::solve_locked()
                 }
             }
         }
+        update_gyro_history_bias_locked();
     }
 
     // Retrieve the latest estimate and save it into "state_.last_estimated_state":

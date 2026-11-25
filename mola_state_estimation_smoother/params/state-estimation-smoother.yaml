@@ -192,6 +192,9 @@ params:
   # Not applied to a query at the newest keyframe's own stamp.
   predict_twist_filter_enabled: ${MOLA_NAVSTATE_PREDICT_TWIST_FILTER|true}
   predict_twist_filter_time_const: ${MOLA_NAVSTATE_PREDICT_TWIST_TAU|0.1}
+  # Predict the rotation since the anchor of each prediction with the gyroscope
+  # readings received since then (falls back to the constant twist without them).
+  imu_propagation: ${MOLA_NAVSTATE_IMU_PROPAGATION|true}
 
   # Covariance of a prediction in an odometry source's own frame (the motion
   # prior a LiDAR odometry front end receives): from that source's measured

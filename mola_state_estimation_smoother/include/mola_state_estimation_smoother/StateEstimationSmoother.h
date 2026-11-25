@@ -85,6 +85,7 @@ namespace mola::state_estimation_smoother
 // Defined in src/, kept out of the public API (used only via pointer here):
 struct Snapshot;
 class FastPredictor;
+class GyroHistory;
 
 /** Sliding window Factor-graph data fusion for odometry, IMU, GNSS, and SE(3)
  * pose/twist estimations.
@@ -839,6 +840,16 @@ class StateEstimationSmoother : public mola::NavStateFilter,
     /// Lock-free read model for async_backend mode. Populated at the end of each
     /// solve; queried by estimated_navstate()/spinOnce() without stateMutex_.
     std::unique_ptr<FastPredictor> fastPredictor_;
+
+    /// Recent gyroscope readings for the predictions (Parameters::imu_propagation),
+    /// shared with fastPredictor_.
+    std::shared_ptr<GyroHistory> gyroHistory_;
+
+    /// Feeds gyroHistory_ (Parameters::imu_propagation). Takes no stateMutex_.
+    void add_to_gyro_history(const mrpt::obs::CObservationIMU& imu);
+
+    /// The gyroscope bias of the first preintegrated IMU, to gyroHistory_.
+    void update_gyro_history_bias_locked();
 
     /// Builds an immutable Snapshot of the current solution (newest keyframe
     /// anchor + frame transforms + georef). Assumes stateMutex_ is held.

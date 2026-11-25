@@ -58,6 +58,7 @@ mola_add_library(
     src/register.cpp
     src/Snapshot.h
     src/FastPredictor.h
+    src/GyroHistory.h
     src/NewestLastFixedLagSmoother.h
     src/extrapolation.h
     include/mola_state_estimation_smoother/Parameters.h

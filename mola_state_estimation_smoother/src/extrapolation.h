@@ -31,6 +31,9 @@
 
 #include <array>
 #include <cmath>
+#include <optional>
+
+#include "GyroHistory.h"
 
 namespace mola::state_estimation_smoother
 {
@@ -102,10 +105,15 @@ inline mrpt::poses::CPose3D body_twist_delta(
 inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     const Parameters& params, const mrpt::poses::CPose3DPDFGaussian& anchorPose,
     const mrpt::math::TTwist3D& twist, const mrpt::math::CMatrixDouble66& twistCov, double dt,
-    bool addRandomWalk = true)
+    bool addRandomWalk = true, const std::optional<Eigen::Matrix3d>& gyroRotation = std::nullopt)
 {
     mrpt::poses::CPose3DPDFGaussian deltaPdf;
     deltaPdf.mean = body_twist_delta(params, twist, dt);
+    if (gyroRotation)
+    {
+        // The measured rotation replaces the one of the constant twist:
+        deltaPdf.mean.setRotationMatrix(mrpt::math::CMatrixDouble33(*gyroRotation));
+    }
 
     mrpt::math::CMatrixDouble66 incrCov = twistCov;
     incrCov *= mrpt::square(dt);
@@ -131,6 +139,22 @@ inline mrpt::poses::CPose3DPDFGaussian extrapolate_pose_pdf(
     }
 
     return anchorPose + deltaPdf;
+}
+
+/** Parameters::imu_propagation: the rotation measured by the gyroscope between
+ *  a prediction anchor at t0 and the query at t1 [s], or nothing (disabled, no
+ *  history, a backwards extrapolation, or readings not covering the interval).
+ *  Only the predicted pose uses it: the returned twist stays the anchor's
+ *  (filtered) one, since its consumers want a smooth velocity estimate, not the
+ *  raw rate over one interval. */
+inline std::optional<Eigen::Matrix3d> gyro_rotation_for_prediction(
+    const Parameters& params, const GyroHistory* gyro, double t0, double t1)
+{
+    if (!params.imu_propagation || !gyro)
+    {
+        return std::nullopt;
+    }
+    return gyro->rotation_between(t0, t1);
 }
 
 /// Prediction errors an odometry source must have accumulated before they set

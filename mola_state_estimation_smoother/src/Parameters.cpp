@@ -53,6 +53,7 @@ void Parameters::loadFrom(const mrpt::containers::yaml& cfg)
     MCP_LOAD_OPT(cfg, sigma_random_walk_acceleration_angular);
     MCP_LOAD_OPT(cfg, predict_twist_filter_enabled);
     MCP_LOAD_OPT(cfg, predict_twist_filter_time_const);
+    MCP_LOAD_OPT(cfg, imu_propagation);
     MCP_LOAD_OPT(cfg, predict_covariance_from_residuals);
     MCP_LOAD_OPT(cfg, predict_residual_time_const);
     // Wheel odometry is always fused as relative increments. The key is still
